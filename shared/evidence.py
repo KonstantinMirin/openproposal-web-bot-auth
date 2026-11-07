@@ -44,7 +44,8 @@ def save_directory(db: sqlite3.Connection, directory: VerifiedDirectory | None) 
     }
     digest = hashlib.sha256(rfc8785.dumps(fetch) + directory.body).hexdigest()
     db.execute(
-        "INSERT OR IGNORE INTO directories (digest, url, status, headers, body, fetched_at, evidence)"
+        "INSERT OR IGNORE INTO directories"
+        " (digest, url, status, headers, body, fetched_at, evidence)"
         " VALUES (?, ?, ?, ?, ?, ?, ?)",
         (
             digest,

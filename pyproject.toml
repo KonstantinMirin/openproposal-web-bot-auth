@@ -23,7 +23,15 @@ dependencies = [
 ]
 
 [dependency-groups]
-dev = ["pytest>=8", "ruff>=0.8"]
+dev = [
+    "ast-grep-cli>=0.39",
+    "import-linter>=2.1",
+    "mypy==2.4.1",
+    "pytest>=8",
+    "pytest-cov>=6",
+    "ruff==0.17.4",
+    "types-pyyaml>=6.0",
+]
 
 [tool.uv.sources]
 # A path dependency on the library checkout next to this repository. The same
@@ -46,3 +54,99 @@ testpaths = ["tests"]
 line-length = 100
 target-version = "py311"
 extend-exclude = ["vendor"]
+
+[tool.ruff.lint]
+select = [
+    "E", "W", "F", "I", "B", "BLE", "C4", "UP", "C90", "PLR", "SIM", "RET", "PTH", "TRY",
+    "ARG", "ANN", "S", "TID", "RUF100",
+]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 10
+
+[tool.ruff.lint.pylint]
+max-branches = 12
+max-statements = 50
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "PLR2004", "ANN"]
+"e2e/scenarios/**" = ["S101", "PLR2004", "ANN"]
+# Exemptions for production files. They only shrink: each line lists the exact
+# codes today's tree reports in that file, and the step that removes them.
+"demo_types/stack.py" = ["TRY003"]  # Step 1: replaced by the generated SDK
+"shared/record.py" = ["ANN401", "C901", "PLR2004", "TRY003"]  # Step 1: protocol/record.py
+"shared/documents.py" = ["ANN401", "TRY003"]  # Step 1: protocol/documents.py
+"shared/wba.py" = ["ANN003"]  # Step 2: the composition root owns the client
+"buyer/keyring.py" = ["TRY003"]  # Step 3: shared/keyring.py with KeyringState
+"buyer/store.py" = ["ANN201", "PLR0913", "PLR0917"]  # Step 3: buyer/repository.py
+"seller/store.py" = ["ANN001", "ANN201", "PLR0913"]  # Step 3: seller/sqlite_store.py
+"seller/identity.py" = ["PLR2004"]  # Step 4: refusal hints come from the library
+"seller/errors.py" = ["ANN204", "PLR0913"]  # Step 5: pure errors, rendering in seller/http.py
+"seller/offers.py" = ["C901", "PLR0912", "PLR0913", "PLR0917"]  # Step 5: seller/offers/
+"buyer/client.py" = ["PLR0913", "TRY003"]  # Step 6: buyer/seller_client.py
+"buyer/flow.py" = ["PLR0913", "PLR2004", "TRY003"]  # Step 6: the buyer mirror
+"seller/faults.py" = ["ANN001", "ANN202", "ANN204"]  # Step 6: the typed fault modes
+"runner/live.py" = ["ANN401", "PLR2004", "TRY003"]  # Step 7: runner/ split
+
+[tool.mypy]
+strict = true
+plugins = ["pydantic.mypy"]
+warn_unused_ignores = true
+mypy_path = "../iab-agentic-primitives/src"
+# The scope: the modules that pass strict today. Each step adds the modules it
+# makes clean; Step 8 ends with every package, tests/, and e2e/. A module
+# outside the scope is still analyzed for its callers, but reports nothing
+# (the follow_imports override below). Out of scope today, by the step that
+# brings it in:
+#   Step 0: seller/app, seller/faults, seller/seed, buyer/app, buyer/keyring, shared/wba
+#   Step 1: demo_types (deleted), shared/record, shared/documents
+#   Step 3: seller/store, buyer/store
+#   Step 5: seller/offers, seller/errors
+#   Step 6: buyer/flow
+#   Step 7: runner/live
+#   Step 8: tests/, e2e/
+files = [
+    "seller/__init__.py",
+    "seller/identity.py",
+    "buyer/__init__.py",
+    "buyer/client.py",
+    "shared/__init__.py",
+    "shared/attribution.py",
+    "shared/evidence.py",
+    "shared/operator.py",
+]
+
+# Out-of-scope demo modules: analyzed when an in-scope module imports them,
+# silent otherwise. The entry goes when the scope covers every package (Step 8).
+[[tool.mypy.overrides]]
+module = ["seller.*", "buyer.*", "shared.*", "demo_types.*", "runner.*"]
+follow_imports = "silent"
+
+# The library ships no py.typed yet, so mypy reads its source from the sibling
+# checkout. Delete this override and mypy_path when py.typed lands (library epic
+# wbalib-r1g, step 0).
+[[tool.mypy.overrides]]
+module = ["iab_agentic_primitives.*"]
+follow_imports = "silent"
+
+# No explicit Any: the tier grows with each step until it covers every module (Step 8).
+[[tool.mypy.overrides]]
+module = [
+    "seller.identity",
+    "buyer.client",
+    "shared.attribution",
+    "shared.evidence",
+    "shared.operator",
+]
+disallow_any_explicit = true
+
+[tool.coverage.run]
+source = ["seller", "buyer", "shared", "demo_types", "runner"]
+branch = true
+
+[tool.coverage.report]
+# The branch coverage measured on the tree before Step 0. Each step raises it to
+# its measured total; it is never lowered.
+fail_under = 45.26
+precision = 2
+show_missing = false

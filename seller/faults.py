@@ -1,4 +1,6 @@
-"""TEST ONLY. Breaks the signatures of the seller's answers to `commit` on purpose, so the e2e can prove the buyer refuses them.
+"""TEST ONLY. Breaks the signatures of the seller's answers to `commit` on purpose.
+
+The e2e uses it to prove that the buyer refuses them.
 
 The app installs this middleware only when `DEMO_FAULT_INJECTION=1`, and the
 TLS front never routes `/test/` to the seller. A real seller has neither.

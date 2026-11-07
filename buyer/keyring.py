@@ -1,4 +1,6 @@
-"""The buyer's signing keys: one private JWK file each, `keys/<kid>.jwk`, minted here and never shared.
+"""The buyer's signing keys: one private JWK file each, `keys/<kid>.jwk`.
+
+Each key is minted here and never shared.
 
 The directory publishes every key in `keys/`; one of them, the active key,
 signs. A rotation follows standard practice, and the keyring enforces its waits:

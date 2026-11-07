@@ -57,12 +57,12 @@ api.state.store = store
 api.state.origin = ORIGIN
 api.state.verifier = RequestVerifier(directory_resolver(), nonces=MemoryNonceStore())
 
-api.add_exception_handler(Refused, lambda request, e: e.response())
-api.add_exception_handler(OfferError, lambda request, e: e.response())
+api.add_exception_handler(Refused, lambda _request, e: e.response())
+api.add_exception_handler(OfferError, lambda _request, e: e.response())
 
 
 @api.exception_handler(RequestValidationError)
-async def _invalid(request: Request, e: RequestValidationError) -> JSONResponse:
+async def _invalid(_request: Request, e: RequestValidationError) -> JSONResponse:
     detail = "; ".join(f"{'/'.join(map(str, err['loc']))}: {err['msg']}" for err in e.errors())
     return OfferError("validation", detail, retry="none").response()
 

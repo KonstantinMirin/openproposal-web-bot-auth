@@ -6,3 +6,5 @@
 e2e/generated
 cfbot/node_modules
 deploy/localhost/generated
+.mypy_cache
+.coverage

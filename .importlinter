@@ -1,0 +1,27 @@
+# Import-layer contracts, checked by `uv run lint-imports` (make guards).
+# The contracts that hold today. Step 1 replaces demo_types with protocol, Step 3
+# adds persistence, and Step 8 sets the final order.
+[importlinter]
+root_packages =
+    seller
+    buyer
+    shared
+    demo_types
+    runner
+include_external_packages = True
+
+[importlinter:contract:parties-independent]
+name = The seller, the buyer, and the runner import nothing from each other
+type = independence
+modules =
+    seller
+    buyer
+    runner
+
+[importlinter:contract:layers]
+name = Party code sits above the shared code, which sits above the protocol types
+type = layers
+layers =
+    seller | buyer | runner
+    shared
+    demo_types

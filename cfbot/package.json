@@ -15,5 +15,8 @@
     "http-message-sig": "0.3.0",
     "structured-headers": "2.0.3",
     "web-bot-auth": "0.2.0"
+  },
+  "devDependencies": {
+    "eslint": "9.13.0"
   }
 }

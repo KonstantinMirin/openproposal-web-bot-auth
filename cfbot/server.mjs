@@ -96,6 +96,7 @@ async function directory(authority) {
  * signed, and signed by that key (Web Bot Auth Appendix B.1). `checked` collects
  * the directory signatures verified, for the verdict.
  */
+// eslint-disable-next-line complexity -- Step 8 splits it into fetchDirectory, directoryVerifiers, verifyDirectorySignatures, and pickKey.
 async function resolveKey(candidate, checked) {
   if (candidate.signatureAgent === undefined) throw new Error('no covered Signature-Agent member');
   const origin = new URL(candidate.signatureAgent.uri).origin;
@@ -165,6 +166,7 @@ function exampleCommit(lineItemId) {
   });
 }
 
+// eslint-disable-next-line complexity -- Step 8 replaces the if chain with a route table.
 createServer(async (req, res) => {
   const chunks = [];
   for await (const chunk of req) chunks.push(chunk);

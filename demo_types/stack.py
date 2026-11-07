@@ -43,7 +43,10 @@ class AssentEntry(Closed):
     at: Instant
     """§ 4.1.2: when the party wrote the entry, by its own statement."""
     idempotency_key: str | None = None
-    """§ 4.1.2: REQUIRED when `role` is `commitment`. Opaque; the seller never interprets it (§ 5.6.1)."""
+    """§ 4.1.2: REQUIRED when `role` is `commitment`.
+
+    Opaque; the seller never interprets it (§ 5.6.1).
+    """
     ground: VocabularyTerm | None = None
     """§ 4.1.2: REQUIRED when `role` is `decline`, absent on any other entry."""
 
@@ -73,8 +76,10 @@ class Commit(Closed):
     entry: AssentEntry
     """§ 5.6.1: the buyer's entry (§ 4.1.2), with `role: commitment`."""
     writes: dict[str, dict[str, Any]]
-    """§ 5.6.1: the buyer's writes (§ 3.4), keyed by each `line_item_id` that `entry.line_item_ids[]`
-    names. Each value is a `LineItemWrites`, which this stopgap leaves untyped."""
+    """§ 5.6.1: the buyer's writes (§ 3.4), keyed by each `line_item_id` that
+    `entry.line_item_ids[]` names. Each value is a `LineItemWrites`, which this stopgap
+    leaves untyped.
+    """
 
     @model_validator(mode="after")
     def _entry_and_writes(self) -> Commit:

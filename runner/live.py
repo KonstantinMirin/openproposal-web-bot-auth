@@ -413,7 +413,7 @@ class Flow:
         }
 
     async def reverify(self, seller: dict[str, Any], buyer: dict[str, Any]) -> dict[str, Any]:
-        """Verifies both kept messages again, offline, against the directory bytes each side kept."""
+        """Verifies both kept messages again, offline, against the directory bytes each kept."""
         with _database(self.config.seller_db) as db:
             row = db.execute(
                 "SELECT * FROM evidence WHERE id = ?", (seller["evidence_id"],)

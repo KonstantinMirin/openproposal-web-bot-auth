@@ -85,6 +85,12 @@ CREATE TABLE IF NOT EXISTS agreed_records (
 """
 
 
+_PRINCIPAL_BY_CREDENTIAL = (
+    "SELECT p.id, p.kind, p.legal_name, p.domain FROM credentials c"
+    " JOIN principals p ON p.id = c.principal_id"
+)
+
+
 def token_hash(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
@@ -118,11 +124,9 @@ class Store:
         )
 
     def _principal_where(self, column: str, value: str) -> dict[str, Any] | None:
-        row = self.db.execute(
-            "SELECT p.id, p.kind, p.legal_name, p.domain FROM credentials c"
-            f" JOIN principals p ON p.id = c.principal_id WHERE c.{column} = ?",
-            (value,),
-        ).fetchone()
+        # Not an injection: `column` is one of the two literals its callers pass.
+        query = f"{_PRINCIPAL_BY_CREDENTIAL} WHERE c.{column} = ?"
+        row = self.db.execute(query, (value,)).fetchone()
         return dict(row) if row else None
 
     def principal(self, principal_id: str) -> dict[str, Any] | None:
@@ -239,7 +243,8 @@ class Store:
     ) -> None:
         status, errors = rejection if rejection else (None, None)
         self.db.execute(
-            "INSERT INTO commits (principal_id, idempotency_key, proposal_id, canonical, status, errors)"
+            "INSERT INTO commits"
+            " (principal_id, idempotency_key, proposal_id, canonical, status, errors)"
             " VALUES (?, ?, ?, ?, ?, ?)",
             (
                 principal_id,

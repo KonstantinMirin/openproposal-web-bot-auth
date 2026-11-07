@@ -1,4 +1,6 @@
-"""What every scenario uses: the stack's addresses, a signer that holds the buyer's key, and each party's records.
+"""What every scenario uses.
+
+The stack's addresses, a signer that holds the buyer's key, and each party's records.
 
 The runner reads the buyer's key files and both databases from read-only
 volume mounts. Holding the buyer's key lets a scenario send what the buyer
@@ -50,7 +52,7 @@ def signed(
 
 
 def commit_body(amount: float) -> bytes:
-    """A well-formed Commit on demo-wba-2's weather-app-ctv, for requests the buyer would never send."""
+    """A well-formed Commit on demo-wba-2's weather-app-ctv, which the buyer would never send."""
     return json.dumps(
         {
             "entry": {
@@ -76,7 +78,7 @@ def commit_body(amount: float) -> bytes:
 
 
 def _operator_key(request: httpx.Request) -> None:
-    """Adds the operator key to the agents' own controls, which the runner reaches over plain http."""
+    """Adds the operator key to the agents' controls, which the runner reaches over plain http."""
     if request.url.scheme == "http":
         request.headers["X-Operator-Key"] = os.environ["OPERATOR_KEY"]
 

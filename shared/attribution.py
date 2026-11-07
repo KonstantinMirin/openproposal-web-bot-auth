@@ -27,7 +27,7 @@ def names_a_party(domain: str) -> bool:
 
 
 def attributes(signing_host: str, party_domain: str, *, body_covered: bool) -> bool:
-    """True when a signature from `signing_host` attributes an entry to the party at `party_domain`."""
+    """True when a signature from `signing_host` attributes an entry to `party_domain`'s party."""
     if not body_covered or not names_a_party(party_domain):
         return False
     host, domain = canonical_host(signing_host), canonical_host(party_domain)

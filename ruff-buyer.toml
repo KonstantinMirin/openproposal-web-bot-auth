@@ -1,0 +1,18 @@
+# Layer ban: in the buyer, only its client talks HTTP to other agents.
+#
+# Run as its own stage: `uv run ruff check --config ruff-buyer.toml` (make lint).
+# A separate config, so that no exemption here leaks into another ban.
+#
+# Step 6 points the exemption at buyer/seller_client.py, buyer/credentials.py,
+# and buyer/cfbot.py.
+include = ["buyer/**/*.py"]
+
+[lint]
+select = ["TID251"]
+
+[lint.per-file-ignores]
+# The one module that sends requests to the seller and to cfbot.
+"buyer/client.py" = ["TID251"]
+
+[lint.flake8-tidy-imports.banned-api]
+"httpx".msg = "Only the buyer's client sends requests; call it instead."

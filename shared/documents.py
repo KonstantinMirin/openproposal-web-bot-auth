@@ -52,7 +52,7 @@ for _tag, _pattern, _first in _CORE:
     CoreSchemaLoader.add_implicit_resolver(_tag, re.compile(_pattern), _first)
 
 
-def _int(loader: CoreSchemaLoader, node: yaml.ScalarNode) -> int:
+def _int(_loader: CoreSchemaLoader, node: yaml.ScalarNode) -> int:
     text = node.value
     value = int(text, 0) if text[:2] in ("0o", "0x") else int(text, 10)
     if abs(value) > _EXACT:
@@ -62,7 +62,7 @@ def _int(loader: CoreSchemaLoader, node: yaml.ScalarNode) -> int:
     return value
 
 
-def _float(loader: CoreSchemaLoader, node: yaml.ScalarNode) -> float:
+def _float(_loader: CoreSchemaLoader, node: yaml.ScalarNode) -> float:
     if node.value.lstrip("+-").lower() in (".inf", ".nan"):
         raise InvalidDocument(f"{node.value} at line {node.start_mark.line + 1} has no JSON form")
     value = float(node.value)
@@ -105,7 +105,8 @@ def loads_yaml(text: str) -> dict[str, Any]:
         if getattr(event, "tag", None) is not None:
             raise InvalidDocument(f"explicit tag {event.tag} at line {event.start_mark.line + 1}")
     try:
-        document = yaml.load(text, Loader=CoreSchemaLoader)  # refuses a second document
+        # Refuses a second document. Not unsafe: CoreSchemaLoader subclasses yaml.SafeLoader.
+        document = yaml.load(text, Loader=CoreSchemaLoader)  # noqa: S506
     except yaml.YAMLError as e:
         raise InvalidDocument(str(e)) from e
     _acyclic(document)

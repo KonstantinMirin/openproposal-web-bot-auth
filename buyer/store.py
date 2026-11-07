@@ -1,4 +1,4 @@
-"""The buyer's own records, in SQLite: the sellers it deals with, its commits, and their evidence."""
+"""The buyer's own records, in SQLite: its sellers, its commits, and their evidence."""
 
 from __future__ import annotations
 
@@ -67,7 +67,8 @@ class Store:
         self, origin: str, domain: str, legal_name: str, bearer_token: str | None
     ) -> None:
         self.db.execute(
-            "INSERT OR IGNORE INTO sellers (origin, domain, legal_name, bearer_token) VALUES (?, ?, ?, ?)",
+            "INSERT OR IGNORE INTO sellers (origin, domain, legal_name, bearer_token)"
+            " VALUES (?, ?, ?, ?)",
             (origin, domain, legal_name, bearer_token),
         )
 
@@ -77,8 +78,8 @@ class Store:
 
     def pending_commit(self, seller_origin: str, proposal_id: str, line_item_ids: list[str]):
         return self.db.execute(
-            "SELECT * FROM commits WHERE seller_origin = ? AND proposal_id = ? AND line_item_ids = ?"
-            " AND state = 'pending'",
+            "SELECT * FROM commits WHERE seller_origin = ? AND proposal_id = ?"
+            " AND line_item_ids = ? AND state = 'pending'",
             (seller_origin, proposal_id, json.dumps(sorted(line_item_ids))),
         ).fetchone()
 
@@ -135,8 +136,8 @@ class Store:
         method, url, request_headers, request_body = request
         digest = save_directory(self.db, directory)
         cursor = self.db.execute(
-            "INSERT INTO evidence (commit_id, origin, keyid, attributed, request_method, request_url,"
-            " request_headers, request_body, status, headers, body, directory_digest)"
+            "INSERT INTO evidence (commit_id, origin, keyid, attributed, request_method,"
+            " request_url, request_headers, request_body, status, headers, body, directory_digest)"
             " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 commit_id,
