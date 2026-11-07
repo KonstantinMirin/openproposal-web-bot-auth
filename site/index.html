@@ -1,0 +1,602 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Web Bot Auth demo</title>
+<meta name="description" content="Two agents agree an OpenProposal offer and verify each other with Web Bot Auth: how it works, the identity boundary, one SDK on both sides, the live setup, and the latest run.">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- Arrowheads every diagram shares. Not display:none, so the markers render. -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <defs>
+    <marker id="a-fg" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path class="head-fg" d="M0,0 L10,5 L0,10 z"/></marker>
+    <marker id="a-muted" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path class="head-muted" d="M0,0 L10,5 L0,10 z"/></marker>
+    <marker id="a-bad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path class="head-bad" d="M0,0 L10,5 L0,10 z"/></marker>
+    <marker id="a-accent" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path class="head-accent" d="M0,0 L10,5 L0,10 z"/></marker>
+  </defs>
+</svg>
+
+<header class="top">
+  <nav aria-label="Sections">
+    <a class="home" href="#top">Web Bot Auth demo</a>
+    <a href="#how">How it works</a>
+    <a href="#boundary">Identity boundary</a>
+    <a href="#flow">Offer flow</a>
+    <a href="#sdk">One SDK</a>
+    <a href="#setup">Setup</a>
+    <a href="#try">Try it</a>
+    <a href="#latest">Latest run</a>
+  </nav>
+</header>
+
+<main id="top">
+
+<div class="intro">
+  <h1>Two agents that verify each other without a shared secret</h1>
+  <p class="lede">A buyer agent commits to an OpenProposal offer, and a seller agent accepts it. Each agent learns who the other is from a signature it can check, with no key exchanged in advance.</p>
+  <p>Three agents run live at their own origins: a seller, a buyer, and cfbot, an agent built on Cloudflare's Web Bot Auth library. Every 15 minutes a runner drives the whole offer flow, once with a signature and once with a bearer token. It publishes what each party sent, received, and kept under <a href="#latest">Latest run</a>.</p>
+  <a class="status" id="run-status" href="#latest"><span class="dot"></span><span>Loading the latest run</span></a>
+</div>
+
+<!-- ─────────────────────────────────────────────────────────────── -->
+<section id="how">
+<h2>How Web Bot Auth works</h2>
+<div class="prose">
+  <p><a href="https://datatracker.ietf.org/doc/draft-ietf-webbotauth-httpsig-protocol/">Web Bot Auth</a> is an IETF draft protocol that signs automated HTTP traffic with <a href="https://www.rfc-editor.org/rfc/rfc9421">HTTP Message Signatures (RFC 9421)</a>. An agent's identity is its origin, such as <code>https://buyer.wba-demo.noetis.dev</code>. The agent publishes its public keys in a signed key directory at a fixed path on that origin, and signs each request with its private key.</p>
+  <p>A verifier reads the origin from the request, fetches that directory over HTTPS, and checks the signature. The TLS certificate for the host ties the keys to the domain, so the verifier needs nothing in advance: no key, no secret, no registration.</p>
+</div>
+
+<figure>
+<div class="diagram">
+<svg viewBox="0 0 760 392" role="img" aria-labelledby="f1-title f1-desc">
+  <title id="f1-title">How a verifier learns who signed a request</title>
+  <desc id="f1-desc">The buyer signs a request. The seller reads the host from Signature-Agent, fetches the key directory at that host over HTTPS, selects the key by origin and keyid, and verifies the signature, Content-Digest, time window, and nonce. The result is the verified origin.</desc>
+
+  <rect class="frame" x="10" y="30" width="260" height="296" rx="10"/>
+  <text class="t-mono t-muted" x="20" y="22">https://buyer.wba-demo.noetis.dev</text>
+  <rect class="frame" x="490" y="30" width="260" height="296" rx="10"/>
+  <text class="t-mono t-muted" x="500" y="22">https://seller.wba-demo.noetis.dev</text>
+
+  <rect class="box" x="30" y="50" width="220" height="96" rx="8"/>
+  <text class="t-title" x="46" y="78">Buyer agent</text>
+  <text x="46" y="101">Signs each request with</text>
+  <text x="46" y="121">its private key</text>
+
+  <rect class="box-accent" x="30" y="210" width="220" height="100" rx="8"/>
+  <text class="t-title" x="46" y="236">Key directory</text>
+  <text class="t-mono" x="46" y="258">/.well-known/http-message-</text>
+  <text class="t-mono" x="46" y="275">signatures-directory</text>
+  <text class="t-muted" x="46" y="297">JWK Set, signed by each key</text>
+
+  <rect class="box" x="510" y="50" width="220" height="96" rx="8"/>
+  <text class="t-title" x="526" y="78">Seller agent</text>
+  <text x="526" y="101">Holds no key for the buyer,</text>
+  <text x="526" y="121">only its origin on file</text>
+
+  <rect class="box" x="510" y="210" width="220" height="100" rx="8"/>
+  <text x="526" y="236"><tspan class="t-step">4 </tspan><tspan class="t-title">Verify</tspan></text>
+  <text class="t-small" x="526" y="258">Key by (origin, keyid)</text>
+  <text class="t-small" x="526" y="277">Signature and Content-Digest</text>
+  <text class="t-small" x="526" y="296">Time window and nonce</text>
+
+  <path class="wire" d="M250,92 H506" marker-end="url(#a-fg)"/>
+  <text x="378" y="82" text-anchor="middle"><tspan class="t-step">1 </tspan>Signed request</text>
+  <text class="t-mono t-muted" x="378" y="112" text-anchor="middle">Signature-Agent, Signature-Input,</text>
+  <text class="t-mono t-muted" x="378" y="128" text-anchor="middle">Signature, Content-Digest</text>
+
+  <path class="wire" d="M620,146 V206" marker-end="url(#a-fg)"/>
+  <text class="t-small t-muted" x="628" y="176">Host from</text>
+  <text class="t-small t-muted" x="628" y="192">Signature-Agent</text>
+
+  <path class="wire" d="M508,244 H254" marker-end="url(#a-fg)"/>
+  <text x="381" y="234" text-anchor="middle"><tspan class="t-step">2 </tspan>GET the directory</text>
+  <path class="wire-accent" d="M254,282 H506" marker-end="url(#a-accent)"/>
+  <text x="381" y="302" text-anchor="middle"><tspan class="t-step">3 </tspan>Signed keys, over HTTPS</text>
+
+  <path class="wire" d="M680,310 V362 H624" marker-end="url(#a-fg)"/>
+  <rect class="box-ok" x="140" y="344" width="480" height="36" rx="18"/>
+  <text x="380" y="367" text-anchor="middle"><tspan class="t-ok">Verified identity: </tspan><tspan class="t-mono">https://buyer.wba-demo.noetis.dev</tspan></text>
+</svg>
+</div>
+<figcaption>Figure 1. The verifier learns the signer's keys from the signer's own origin, at the moment it needs them. <span class="scroll-hint">Scroll the diagram sideways to see all of it.</span></figcaption>
+</figure>
+
+<div class="prose">
+<p>The four steps in Figure 1 work as follows:</p>
+<ol>
+  <li>The buyer signs the request. <code>Signature-Input</code> lists what the signature covers: the method, the target URI, the authority, and <code>Signature-Agent</code>, which names the buyer's directory URL. With a body, <code>Content-Digest</code> carries the body's SHA-256, and the signature covers it too.</li>
+  <li>The seller takes the host from <code>Signature-Agent</code> and fetches <code>https://&lt;host&gt;/.well-known/http-message-signatures-directory</code>. It follows no redirects, and it keeps the directory for up to 300 seconds.</li>
+  <li>The directory is a JWK Set. Each key signs the directory response itself, and each key's <code>kid</code> is its JWK thumbprint.</li>
+  <li>The seller selects the key by the pair of origin and <code>keyid</code>, verifies the signature and <code>Content-Digest</code>, checks the time window, and records the <code>nonce</code>, so the same request can't be replayed.</li>
+</ol>
+<p>Responses work the same way. The seller signs each answer as its own origin, and that signature also covers the request's signature. The answer is bound to that exact request, so nobody can replay it as the answer to another one.</p>
+<p>These are the headers of a real commit the buyer sent, from a run of this demo:</p>
+</div>
+<pre><code>content-digest: sha-256=:XYZXLHvlTPfgpTCpGuuvvlXJOIn517Wm3H5ngdw24vg=:
+signature-agent: sig1="https://buyer.wba-demo.noetis.dev/.well-known/http-message-signatures-directory"
+signature-input: sig1=("@method" "@target-uri" "@authority" "content-type" "content-digest" "signature-agent";key="sig1");created=1794068629;keyid="ZKFm7HPxqUK7ECl0ppoCPHjrE2qTrz_bc_rJ58ippbA";alg="ed25519";expires=1794068929;nonce="Qb7KCDWAcaX2…";tag="web-bot-auth"
+signature: sig1=:5kF9XH4bsuauHZoFccx+QIPx31fC1lEEETIkSXE22ZRLN8OIL1otTSDNxFNjTIxgN+hb387+KZBuexTHnt1SAA==:</code></pre>
+<div class="prose">
+<p>OpenProposal § 2.8 profiles these rules for agent traffic: Ed25519 keys, exactly one signature per message, a lifetime of at most 300 seconds, and 60 seconds of clock skew. It adds no header, tag, key field, or error code, so a standard Web Bot Auth implementation configured with these rules interoperates. Read the <a href="SPEC_URL">OpenProposal 3.0 specification</a> and the <a href="LIBRARY_URL">Web Bot Auth library</a> both agents use.</p>
+</div>
+</section>
+
+<!-- ─────────────────────────────────────────────────────────────── -->
+<section id="boundary">
+<h2>The identity boundary</h2>
+<div class="prose">
+  <p>A bearer token and a Web Bot Auth signature are both transport-level credentials. The seller handles them in one place, <code>resolve_caller</code> in <code>seller/identity.py</code>. Every agent-facing route asks that function for its caller and never reads a header itself.</p>
+</div>
+
+<figure>
+<div class="diagram">
+<svg viewBox="0 0 760 404" role="img" aria-labelledby="f2-title f2-desc">
+  <title id="f2-title">One resolver for both credentials</title>
+  <desc id="f2-desc">A signature, a bearer token, or no credential enters resolve_caller. It reads the credential, confirms it with the verifier or the token hash, resolves it to the stored principal, and freezes the result. A frozen ResolvedCaller or PublicCaller reaches the offer logic. A failing credential is refused with 400, 401, 403, 429, or 503, and the handler never runs.</desc>
+
+  <rect class="box" x="10" y="36" width="196" height="72" rx="8"/>
+  <text class="t-title" x="22" y="60">Web Bot Auth</text>
+  <text class="t-small" x="22" y="80">A signature, checked against</text>
+  <text class="t-small" x="22" y="97">the signer's key directory</text>
+  <rect class="box" x="10" y="128" width="196" height="72" rx="8"/>
+  <text class="t-title" x="22" y="152">Bearer token</text>
+  <text class="t-mono" x="22" y="174">Authorization: Bearer</text>
+  <rect class="box" x="10" y="220" width="196" height="52" rx="8"/>
+  <text class="t-title" x="22" y="251">No credential</text>
+
+  <path class="wire" d="M206,72 H222 M206,164 H222 M206,246 H222 M222,65 V246"/>
+  <path class="wire" d="M222,65 H254" marker-end="url(#a-fg)"/>
+
+  <rect class="frame-accent" x="240" y="10" width="272" height="316" rx="12"/>
+  <text x="256" y="32"><tspan class="t-mono t-title">resolve_caller</tspan><tspan class="t-muted" dx="8">seller/identity.py</tspan></text>
+
+  <rect class="box" x="256" y="46" width="240" height="38" rx="6"/>
+  <text x="270" y="70"><tspan class="t-step">1 </tspan>Read the credential</text>
+  <path class="wire" d="M376,84 V98" marker-end="url(#a-fg)"/>
+  <rect class="box" x="256" y="100" width="240" height="70" rx="6"/>
+  <text x="270" y="124"><tspan class="t-step">2 </tspan>Confirm it</text>
+  <text class="t-small" x="270" y="144">Signature: the library's verifier</text>
+  <text class="t-small" x="270" y="161">Token: its SHA-256 on file</text>
+  <path class="wire" d="M376,170 V184" marker-end="url(#a-fg)"/>
+  <rect class="box" x="256" y="186" width="240" height="70" rx="6"/>
+  <text x="270" y="210"><tspan class="t-step">3 </tspan>Resolve the principal</text>
+  <text class="t-small" x="270" y="230">By the verified origin,</text>
+  <text class="t-small" x="270" y="247">or by the token hash</text>
+  <path class="wire" d="M376,256 V270" marker-end="url(#a-fg)"/>
+  <rect class="box" x="256" y="272" width="240" height="38" rx="6"/>
+  <text x="270" y="296"><tspan class="t-step">4 </tspan>Freeze the result</text>
+
+  <path class="wire-accent" d="M496,291 H524 V176 H546" marker-end="url(#a-accent)"/>
+  <rect class="box-accent" x="548" y="120" width="200" height="112" rx="8"/>
+  <text class="t-title" x="562" y="146">Frozen identity</text>
+  <text class="t-mono" x="562" y="168">ResolvedCaller</text>
+  <text class="t-small t-muted" x="562" y="185">principal and credential</text>
+  <text class="t-mono" x="562" y="206">PublicCaller</text>
+  <text class="t-small t-muted" x="562" y="223">no principal</text>
+  <path class="wire" d="M648,232 V260" marker-end="url(#a-fg)"/>
+  <rect class="box" x="548" y="262" width="200" height="64" rx="8"/>
+  <text class="t-title" x="562" y="288">Offer logic</text>
+  <text class="t-mono" x="562" y="309">seller/offers.py</text>
+  <text class="t-small t-muted" x="548" y="348">Never reads a header</text>
+  <text class="t-small t-muted" x="548" y="365">or a credential</text>
+
+  <path class="wire-bad" d="M256,135 H232 V365 H254" marker-end="url(#a-bad)"/>
+  <rect class="box-bad" x="256" y="342" width="240" height="50" rx="8"/>
+  <text class="t-small t-bad" x="270" y="363">Refused: 400, 401, 403, 429, 503</text>
+  <text class="t-small" x="270" y="382">The handler never runs</text>
+</svg>
+</div>
+<figcaption>Figure 2. Both credentials enter one resolver, and only a frozen identity leaves it. A credential that fails confirmation leaves through the refusal path, never as "no credential". <span class="scroll-hint">Scroll the diagram sideways to see all of it.</span></figcaption>
+</figure>
+
+<div class="prose">
+<p>The boundary takes four steps:</p>
+<ol>
+  <li><strong>Read.</strong> The boundary finds which credential the request presents. A request that presents both a signature and a token gets <code>400</code>.</li>
+  <li><strong>Confirm.</strong> A signature goes to the library's <code>RequestVerifier</code>, which fetches the directory and checks <code>Content-Digest</code> against the body. A token is confirmed when its SHA-256 matches a stored row. The seller never stores the token itself.</li>
+  <li><strong>Resolve.</strong> The confirmed credential maps to the principal in the seller's own <code>credentials</code> table: by verified origin, or by token hash. A verified origin with no row is an established identity with no principal: a <code>PublicCaller</code> that carries the origin.</li>
+  <li><strong>Freeze.</strong> The boundary returns one immutable value, <code>ResolvedCaller</code> or <code>PublicCaller</code>. The offer logic receives it and can't change it.</li>
+</ol>
+<p>The offer logic is credential-blind. The boundary puts how the caller authenticated, the evidence it kept, and the attribution of § 4.1.2 into one <code>Credential</code> record. The offer logic hands that record to storage with the entry it writes, and never reads it, so no offer decision depends on which credential the caller used.</p>
+<p>A credential that fails is refused at the boundary, before anything reads the body. The refusal is a transport status with no <code>errors[]</code> object:</p>
+</div>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Status</th><th>When</th><th>The answer also carries</th></tr></thead>
+  <tbody>
+    <tr><td><code>400</code></td><td>A signature field doesn't parse, or the request presents both credentials</td><td>Nothing more</td></tr>
+    <tr><td><code>401</code></td><td>A bearer token matches no row, or <code>Authorization</code> isn't a Bearer token</td><td><code>WWW-Authenticate</code></td></tr>
+    <tr><td><code>403</code></td><td>A signature fails verification or a profile rule</td><td><code>Accept-Signature</code></td></tr>
+    <tr><td><code>429</code></td><td>A signature's nonce was seen before</td><td><code>Accept-Signature</code></td></tr>
+    <tr><td><code>503</code></td><td>The verifier can't record the nonce</td><td><code>Retry-After</code></td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3 id="interop">Two credentials, one identity type</h3>
+<div class="prose">
+<p>The same flow runs with either credential and reaches the same <code>ResolvedCaller</code> type, so you can add Web Bot Auth next to bearer tokens without touching the business logic. The live run proves it every 15 minutes: the bearer buyer and the signing buyer both reach <code>agreed</code> through the same code. Web Bot Auth adds what a bearer token can't give:</p>
+</div>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Property</th><th>Bearer token</th><th>Web Bot Auth signature</th></tr></thead>
+  <tbody>
+    <tr><td>Set up before the first call</td><td>The seller issues a token and sends it to the buyer</td><td>Nothing. The seller records the buyer's origin; keys come from the buyer's directory</td></tr>
+    <tr><td>Shared secret</td><td>The token. Whoever holds it is the buyer</td><td>None. The directory holds public keys only</td></tr>
+    <tr><td>Covers the body</td><td>No</td><td>Yes, through <code>Content-Digest</code></td></tr>
+    <tr><td>Replay of a captured request</td><td>Works until the token is revoked</td><td>Refused: each signature has a nonce and lasts at most 300 seconds</td></tr>
+    <tr><td>Evidence a third party can check</td><td>None. Either party could have sent the request</td><td>The signed message and the directory it verified against</td></tr>
+    <tr><td>Key rotation</td><td>Both parties coordinate a new token</td><td>The signer publishes a new key, waits out caches, and switches. The verifier does nothing</td></tr>
+    <tr><td>Identity the boundary returns</td><td><code>ResolvedCaller</code>, <code>method: bearer</code></td><td><code>ResolvedCaller</code>, <code>method: web_bot_auth</code></td></tr>
+  </tbody>
+</table>
+</div>
+</section>
+
+<!-- ─────────────────────────────────────────────────────────────── -->
+<section id="flow">
+<h2>The offer flow</h2>
+<div class="prose">
+  <p>The buyer reads a proposal the seller issued to it, and commits to one line item. The seller checks the commit and accepts. Each message is signed, and each answer is bound to the request it answers.</p>
+</div>
+
+<figure>
+<div class="diagram">
+<svg viewBox="0 0 760 670" role="img" aria-labelledby="f3-title f3-desc">
+  <title id="f3-title">Offer acceptance between the buyer and the seller</title>
+  <desc id="f3-desc">The buyer sends a signed GET for its proposal. The seller fetches the buyer's key directory, verifies, resolves the principal, and answers with the issued proposal, signed and bound. The buyer fetches the seller's directory, verifies the answer, composes its writes, and computes record_digest. It sends a signed POST commit. The seller verifies, recomputes record_digest, runs the section 5.6.1 checks, writes the entries, and answers with a signed, bound CommitResult. The buyer checks the matching pair and keeps the signed answer.</desc>
+
+  <rect class="box" x="60" y="14" width="220" height="52" rx="8"/>
+  <text class="t-title" x="170" y="37" text-anchor="middle">Buyer agent</text>
+  <text class="t-mono t-muted" x="170" y="56" text-anchor="middle">buyer.wba-demo.noetis.dev</text>
+  <rect class="box" x="480" y="14" width="220" height="52" rx="8"/>
+  <text class="t-title" x="590" y="37" text-anchor="middle">Seller agent</text>
+  <text class="t-mono t-muted" x="590" y="56" text-anchor="middle">seller.wba-demo.noetis.dev</text>
+  <line class="lifeline" x1="170" y1="66" x2="170" y2="664"/>
+  <line class="lifeline" x1="590" y1="66" x2="590" y2="664"/>
+
+  <path class="wire" d="M170,104 H586" marker-end="url(#a-fg)"/>
+  <text x="380" y="96" text-anchor="middle"><tspan class="t-step">1 </tspan><tspan class="t-mono">GET /proposals/{id}</tspan></text>
+  <text class="t-small t-muted" x="380" y="120" text-anchor="middle">signed by the buyer</text>
+
+  <path class="wire-accent" d="M590,160 H174" marker-end="url(#a-accent)"/>
+  <text x="380" y="152" text-anchor="middle">Fetch the buyer's key directory</text>
+  <text class="t-small t-muted" x="380" y="176" text-anchor="middle">first contact; kept for up to 300 s</text>
+
+  <rect class="box" x="500" y="192" width="180" height="46" rx="6"/>
+  <text class="t-small" x="590" y="212" text-anchor="middle">Verify; resolve_caller finds</text>
+  <text class="t-small" x="590" y="229" text-anchor="middle">the stored principal</text>
+
+  <path class="wire-muted" d="M590,272 H174" marker-end="url(#a-muted)"/>
+  <text x="380" y="264" text-anchor="middle"><tspan class="t-step">2 </tspan>200, the issued proposal</text>
+  <text class="t-small t-muted" x="380" y="288" text-anchor="middle">signed by the seller, bound to request 1</text>
+
+  <path class="wire-accent" d="M170,326 H586" marker-end="url(#a-accent)"/>
+  <text x="380" y="318" text-anchor="middle">Fetch the seller's key directory</text>
+
+  <rect class="box" x="60" y="346" width="220" height="66" rx="6"/>
+  <text class="t-small" x="170" y="368" text-anchor="middle">Verify the answer and its binding</text>
+  <text class="t-small" x="170" y="385" text-anchor="middle">Compose the writes; compute</text>
+  <text class="t-mono" x="170" y="402" text-anchor="middle">record_digest</text>
+
+  <path class="wire" d="M170,446 H586" marker-end="url(#a-fg)"/>
+  <text x="380" y="438" text-anchor="middle"><tspan class="t-step">3 </tspan><tspan class="t-mono">POST /proposals/{id}/commit</tspan></text>
+  <text class="t-small t-muted" x="380" y="462" text-anchor="middle">signed; Content-Digest covers the Commit</text>
+
+  <rect class="box" x="480" y="478" width="220" height="66" rx="6"/>
+  <text class="t-small" x="590" y="499" text-anchor="middle">Verify; the same principal</text>
+  <text class="t-small" x="590" y="516" text-anchor="middle">Recompute record_digest</text>
+  <text class="t-small" x="590" y="533" text-anchor="middle">Check § 5.6.1; write the entries</text>
+
+  <path class="wire-muted" d="M590,578 H174" marker-end="url(#a-muted)"/>
+  <text x="380" y="570" text-anchor="middle"><tspan class="t-step">4 </tspan>200, the CommitResult</text>
+  <text class="t-small t-muted" x="380" y="594" text-anchor="middle">signed by the seller, bound to request 3</text>
+
+  <rect class="box-ok" x="60" y="610" width="220" height="48" rx="6"/>
+  <text class="t-small" x="170" y="630" text-anchor="middle">Check the matching pair</text>
+  <text class="t-small" x="170" y="647" text-anchor="middle">Keep the signed answer</text>
+</svg>
+</div>
+<figcaption>Figure 3. Solid arrows are signed requests, dashed arrows are signed answers, and blue arrows are directory fetches. Each party fetches the other's directory on first contact and keeps it for up to 300 seconds. <span class="scroll-hint">Scroll the diagram sideways to see all of it.</span></figcaption>
+</figure>
+
+<div class="prose">
+<p>Each side does the following:</p>
+<ul>
+  <li><strong>The seller</strong> shows an issued proposal only to its buyer. On a commit it recomputes <code>record_digest</code> over the line items plus the commit's writes, runs the checks of § 5.6.1, and writes the buyer's <code>commitment</code> entry and its own <code>acceptance</code>. A repeated commit with the same <code>idempotency_key</code> gets the stored result.</li>
+  <li><strong>The buyer</strong> refuses an answer it can't verify: unsigned, unbound, or bound to another request. It re-sends the same <code>Commit</code> until an answer verifies, and then checks that the acceptance matches its commitment.</li>
+  <li><strong>Both</strong> keep the counterparty's signed message as exact bytes, with the exact directory bytes it verified against. That evidence verifies again later, offline, which is what § 4.1.2 asks a party to be able to show.</li>
+</ul>
+</div>
+</section>
+
+<!-- ─────────────────────────────────────────────────────────────── -->
+<section id="sdk">
+<h2>One SDK on both sides</h2>
+<div class="prose">
+  <p>The buyer and the seller import the same generated OpenProposal SDK and the same Web Bot Auth library. Their business logic differs: one composes a commit, and the other checks it. Everything they must agree on is the same code.</p>
+</div>
+
+<figure>
+<div class="diagram">
+<svg viewBox="0 0 760 468" role="img" aria-labelledby="f4-title f4-desc">
+  <title id="f4-title">The same packages in the buyer and the seller</title>
+  <desc id="f4-desc">The buyer and the seller each run their own logic on top of the same layers: the generated OpenProposal SDK, the stopgap stack types in demo_types/stack.py, the record rules in shared/record.py, and the Web Bot Auth library. Both compute the same record_digest from the same bytes. cfbot, on Cloudflare's library, is a second implementation that proves interop rather than shared code.</desc>
+
+  <text class="t-title" x="160" y="26" text-anchor="middle">Buyer</text>
+  <text class="t-title" x="600" y="26" text-anchor="middle">Seller</text>
+
+  <rect class="box" x="20" y="40" width="280" height="46" rx="6"/>
+  <text class="t-mono t-title" x="36" y="60">buyer/flow.py</text>
+  <text class="t-small t-muted" x="36" y="78">Composes the Commit</text>
+  <rect class="box" x="460" y="40" width="280" height="46" rx="6"/>
+  <text class="t-mono t-title" x="476" y="60">seller/offers.py</text>
+  <text class="t-small t-muted" x="476" y="78">Checks the Commit</text>
+  <text class="t-small t-muted" x="380" y="68" text-anchor="middle">own logic</text>
+
+  <rect class="box-accent" x="20" y="100" width="280" height="46" rx="6"/>
+  <text class="t-title" x="36" y="120">OpenProposal SDK</text>
+  <text class="t-mono t-small" x="36" y="138">openproposal, generated</text>
+  <rect class="box-accent" x="460" y="100" width="280" height="46" rx="6"/>
+  <text class="t-title" x="476" y="120">OpenProposal SDK</text>
+  <text class="t-mono t-small" x="476" y="138">openproposal, generated</text>
+  <path class="wire-muted" d="M302,123 H324 M436,123 H458"/>
+  <text class="t-small" x="380" y="128" text-anchor="middle">same types</text>
+
+  <rect class="box-stopgap" x="20" y="160" width="280" height="46" rx="6"/>
+  <text class="t-title t-stopgap" x="36" y="180">Stack types, a stopgap</text>
+  <text class="t-mono t-small" x="36" y="198">demo_types/stack.py</text>
+  <rect class="box-stopgap" x="460" y="160" width="280" height="46" rx="6"/>
+  <text class="t-title t-stopgap" x="476" y="180">Stack types, a stopgap</text>
+  <text class="t-mono t-small" x="476" y="198">demo_types/stack.py</text>
+  <path class="wire-muted" d="M302,183 H324 M436,183 H458"/>
+  <text class="t-small" x="380" y="188" text-anchor="middle">same, by hand</text>
+
+  <rect class="box" x="20" y="220" width="280" height="46" rx="6"/>
+  <text class="t-title" x="36" y="240">Record rules (§ 4.1.1)</text>
+  <text class="t-mono t-small" x="36" y="258">shared/record.py</text>
+  <rect class="box" x="460" y="220" width="280" height="46" rx="6"/>
+  <text class="t-title" x="476" y="240">Record rules (§ 4.1.1)</text>
+  <text class="t-mono t-small" x="476" y="258">shared/record.py</text>
+  <path class="wire-muted" d="M302,243 H324 M436,243 H458"/>
+  <text class="t-small" x="380" y="248" text-anchor="middle">same digest rule</text>
+
+  <rect class="box-accent" x="20" y="280" width="280" height="46" rx="6"/>
+  <text class="t-title" x="36" y="300">Web Bot Auth library</text>
+  <text class="t-mono t-small" x="36" y="318">iab_agentic_primitives</text>
+  <rect class="box-accent" x="460" y="280" width="280" height="46" rx="6"/>
+  <text class="t-title" x="476" y="300">Web Bot Auth library</text>
+  <text class="t-mono t-small" x="476" y="318">iab_agentic_primitives</text>
+  <path class="wire-muted" d="M302,303 H324 M436,303 H458"/>
+  <text class="t-small" x="380" y="308" text-anchor="middle">same checks</text>
+
+  <path class="wire" d="M160,326 V350" marker-end="url(#a-fg)"/>
+  <path class="wire" d="M600,326 V350" marker-end="url(#a-fg)"/>
+  <rect class="box-ok" x="130" y="352" width="500" height="40" rx="20"/>
+  <text x="380" y="377" text-anchor="middle">Both compute the same <tspan class="t-mono">record_digest</tspan> from the same bytes</text>
+
+  <rect class="frame" x="20" y="410" width="720" height="50" rx="8"/>
+  <text x="36" y="431"><tspan class="t-title">cfbot</tspan><tspan class="t-muted" dx="8">Cloudflare's web-bot-auth, in Node</tspan></text>
+  <text class="t-small t-muted" x="36" y="450">A second implementation of the same profile. It proves interop, not shared code.</text>
+</svg>
+</div>
+<figcaption>Figure 4. Each party runs its own copy of the same packages. The dashed layer is hand-written and replaced by generated types. <span class="scroll-hint">Scroll the diagram sideways to see all of it.</span></figcaption>
+</figure>
+
+<div class="prose">
+<p>An agreement holds only if both parties compute the same <code>record_digest</code>: the SHA-256 of the binding record in RFC 8785 canonical form. A party that parses one field differently, drops an unknown member, or writes a number another way computes a different digest, and the seller answers <code>record_mismatch</code>. The same holds for signatures: two verifiers that read the profile differently accept different messages.</p>
+<p>A generated SDK removes that risk at the source. Every party, in every language, gets types generated from one schema, so each one parses and serializes the same way. The Web Bot Auth library does the same for signing and verification. When the buyer and the seller each use these packages, they agree by construction rather than by testing each pair.</p>
+<p class="callout"><strong>Stopgap:</strong> <code>demo_types/stack.py</code> defines <code>Commit</code>, <code>CommitResult</code>, and <code>AssentEntry</code> by hand, because the SDK generator doesn't cover these three types of the specification's pull-request stack yet. Generated types replace that module, and both parties then import them from <code>openproposal</code> like every other type.</p>
+</div>
+</section>
+
+<!-- ─────────────────────────────────────────────────────────────── -->
+<section id="setup">
+<h2>The setup</h2>
+<h3>The live deployment</h3>
+<div class="prose">
+  <p>One host runs the three agents as containers, each on a port that only the host can reach. Caddy terminates TLS with Let's Encrypt certificates and passes each public name to its agent. The agents trust public certificate authorities only, and they call each other by public name, through DNS and Caddy, like any outside party.</p>
+</div>
+
+<figure>
+<div class="diagram">
+<svg viewBox="0 0 760 482" role="img" aria-labelledby="f5-title f5-desc">
+  <title id="f5-title">Live topology</title>
+  <desc id="f5-desc">Public DNS points four names at the host. Clients reach Caddy on port 443, which holds Let's Encrypt certificates and proxies seller, buyer, and cfbot to local ports 18081, 18082, and 18083, and serves the site files. Caddy never routes the operator controls. A runner container calls the agents' operator controls with the operator key, reads both databases read-only, and writes the report that Caddy serves.</desc>
+
+  <rect class="box" x="10" y="40" width="180" height="78" rx="8"/>
+  <text class="t-title" x="22" y="64">Public DNS</text>
+  <text class="t-small" x="22" y="84">Four A records point</text>
+  <text class="t-small" x="22" y="101">at the host</text>
+  <rect class="box" x="10" y="150" width="180" height="78" rx="8"/>
+  <text class="t-title" x="22" y="174">Any client</text>
+  <text class="t-small" x="22" y="194">A browser, curl, another</text>
+  <text class="t-small" x="22" y="211">agent, a validator</text>
+  <path class="wire-muted" d="M100,150 V122" marker-end="url(#a-muted)"/>
+  <path class="wire" d="M190,190 H210 V81 H234" marker-end="url(#a-fg)"/>
+
+  <rect class="frame" x="220" y="14" width="530" height="460" rx="12"/>
+  <text class="t-small t-muted" x="232" y="34">The host</text>
+
+  <rect class="box-accent" x="236" y="44" width="498" height="74" rx="8"/>
+  <text class="t-title" x="250" y="68">Caddy, port 443</text>
+  <text class="t-small" x="250" y="88">Let's Encrypt certificates; passes each name to a local port</text>
+  <text class="t-small t-muted" x="250" y="106">Never routes /operator/, /run/, or /test/</text>
+
+  <rect class="frame" x="236" y="150" width="360" height="310" rx="10"/>
+  <text class="t-small t-muted" x="248" y="452">docker compose project wba-demo-live</text>
+
+  <rect class="box" x="248" y="184" width="106" height="86" rx="6"/>
+  <text class="t-title" x="260" y="206">seller</text>
+  <text class="t-mono t-small" x="260" y="226">:18081</text>
+  <text class="t-small t-muted" x="260" y="246">key, SQLite</text>
+  <rect class="box" x="366" y="184" width="106" height="86" rx="6"/>
+  <text class="t-title" x="378" y="206">buyer</text>
+  <text class="t-mono t-small" x="378" y="226">:18082</text>
+  <text class="t-small t-muted" x="378" y="246">keys, SQLite</text>
+  <rect class="box" x="484" y="184" width="100" height="86" rx="6"/>
+  <text class="t-title" x="496" y="206">cfbot</text>
+  <text class="t-mono t-small" x="496" y="226">:18083</text>
+  <text class="t-small t-muted" x="496" y="246">key</text>
+
+  <path class="wire" d="M301,118 V182" marker-end="url(#a-fg)"/>
+  <path class="wire" d="M410,118 V182" marker-end="url(#a-fg)"/>
+  <path class="wire" d="M534,118 V182" marker-end="url(#a-fg)"/>
+  <path class="wire-muted" d="M440,184 V122" marker-end="url(#a-muted)"/>
+  <text class="t-small t-muted" x="446" y="142">outbound</text>
+
+  <rect class="box" x="248" y="300" width="336" height="130" rx="6"/>
+  <text class="t-title" x="260" y="324">runner, every 15 minutes</text>
+  <text class="t-small" x="260" y="346">Runs the flow with a signature, then a token</text>
+  <text class="t-small" x="260" y="366">Calls /operator/ with the operator key</text>
+  <text class="t-small" x="260" y="386">Reads both databases, read-only</text>
+  <text class="t-small" x="260" y="406">Writes a report with no secrets</text>
+  <path class="wire" d="M301,300 V274" marker-end="url(#a-fg)"/>
+  <path class="wire" d="M410,300 V274" marker-end="url(#a-fg)"/>
+
+  <rect class="box" x="612" y="184" width="126" height="120" rx="6"/>
+  <text class="t-title" x="624" y="208">Site files</text>
+  <text class="t-mono t-small" x="624" y="230">site/</text>
+  <text class="t-mono t-small" x="624" y="250">run/</text>
+  <text class="t-small" x="624" y="268">latest-run.json</text>
+  <text class="t-small" x="624" y="286">history.json</text>
+  <path class="wire" d="M675,118 V182" marker-end="url(#a-fg)"/>
+  <path class="wire" d="M584,400 H675 V308" marker-end="url(#a-fg)"/>
+  <text class="t-small t-muted" x="608" y="420">writes</text>
+</svg>
+</div>
+<figcaption>Figure 5. Each agent serves its key directory at its own public name. The dashed arrow is an agent's outbound call: it leaves by public name and comes back in through Caddy. The runner holds no agent's signing key. <span class="scroll-hint">Scroll the diagram sideways to see all of it.</span></figcaption>
+</figure>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Name</th><th>Serves</th><th>Local port</th></tr></thead>
+  <tbody>
+    <tr><td><code>wba-demo.noetis.dev</code></td><td>This page, <code>/latest-run.json</code>, and <code>/history.json</code></td><td>Files on the host</td></tr>
+    <tr><td><code>seller.wba-demo.noetis.dev</code></td><td>The seller agent: issued proposals, <code>commit</code>, <code>/whoami</code>, and its key directory</td><td><code>18081</code></td></tr>
+    <tr><td><code>buyer.wba-demo.noetis.dev</code></td><td>The buyer's key directory</td><td><code>18082</code></td></tr>
+    <tr><td><code>cfbot.wba-demo.noetis.dev</code></td><td>cfbot's key directory and <code>/verify</code>, which checks a signature with Cloudflare's library</td><td><code>18083</code></td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>The local end-to-end test</h3>
+<div class="prose">
+  <p>The same images run in one Docker network for <code>make e2e</code>. An nginx front answers for the three agent names with a certificate from a throwaway certificate authority, which every container trusts. A pytest runner drives eleven scenarios, from first contact to key rotation, and inspects what each party stored.</p>
+</div>
+<figure>
+<div class="diagram">
+<svg viewBox="0 0 760 296" role="img" aria-labelledby="f6-title f6-desc">
+  <title id="f6-title">Local end-to-end topology</title>
+  <desc id="f6-desc">Inside one Docker network, an nginx front answers for the three agent names with a throwaway certificate and passes requests to the seller, the buyer, and cfbot. A pytest runner calls the agents through the front, calls their controls directly, and reads both databases read-only.</desc>
+  <rect class="frame" x="10" y="14" width="740" height="272" rx="12"/>
+  <text class="t-small t-muted" x="22" y="34">Docker network demo, from e2e/docker-compose.yml</text>
+  <rect class="box-accent" x="30" y="48" width="700" height="62" rx="8"/>
+  <text class="t-title" x="44" y="72">nginx TLS front</text>
+  <text class="t-small" x="44" y="94">Answers for seller., buyer., and cfbot.wba-demo.noetis.dev with a certificate from a throwaway CA</text>
+  <rect class="box" x="30" y="146" width="150" height="60" rx="6"/>
+  <text class="t-title" x="44" y="170">seller</text>
+  <text class="t-small t-muted" x="44" y="190">trusts the demo CA</text>
+  <rect class="box" x="200" y="146" width="150" height="60" rx="6"/>
+  <text class="t-title" x="214" y="170">buyer</text>
+  <text class="t-small t-muted" x="214" y="190">trusts the demo CA</text>
+  <rect class="box" x="370" y="146" width="150" height="60" rx="6"/>
+  <text class="t-title" x="384" y="170">cfbot</text>
+  <text class="t-small t-muted" x="384" y="190">trusts the demo CA</text>
+  <path class="wire" d="M105,110 V144" marker-end="url(#a-fg)"/>
+  <path class="wire" d="M275,110 V144" marker-end="url(#a-fg)"/>
+  <path class="wire" d="M445,110 V144" marker-end="url(#a-fg)"/>
+  <rect class="box" x="550" y="146" width="180" height="124" rx="6"/>
+  <text class="t-title" x="564" y="170">runner (pytest)</text>
+  <text class="t-small" x="564" y="190">Scenarios 1 to 11</text>
+  <text class="t-small" x="564" y="208">Calls the agents through</text>
+  <text class="t-small" x="564" y="225">the front, and their</text>
+  <text class="t-small" x="564" y="242">controls directly; reads</text>
+  <text class="t-small" x="564" y="259">both databases read-only</text>
+  <path class="wire" d="M640,146 V112" marker-end="url(#a-fg)"/>
+  <text class="t-small t-muted" x="30" y="236">The same code as the live deployment. Shorter cache lifetimes (20 s)</text>
+  <text class="t-small t-muted" x="30" y="254">keep the key rotation scenario short.</text>
+</svg>
+</div>
+<figcaption>Figure 6. The local stack swaps public DNS and Let's Encrypt for network aliases and a throwaway CA. <span class="scroll-hint">Scroll the diagram sideways to see all of it.</span></figcaption>
+</figure>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Setting</th><th>Live</th><th>Local end-to-end test</th></tr></thead>
+  <tbody>
+    <tr><td>TLS</td><td>Let's Encrypt, through the host's Caddy</td><td>A throwaway CA, through nginx</td></tr>
+    <tr><td>Trust store</td><td>Public roots only</td><td>Public roots plus the throwaway CA</td></tr>
+    <tr><td>Directory <code>Cache-Control: max-age</code></td><td>300 s</td><td>300 s for the seller, 0 s for the buyer</td></tr>
+    <tr><td>Verifier cache (<code>max_cache_age</code>)</td><td>300 s</td><td>20 s</td></tr>
+    <tr><td>Wait before a published key signs</td><td>600 s</td><td>20 s</td></tr>
+    <tr><td>Signature lifetime</td><td>300 s</td><td>10 s</td></tr>
+    <tr><td>Fault injection</td><td>Not mounted</td><td>Mounted for scenario 9</td></tr>
+  </tbody>
+</table>
+</div>
+</section>
+
+<!-- ─────────────────────────────────────────────────────────────── -->
+<section id="try">
+<h2>Try it</h2>
+<div class="prose"><p>Each agent publishes its key directory at its own origin:</p></div>
+<div class="cards">
+  <div class="card"><h3>Seller</h3><p><a href="https://seller.wba-demo.noetis.dev/.well-known/http-message-signatures-directory">seller.wba-demo.noetis.dev/.well-known/http-message-signatures-directory</a></p></div>
+  <div class="card"><h3>Buyer</h3><p><a href="https://buyer.wba-demo.noetis.dev/.well-known/http-message-signatures-directory">buyer.wba-demo.noetis.dev/.well-known/http-message-signatures-directory</a></p></div>
+  <div class="card"><h3>cfbot</h3><p><a href="https://cfbot.wba-demo.noetis.dev/.well-known/http-message-signatures-directory">cfbot.wba-demo.noetis.dev/.well-known/http-message-signatures-directory</a></p></div>
+</div>
+
+<h3>Fetch a directory</h3>
+<div class="prose"><p>The response is a JWK Set. Its <code>Signature-Input</code> and <code>Signature</code> headers sign the response once per key, with <code>tag="http-message-signatures-directory"</code>:</p></div>
+<pre><code>curl -si https://buyer.wba-demo.noetis.dev/.well-known/http-message-signatures-directory</code></pre>
+
+<h3>Call the seller without a credential</h3>
+<div class="prose"><p>The seller answers <code>200</code> with a <code>PublicCaller</code> that has no credential. The answer itself is signed: look for <code>Signature-Agent</code>, <code>Signature-Input</code>, and <code>Signature</code>.</p></div>
+<pre><code>curl -si https://seller.wba-demo.noetis.dev/whoami
+# {"kind":"public","credential":null}</code></pre>
+
+<h3>Present a failing credential</h3>
+<div class="prose"><p>A failing credential is refused, never treated as no credential. A token the seller didn't issue gets <code>401</code>, and a signature without <code>Signature-Agent</code> gets <code>403</code> with an <code>Accept-Signature</code> header that says how to sign:</p></div>
+<pre><code>curl -si -H 'Authorization: Bearer not-a-token' https://seller.wba-demo.noetis.dev/whoami
+# 401, WWW-Authenticate: Bearer error="invalid_token"
+
+curl -si -H 'Signature-Input: sig1=("@method");tag="web-bot-auth"' \
+     -H 'Signature: sig1=:AAAA:' https://seller.wba-demo.noetis.dev/whoami
+# 403, {"refused_at":"identity-boundary","reason":"signature-agent-missing",...}</code></pre>
+
+<h3>Check a directory with Cloudflare's tools</h3>
+<div class="prose">
+<p>Cloudflare Research publishes tools for Web Bot Auth that know nothing about this demo:</p>
+<ul>
+  <li>On the <a href="https://http-message-signatures-example.research.cloudflare.com/debug">Cloudflare Research debug page</a>, paste a directory URL into <strong>Validate key directory</strong>. To check a <code>kid</code>, paste a key from the directory into <strong>Get JWK keyid</strong> and compare the thumbprint.</li>
+  <li>Install the <a href="https://crates.io/crates/http-signature-directory"><code>http-signature-directory</code> command-line validator</a>, and run it against a directory:</li>
+</ul>
+</div>
+<pre><code>cargo install http-signature-directory
+http-signature-directory https://buyer.wba-demo.noetis.dev/.well-known/http-message-signatures-directory</code></pre>
+<div class="prose"><p>The demo also runs Cloudflare's library itself: on every run, cfbot verifies a request the buyer signs with <code>web-bot-auth</code>'s <code>verify()</code>, after it checks the directory's own signatures. The verdict is the last step under <a href="#latest">Latest run</a>.</p></div>
+</section>
+
+<!-- ─────────────────────────────────────────────────────────────── -->
+<section id="latest">
+<h2>Latest run</h2>
+<div class="prose"><p>Every 15 minutes the runner drives the whole flow against the live agents and publishes what each party sent, received, and kept. It withholds credentials and proxy headers, and refuses to publish a report that holds a secret. The raw report is <a href="latest-run.json">latest-run.json</a>.</p></div>
+<div id="run">
+  <noscript><p class="empty">This section needs JavaScript. Read <a href="latest-run.json">latest-run.json</a> directly.</p></noscript>
+</div>
+</section>
+
+</main>
+
+<footer>
+  Source: the <a href="LIBRARY_URL">Web Bot Auth library</a> and the <a href="SPEC_URL">OpenProposal 3.0 specification</a>, § 2.8. Diagrams and text describe the demo as deployed.
+</footer>
+
+<script src="run.js" defer></script>
+</body>
+</html>
