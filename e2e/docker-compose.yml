@@ -45,8 +45,9 @@ services:
       BUYER_ORIGIN: https://buyer.wba-demo.noetis.dev
       DEMO_SELLER_ORIGIN: https://seller.wba-demo.noetis.dev
       CFBOT_ORIGIN: https://cfbot.wba-demo.noetis.dev
-      # Rotation waits matched to the seller's 20 s cache, and short signatures, so the
-      # rotation scenario stays short. Production uses 300 s for both.
+      # Rotation waits matched to the seller's 20 s cache (the front sends the buyer's
+      # directory with max-age=0), and short signatures, so the rotation scenario stays
+      # short. Production waits 600 s (max-age 300 plus max_cache_age 300) and signs for 300 s.
       WBA_ROTATION_WAIT: "20"
       WBA_SIGNATURE_LIFETIME: "10"
     volumes:

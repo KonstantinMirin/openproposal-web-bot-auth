@@ -1,16 +1,20 @@
-"""The buyer's signing keys: one private JWK file each, minted on first boot, never shared.
+"""The buyer's signing keys: one private JWK file each, `keys/<kid>.jwk`, minted here and never shared.
 
 The directory publishes every key in `keys/`; one of them, the active key,
 signs. A rotation follows standard practice, and the keyring enforces its waits:
 
 1. `publish()` adds a new key to the directory. The old key keeps signing.
 2. `activate(kid)` switches signing to it, once `rotation_wait` has passed since
-   it was published. Set that to the longest time a verifier serves a cached
-   directory without fetching it again: the library's
-   `FetchPolicy.max_cache_age` (300 s by default) for the sellers you call.
+   it was published. That is the longest a verifier may keep using a copy of the
+   directory without the new key: an HTTP cache may hold the response for its
+   `Cache-Control: max-age` (300 s from the library), and the library's
+   verifier answers from a cached copy for `FetchPolicy.max_cache_age` (300 s by
+   default), so production waits 600 s.
 3. `retire(kid)` takes the old key out of the directory, once every signature it
    made has expired: `signature_lifetime` after it stopped signing. Its file
    moves to `keys/retired/`.
+
+Files are named by kid, so a published key never reuses a retired key's name.
 """
 
 from __future__ import annotations
@@ -36,11 +40,18 @@ class Keyring:
         self._clock = clock
         self._state_file = directory / "state.json"
         if not self._files():
-            Ed25519Key.load_or_create(directory / "0001.jwk")
-            self._save({"active": "0001.jwk", "published": {"0001.jwk": 0}, "stopped": {}})
+            kid = self._mint().kid
+            self._save({"active": kid, "published": {kid: 0}, "stopped": {}})
 
     def _files(self) -> list[Path]:
         return sorted(self.directory.glob("*.jwk"))
+
+    def _mint(self) -> Ed25519Key:
+        """A new key, written with mode 0600 by the library, then named by its kid."""
+        pending = self.directory / "minting.jwk.new"
+        key = Ed25519Key.load_or_create(pending)
+        pending.rename(self.directory / f"{key.kid}.jwk")
+        return key
 
     def _state(self) -> dict:
         return json.loads(self._state_file.read_text())
@@ -48,47 +59,50 @@ class Keyring:
     def _save(self, state: dict) -> None:
         self._state_file.write_text(json.dumps(state))
 
-    def _file_of(self, kid: str) -> Path:
-        for f in self._files():
-            if Ed25519Key.load_or_create(f).kid == kid:
-                return f
-        raise RotationError(f"no published key {kid}")
+    def _published(self, kid: str) -> Path:
+        path = self.directory / f"{kid}.jwk"
+        if not path.exists():
+            raise RotationError(f"no published key {kid}")
+        return path
 
     def published(self) -> list[Ed25519Key]:
         return [Ed25519Key.load_or_create(f) for f in self._files()]
 
     def active(self) -> Ed25519Key:
-        return Ed25519Key.load_or_create(self.directory / self._state()["active"])
+        return Ed25519Key.load_or_create(self._published(self._state()["active"]))
 
     def publish(self) -> Ed25519Key:
         """Step 1: a new key in the directory. It doesn't sign yet."""
-        name = f"{int(self._files()[-1].stem) + 1:04d}.jwk"
-        key = Ed25519Key.load_or_create(self.directory / name)
+        key = self._mint()
         state = self._state()
-        state["published"][name] = self._clock()
+        state["published"][key.kid] = self._clock()
         self._save(state)
         return key
 
     def activate(self, kid: str) -> Ed25519Key:
         """Step 2: sign with `kid`, once every verifier's cached directory lists it."""
-        name, state = self._file_of(kid).name, self._state()
-        ready = state["published"].get(name, 0) + self.rotation_wait
+        self._published(kid)
+        state = self._state()
+        ready = state["published"].get(kid, 0) + self.rotation_wait
         if self._clock() < ready:
             raise RotationError(f"{kid} is published; verifiers may not list it for "
                                 f"{ready - self._clock():.0f} s more")
-        if name != state["active"]:
+        if kid != state["active"]:
             state["stopped"][state["active"]] = self._clock()
-            state["active"] = name
+            state["active"] = kid
             self._save(state)
         return self.active()
 
     def retire(self, kid: str) -> None:
         """Step 3: take `kid` out of the directory, once every signature it made has expired."""
-        name, state = self._file_of(kid).name, self._state()
-        if name == state["active"]:
+        path, state = self._published(kid), self._state()
+        if kid == state["active"]:
             raise RotationError(f"{kid} still signs")
-        expired = state["stopped"].get(name, 0) + self.signature_lifetime
+        expired = state["stopped"].get(kid, 0) + self.signature_lifetime
         if self._clock() < expired:
             raise RotationError(f"signatures by {kid} last {expired - self._clock():.0f} s more")
-        (self.directory / "retired").mkdir(exist_ok=True)
-        (self.directory / name).rename(self.directory / "retired" / name)
+        target = self.directory / "retired" / path.name
+        if target.exists():
+            raise RotationError(f"{target} exists; refusing to overwrite a retired key")
+        target.parent.mkdir(exist_ok=True)
+        path.rename(target)

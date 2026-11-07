@@ -28,9 +28,10 @@ from .store import Store
 ORIGIN = os.environ.get("BUYER_ORIGIN", "https://buyer.wba-demo.noetis.dev")
 DATA = Path(os.environ.get("BUYER_DATA", "/data"))
 CFBOT_ORIGIN = os.environ.get("CFBOT_ORIGIN", "https://cfbot.wba-demo.noetis.dev")
-# Rotation waits (buyer/keyring.py). In production, ROTATION_WAIT is the library's
-# default max_cache_age, 300 s, and signatures last the profile's 300 s maximum.
-ROTATION_WAIT = float(os.environ.get("WBA_ROTATION_WAIT", "300"))
+# Rotation waits (buyer/keyring.py). In production, ROTATION_WAIT is the directory's
+# Cache-Control max-age (300 s) plus the library's default max_cache_age (300 s), and
+# signatures last the profile's 300 s maximum.
+ROTATION_WAIT = float(os.environ.get("WBA_ROTATION_WAIT", "600"))
 SIGNATURE_LIFETIME = int(os.environ.get("WBA_SIGNATURE_LIFETIME", "300"))
 
 keyring = Keyring(DATA / "keys", rotation_wait=ROTATION_WAIT, signature_lifetime=SIGNATURE_LIFETIME)

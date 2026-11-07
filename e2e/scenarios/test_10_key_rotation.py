@@ -1,11 +1,12 @@
 """10. Key rotation, in the standard order, with the seller following its cache rules.
 
-The seller answers from a cached directory for `max_cache_age` (20 s in this
-stack; 300 s, the library default, in production) without fetching it again,
-even for a keyid it doesn't list. So the buyer:
+The seller answers from a cached directory for `max_cache_age` without
+fetching it again, even for a keyid it doesn't list. So the buyer:
 
 1. publishes the new key next to the old one, and keeps signing with the old key;
-2. switches to the new key once `max_cache_age` has passed since publishing;
+2. switches to the new key once no verifier can still be using a copy without
+   it: the directory's `Cache-Control: max-age` plus `max_cache_age`. In this
+   stack that is 0 s plus 20 s; in production, 300 s plus the library's 300 s;
 3. removes the old key once every signature it made has expired (10 s here).
 
 After the next cache refresh, the seller refuses the old key.
@@ -14,7 +15,7 @@ After the next cache refresh, the seller refuses the old key.
 import json
 import time
 
-from conftest import BUYER, BUYER_OPERATOR, SELLER, active_key_file, buyer_key, signed
+from conftest import BUYER, BUYER_OPERATOR, SELLER, buyer_key, signed
 
 MAX_CACHE_AGE = 20
 SIGNATURE_LIFETIME = 10
@@ -45,7 +46,6 @@ def _directories_listing(seller_db, kid: str) -> int:
 
 
 def test_key_rotation(web, seller_db):
-    old_file = active_key_file()
     old = buyer_key().kid
 
     # 1. Publish the new key. Requests still go out signed with the old key, and verify.
@@ -74,7 +74,7 @@ def test_key_rotation(web, seller_db):
 
     # After the seller's next refresh, the old key is refused.
     _until(switched_at + MAX_CACHE_AGE + 1)
-    retired = buyer_key(old_file)
+    retired = buyer_key(old)
     assert retired.kid == old
     refused = web.get(URL, headers=signed("GET", URL, key=retired))
     assert refused.status_code == 403
