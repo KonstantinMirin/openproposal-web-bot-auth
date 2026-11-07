@@ -229,7 +229,7 @@ branch = true
 [tool.coverage.report]
 # The branch coverage measured on the tree before Step 0 (45.26), raised to each
 # step's measured total (Step 1: 50.90; Step 2: 77.57; Step 3: 79.98; Step 4: 84.78;
-# Step 5: 88.07). It is never lowered.
-fail_under = 88.07
+# Step 5: 88.07; the refusal body and the library at f1f4092: 88.40). It is never lowered.
+fail_under = 88.40
 precision = 2
 show_missing = false

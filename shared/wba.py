@@ -10,7 +10,8 @@ import ssl
 from pathlib import Path
 
 import httpx
-from iab_agentic_primitives.web_bot_auth import DirectoryResolver, FetchPolicy
+from iab_agentic_primitives.web_bot_auth import DirectoryResolver, MemoryDirectoryStore
+from iab_agentic_primitives.web_bot_auth.fetcher import HttpxDirectoryFetcher
 
 #: What answers a client's requests: the network by default, a stand-in in tests.
 Transport = httpx.AsyncBaseTransport
@@ -54,5 +55,9 @@ def directory_resolver(
     fetch, for the e2e stack's rotation scenario. None keeps the library's
     default, 300 s.
     """
-    policy = FetchPolicy() if max_cache_age is None else FetchPolicy(max_cache_age=max_cache_age)
-    return DirectoryResolver(policy, client=client)
+    store = (
+        MemoryDirectoryStore()
+        if max_cache_age is None
+        else MemoryDirectoryStore(max_cache_age=max_cache_age)
+    )
+    return DirectoryResolver(HttpxDirectoryFetcher(client), store)

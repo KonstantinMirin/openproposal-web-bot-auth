@@ -37,7 +37,7 @@ from iab_agentic_primitives.web_bot_auth import (
     VerifiedDirectory,
     VerifiedRequest,
     WebBotAuthError,
-    accept_signature,
+    refusal_response,
 )
 from iab_agentic_primitives.web_bot_auth.asgi import request_url
 from starlette.datastructures import Headers
@@ -48,7 +48,7 @@ from protocol.attribution import attributes
 from .caller import (
     BearerCredential,
     Caller,
-    DirectoryResponse,
+    DirectoryEvidence,
     Principal,
     PublicCaller,
     ResolvedCaller,
@@ -126,29 +126,28 @@ def _bearer(value: str | None) -> str | None:
     return token.strip()
 
 
-def _hint(refusal: Refusal, *, has_body: bool) -> dict[str, str]:
-    """What a signature refusal tells the caller to do next, as the library presents it."""
-    hint = {}
-    if refusal.accept_signature:  # sign again, under the profile
-        hint["Accept-Signature"] = accept_signature(has_body=has_body)
-    if refusal.retry_after is not None:  # the nonce store is down; back off, don't re-sign
-        hint["Retry-After"] = str(refusal.retry_after)
-    return hint
+def _signature_refused(error: WebBotAuthError, *, has_body: bool) -> Refused:
+    """The library's refusal of a signature: its status, and the hint it presents with it
+    (`Accept-Signature` on 403 and 429, `Retry-After` on 503)."""
+    _status, lines, _body = refusal_response(error, has_body=has_body)
+    hint = {name: value for name, value in lines if name.lower() != "content-type"}
+    return Refused(error.status, error.refusal, str(error), headers=hint)
 
 
 def _principal(record: PrincipalRecord) -> Principal:
     return Principal(id=record.id, kind="buyer", legal_name=record.legal_name, domain=record.domain)
 
 
-def _directory(directory: VerifiedDirectory | None) -> DirectoryResponse | None:
+def _directory(directory: VerifiedDirectory | None) -> DirectoryEvidence | None:
     if directory is None:
         return None
-    return DirectoryResponse(
-        url=directory.url,
-        status=directory.status,
-        headers=directory.headers,
-        body=directory.body,
-        fetched_at=directory.fetched_at,
+    evidence = directory.evidence
+    return DirectoryEvidence(
+        url=evidence.url,
+        status=evidence.status,
+        headers=evidence.headers.items(),
+        body=evidence.body,
+        fetched_at=evidence.fetched_at,
     )
 
 
@@ -180,8 +179,7 @@ class IdentityBoundary:
         try:
             verified = await self._verifier.verify(HTTPRequest(request.method, url, lines, body))
         except WebBotAuthError as e:
-            hint = _hint(e.refusal, has_body=bool(body))
-            raise Refused(e.status, e.refusal, str(e), headers=hint) from e
+            raise _signature_refused(e, has_body=bool(body)) from e
         return _credential(
             verified,
             SignedMessage(

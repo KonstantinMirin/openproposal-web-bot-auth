@@ -87,7 +87,7 @@ class Parties:
             status, headers, body = directory_response(
                 [key], authority=request.url.host, now=int(time.time())
             )
-            return httpx.Response(status, headers=headers, content=body)
+            return httpx.Response(status, headers=headers, stream=httpx.ByteStream(body))
 
         client = http_client(tls_context(None), transport=httpx.MockTransport(serve))
         return directory_resolver(client, max_cache_age=None)
@@ -215,11 +215,8 @@ def test_a_failing_credential_is_refused_never_downgraded(
 ) -> None:
     response = seller.get("/whoami", headers=row.headers(parties))
     assert response.status_code == row.status
-    assert response.json() | {"detail": ""} == {
-        "refused_at": "identity-boundary",
-        "reason": row.reason,
-        "detail": "",
-    }
+    # The library's refusal body, whose error is its reason or the boundary's own.
+    assert response.json() | {"detail": ""} == {"error": row.reason, "detail": ""}
     assert {name: response.headers.get(name) for name in row.hint} == row.hint
 
 
@@ -229,7 +226,7 @@ def test_a_replayed_signature_is_refused_with_429_and_asked_to_sign_again(
     headers = signed("GET", "/whoami", parties.buyer)
     assert seller.get("/whoami", headers=headers).json()["kind"] == "resolved"
     again = seller.get("/whoami", headers=headers)
-    assert again.status_code == 429 and again.json()["reason"] == "nonce-replayed"
+    assert again.status_code == 429 and again.json()["error"] == "nonce-replayed"
     assert again.headers["accept-signature"] == accept_signature(has_body=False)
 
 
@@ -239,7 +236,7 @@ def test_a_nonce_store_that_is_down_is_refused_with_503_and_retry_after(
     with TestClient(_app(tmp_path, parties, DownNonceStore()), base_url=SELLER) as client:
         response = client.get("/whoami", headers=signed("GET", "/whoami", parties.buyer))
     assert response.status_code == 503
-    assert response.json()["reason"] == "nonce-store-unavailable"
+    assert response.json()["error"] == "nonce-store-unavailable"
     assert response.headers["retry-after"] == "1"
     assert "accept-signature" not in response.headers
 

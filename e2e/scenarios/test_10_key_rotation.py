@@ -79,7 +79,7 @@ def test_key_rotation(web):
     assert retired.thumbprint == old
     refused = web.get(URL, headers=signed("GET", URL, key=retired))
     assert refused.status_code == 403
-    assert refused.json()["reason"] == "key-not-found"
+    assert refused.json()["error"] == "key-not-found"
 
     accepted = web.get(URL, headers=signed("GET", URL, key=buyer_key()))
     assert accepted.status_code == 200 and accepted.json()["principal"]["id"] == "buyer-wba"

@@ -29,7 +29,7 @@ BUILDERS = frozenset({"seller/boundary.py", "tests/factories.py"})
 IDENTITY_TYPES = frozenset(
     {
         "Principal",
-        "DirectoryResponse",
+        "DirectoryEvidence",
         "SignedMessage",
         "SignatureCredential",
         "BearerCredential",

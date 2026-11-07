@@ -18,11 +18,16 @@ from iab_agentic_primitives.web_bot_auth import (
     DIRECTORY_PATH,
     Ed25519Key,
     HTTPRequest,
+    HTTPResponse,
     MemoryNonceStore,
     Origin,
     RequestSigner,
+    ResponseVerifier,
     StaticKeyResolver,
+    WebBotAuthError,
+    keyfile,
 )
+from iab_agentic_primitives.web_bot_auth.sync import SyncResponseVerifier
 from pydantic import SecretStr
 from starlette.types import ASGIApp
 
@@ -72,7 +77,7 @@ def seller_app(data_dir: Path, *, faults: bool = False, key: Ed25519Key | None =
 
 @pytest.fixture
 def buyer_key(tmp_path: Path) -> Ed25519Key:
-    return Ed25519Key.load_or_create(tmp_path / "buyer-key.jwk")
+    return keyfile.load_or_create(tmp_path / "buyer-key.jwk")
 
 
 @pytest.fixture
@@ -194,6 +199,41 @@ def test_the_fault_mode_belongs_to_one_app(tmp_path: Path) -> None:
         assert _commit_signed(other)
         assert one.put("/test/fault", json={"mode": "none"}).status_code == 200
         assert _commit_signed(one)
+
+
+@pytest.mark.parametrize(
+    ("mode", "refusal"),
+    [
+        ("none", None),
+        ("strip", "signature-missing"),
+        ("unbound", "response-not-bound"),
+        ("rebound", "signature-invalid"),
+    ],
+)
+def test_each_fault_mode_breaks_the_answer_the_way_it_names(
+    tmp_path: Path, buyer_key: Ed25519Key, mode: str, refusal: str | None
+) -> None:
+    """The buyer's own verifier, over the seller's key, judges the seller's answer to a
+    signed commit in each mode."""
+    url = f"{SELLER}/proposals/demo-wba-1/commit"
+    body = b"{}"
+    request = RequestSigner(buyer_key, BUYER).sign(
+        HTTPRequest("POST", url, {"Content-Type": "application/json"}, body)
+    )
+    with TestClient(seller_app(tmp_path, faults=True, key=buyer_key), base_url=SELLER) as client:
+        assert client.put("/test/fault", json={"mode": mode}).status_code == 200
+        answer = client.post(url, content=body, headers=dict(request.headers.items()))
+    seller_key = keyfile.load_or_create(tmp_path / "wba-key.jwk")
+    verifier = ResponseVerifier(StaticKeyResolver({SELLER: [seller_key]}))
+    lines = [(k, v) for k, v in answer.headers.multi_items()]
+    response = HTTPResponse(answer.status_code, lines, answer.content, request)
+    with SyncResponseVerifier(verifier) as sync:
+        if refusal is None:
+            assert sync.verify(response, expected_origin=Origin.parse(SELLER)).bound
+        else:
+            with pytest.raises(WebBotAuthError) as e:
+                sync.verify(response, expected_origin=Origin.parse(SELLER))
+            assert e.value.reason == refusal
 
 
 def test_a_bad_fault_mode_is_a_control_error_not_an_offer_error(tmp_path: Path) -> None:

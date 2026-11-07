@@ -50,7 +50,7 @@ class Principal(_Frozen):
     domain: str
 
 
-class DirectoryResponse(_Frozen):
+class DirectoryEvidence(_Frozen):
     """The key directory response a signature verified against, as fetched (§ 4.1.2)."""
 
     url: str | None
@@ -73,7 +73,7 @@ class SignedMessage(_Frozen):
     headers: tuple[tuple[bytes, bytes], ...]
     body: bytes
     #: The directory the key came from, when the resolver provides it.
-    directory: DirectoryResponse | None
+    directory: DirectoryEvidence | None
 
 
 class SignatureCredential(_Frozen):

@@ -11,11 +11,13 @@ seller error body has one of two forms:
 
 - `{"errors": [ErrorObject, ...]}` (§ 2.4), for the offer logic's `Rejected`,
   with the status `status_for` gives;
-- `{"error": ..., "detail": ...}`, for the control plane (`ControlError`, a
-  validation error on a control route, or a route FastAPI doesn't have).
+- `{"error": ..., "detail": ...}`, for the identity boundary (`Refused`) and
+  the control plane (`ControlError`, a validation error on a control route, or
+  a route FastAPI doesn't have).
 
-The identity boundary's refusal is `{"refused_at", "reason", "detail"}` until
-the library's `refusal_response` gives it the second form (wbademo-1co.5).
+The identity boundary's refusal has the second form too: the library's
+`refusal_response` body, `error` being the library's reason or the boundary's
+own (`BoundaryReason`).
 """
 
 from __future__ import annotations
@@ -98,7 +100,7 @@ def answer(outcome: CommitResult | JsonObject | Rejected) -> JSONResponse:
 
 def refused(error: Refused) -> JSONResponse:
     """The identity boundary's refusal."""
-    body = {"refused_at": "identity-boundary", "reason": error.reason, "detail": error.detail}
+    body = {"error": error.reason, "detail": error.detail}
     return JSONResponse(body, status_code=error.status, headers=dict(error.headers))
 
 

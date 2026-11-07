@@ -11,7 +11,7 @@ signs. A rotation follows standard practice, and the keyring enforces its waits:
    directory without the new key: an HTTP cache may hold the response for its
    `Cache-Control: max-age` (`DirectoryMiddleware`'s `max_age`, 300 s by
    default), and the library's verifier answers from a cached copy for
-   `FetchPolicy.max_cache_age` (300 s by default), so production waits 600 s.
+   `MemoryDirectoryStore.max_cache_age` (300 s by default), so production waits 600 s.
 3. `retire(kid)` takes the old key out of the directory, once every signature it
    made has expired: `signature_lifetime` after it stopped signing. Its file
    moves to `keys/retired/`.
@@ -28,7 +28,7 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
-from iab_agentic_primitives.web_bot_auth import Ed25519Key
+from iab_agentic_primitives.web_bot_auth import Ed25519Key, keyfile
 from pydantic import BaseModel, ConfigDict
 
 
@@ -93,7 +93,7 @@ class Keyring:
     def _mint(self) -> Ed25519Key:
         """A new key, written with mode 0600 by the library, then named by its kid."""
         pending = self.directory / "minting.jwk.new"
-        key = Ed25519Key.load_or_create(pending)
+        key = keyfile.load_or_create(pending)
         pending.rename(self.directory / f"{key.thumbprint}.jwk")
         return key
 
@@ -115,11 +115,11 @@ class Keyring:
         """The key `kid`, if published; or also if retired, when `include_retired`."""
         retired = self.directory / "retired" / f"{kid}.jwk"
         if include_retired and not (self.directory / f"{kid}.jwk").exists() and retired.exists():
-            return Ed25519Key.load_or_create(retired)
-        return Ed25519Key.load_or_create(self._published(kid))
+            return keyfile.load_or_create(retired)
+        return keyfile.load_or_create(self._published(kid))
 
     def published(self) -> list[Ed25519Key]:
-        return [Ed25519Key.load_or_create(f) for f in self._files()]
+        return [keyfile.load_or_create(f) for f in self._files()]
 
     def active(self) -> Ed25519Key:
         return self.key(self.state().active)

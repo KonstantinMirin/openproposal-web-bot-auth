@@ -196,7 +196,7 @@ class Buyer:
             request=StoredRequest(answer.request, self.origin, answer.keyid),
             origin=str(verified.origin),
             keyid=verified.keyid,
-            directory=verified.directory,
+            directory=None if verified.directory is None else verified.directory.evidence,
         )
         evidence_id = self.store.keep_agreement(
             pending.id, kept, result.entries, attributed=attributed

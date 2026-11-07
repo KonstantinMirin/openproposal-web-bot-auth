@@ -27,7 +27,7 @@ def test_commit_without_a_credential_is_refused(web, seller_db):
 def test_an_invalid_token_is_refused_not_downgraded(web):
     response = web.get(f"{SELLER}/whoami", headers={"Authorization": "Bearer not-a-token"})
     assert response.status_code == 401
-    assert response.json()["reason"] == "invalid-token"
+    assert response.json()["error"] == "invalid-token"
     assert web.get(f"{SELLER}/whoami").json()["kind"] == "public"  # no credential at all
 
 
@@ -38,17 +38,13 @@ def test_a_failing_credential_is_refused_before_the_body_is_parsed(web):
 
     by_token = web.post(url, content=broken, headers=json_type | {"Authorization": "Bearer wrong"})
     assert by_token.status_code == 401
-    assert by_token.json()["refused_at"] == "identity-boundary"
+    assert by_token.json() | {"detail": ""} == {"error": "invalid-token", "detail": ""}
 
     by_signature = web.post(
         url, content=broken, headers=json_type | {"Signature-Input": "garbage("}
     )
     assert by_signature.status_code == 400
-    assert by_signature.json() | {"detail": ""} == {
-        "refused_at": "identity-boundary",
-        "reason": "parse",
-        "detail": "",
-    }
+    assert by_signature.json() | {"detail": ""} == {"error": "parse", "detail": ""}
 
     # With a credential that verifies, the offer logic parses the body and rejects it.
     rejected = web.post(url, content=broken, headers=signed("POST", url, broken))

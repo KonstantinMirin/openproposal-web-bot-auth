@@ -567,7 +567,7 @@ signature: sig1=:5kF9XH4bsuauHZoFccx+QIPx31fC1lEEETIkSXE22ZRLN8OIL1otTSDNxFNjTIx
 
 curl -si -H 'Signature-Input: sig1=("@method");tag="web-bot-auth"' \
      -H 'Signature: sig1=:AAAA:' https://seller.wba-demo.noetis.dev/whoami
-# 403, {"refused_at":"identity-boundary","reason":"signature-agent-missing",...}</code></pre>
+# 403, {"error":"signature-agent-missing","detail":...}</code></pre>
 
 <h3>Check a directory with Cloudflare's tools</h3>
 <div class="prose">

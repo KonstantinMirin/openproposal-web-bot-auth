@@ -12,4 +12,4 @@ def test_key_not_in_the_directory_is_refused(web):
     url = f"{SELLER}/proposals/demo-wba-1"
     response = web.get(url, headers=signed("GET", url, key=Ed25519Key.generate()))
     assert response.status_code == 403
-    assert response.json()["reason"] == "key-not-found"
+    assert response.json()["error"] == "key-not-found"

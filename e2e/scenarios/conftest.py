@@ -18,6 +18,7 @@ from pathlib import Path
 import httpx
 import pytest
 from iab_agentic_primitives.web_bot_auth import (
+    DirectoryResponse,
     Ed25519Key,
     HTTPRequest,
     Origin,
@@ -99,10 +100,10 @@ def stored_keys(db: sqlite3.Connection, digest: str, origin: str) -> StaticKeyRe
     """The keys of a stored directory, after the library verifies the stored bytes again."""
     row = db.execute("SELECT * FROM directories WHERE digest = ?", (digest,)).fetchone()
     headers = [tuple(line) for line in json.loads(row["headers"])]
-    directory = parse_directory_response(
-        row["status"], headers, row["body"], Origin.parse(origin).host, int(row["fetched_at"])
-    )
-    return StaticKeyResolver({origin: list(directory.values())})
+    fetched_at = int(row["fetched_at"])
+    response = DirectoryResponse(row["url"], row["status"], headers, row["body"], fetched_at)
+    directory = parse_directory_response(response, Origin.parse(origin).host, fetched_at)
+    return StaticKeyResolver({origin: directory.keys})
 
 
 def database(path: str) -> sqlite3.Connection:

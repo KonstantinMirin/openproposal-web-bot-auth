@@ -38,6 +38,7 @@ from typing import Any
 
 import httpx
 from iab_agentic_primitives.web_bot_auth import (
+    DirectoryResponse,
     HTTPRequest,
     HTTPResponse,
     MemoryNonceStore,
@@ -217,10 +218,10 @@ def _stored_keys(db: sqlite3.Connection, digest: str, origin: Origin) -> StaticK
     """The keys of a stored directory, after the library verifies the stored bytes again."""
     row = db.execute("SELECT * FROM directories WHERE digest = ?", (digest,)).fetchone()
     headers = [tuple(line) for line in json.loads(row["headers"])]
-    directory = parse_directory_response(
-        row["status"], headers, row["body"], origin.host, int(row["fetched_at"])
-    )
-    return StaticKeyResolver({origin: list(directory.values())})
+    fetched_at = int(row["fetched_at"])
+    response = DirectoryResponse(row["url"], row["status"], headers, row["body"], fetched_at)
+    directory = parse_directory_response(response, origin.host, fetched_at)
+    return StaticKeyResolver({origin: directory.keys})
 
 
 class Flow:
@@ -237,14 +238,10 @@ class Flow:
         url = origin.directory_url
         response = await self.web.get(url, headers={"Accept-Encoding": "identity"})
         lines = response.headers.multi_items()
-        keys = parse_directory_response(
-            response.status_code,
-            lines,
-            response.content,
-            origin.host,
-            int(time.time()),
-            url=url,
-        )
+        now = int(time.time())
+        fetched = DirectoryResponse(url, response.status_code, lines, response.content, now)
+        directory = parse_directory_response(fetched, origin.host, now)
+        keys = list(directory.keys)
         body = _body(response.content)
         return {
             "detail": f"{len(keys)} key(s), signed by each: {', '.join(keys)}",
@@ -252,7 +249,7 @@ class Flow:
             "status": response.status_code,
             "headers": public_headers(lines),
             "keys": [_public_key(k) for k in body.get("keys", [])],
-            "expires": _instant(keys.expires),
+            "expires": _instant(directory.expires),
         }
 
     async def issue(self, principal_id: str) -> dict[str, Any]:

@@ -65,7 +65,7 @@ CASES = (
         "buyer/client.py",
         "def auth(signer, verifier):\n    return WebBotAuth(signer, verifier)\n",
         "def auth(signer, verifier, origin):\n"
-        "    return WebBotAuth(signer, verifier, expected_origin=origin)\n",
+        "    return WebBotAuth(signer, verifier, expect=origin)\n",
     ),
     (
         "routes-take-no-request",

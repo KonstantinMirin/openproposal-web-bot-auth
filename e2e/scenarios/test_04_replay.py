@@ -13,4 +13,4 @@ def test_replayed_request_is_refused(web):
 
     again = web.get(url, headers=headers)
     assert again.status_code == 429
-    assert again.json()["reason"] == "nonce-replayed"
+    assert again.json()["error"] == "nonce-replayed"

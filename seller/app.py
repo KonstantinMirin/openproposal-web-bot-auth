@@ -22,13 +22,13 @@ from typing import TypedDict
 from fastapi import APIRouter, Depends, FastAPI
 from fastapi.responses import JSONResponse
 from iab_agentic_primitives.web_bot_auth import (
-    Ed25519Key,
     KeyResolver,
     MemoryNonceStore,
     NonceStore,
     RequestVerifier,
     ResponseSigner,
     ServerIdentity,
+    keyfile,
 )
 from iab_agentic_primitives.web_bot_auth.asgi import DirectoryMiddleware, ResponseSigningMiddleware
 from pydantic import BaseModel
@@ -126,7 +126,7 @@ def create_app(
     every response is signed, a server error's included.
     """
     # The seller mints its key on first boot. No buyer is ever configured with it.
-    key = Ed25519Key.load_or_create(settings.data_dir / "wba-key.jwk")
+    key = keyfile.load_or_create(settings.data_dir / "wba-key.jwk")
     identity = ServerIdentity.from_config(str(settings.self_origin))
     template = load_template()
 
