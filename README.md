@@ -16,12 +16,15 @@ with no knowledge of each other's keys:
 - The seller learns the buyer's keys only from the buyer's own key directory,
   and maps the verified origin to the principal in its database.
 - A bearer token and a signature resolve to the same frozen identity type. The
-  offer logic never sees which credential it was.
+  offer logic never sees which credential it was: the boundary puts the method,
+  the evidence it kept, and the § 4.1.2 attribution in one `Credential` record,
+  which the offer logic hands to storage with the entry, unread.
 - A credential that fails is refused at the boundary. It's never downgraded to
   "no credential", and the handler never runs.
 - Both parties compute the same `record_digest`, keep the same agreed record,
   and keep the counterparty's signed message with the directory it verified
-  against, as the library's `VerifiedDirectory.evidence()` gives it.
+  against: the exact message bytes, and the exact directory bytes with that
+  fetch's own signatures, from the library's `VerifiedDirectory`.
 - Cloudflare's `web-bot-auth` library accepts the buyer's signatures, and the
   seller verifies an agent built on that library.
 
@@ -60,14 +63,16 @@ records, and returns one frozen value:
 
 | Presented | Confirmed by | Resolved by | Result |
 | :--- | :--- | :--- | :--- |
-| A `web-bot-auth` signature | The library's `RequestVerifier`, which fetches the origin's directory and checks `Content-Digest` against the body | The `credentials` row with that origin | `ResolvedCaller`, `authentication_method: web_bot_auth` |
+| A `web-bot-auth` signature | The library's `RequestVerifier`, which fetches the origin's directory and checks `Content-Digest` against the body | The `credentials` row with that origin | `ResolvedCaller`, `credential.method: web_bot_auth` |
 | The same, from an origin with no row | The same | No row | `PublicCaller` with the verified origin: identity established, no principal |
-| `Authorization: Bearer` | The token's SHA-256 matching a `credentials` row | That row | `ResolvedCaller`, `authentication_method: bearer` |
+| `Authorization: Bearer` | The token's SHA-256 matching a `credentials` row | That row | `ResolvedCaller`, `credential.method: bearer` |
 | Nothing | Nothing | Nothing | `PublicCaller` with no origin |
 
 A signature that fails verification gets the library's status (`400`, `403`, or
-`429`), and a token that matches no row gets `401`. Routes ask for the caller
-with `caller: CallerDep` and never read a header. Every agent-facing response is
+`429`), and a token that matches no row gets `401`. The boundary runs before
+anything reads the body, so a failing credential is refused even when the body
+isn't JSON. Routes ask for the caller with `caller: CallerDep` and never read a
+header. Every agent-facing response is
 signed with `ResponseSigner` and bound to the request it answers, refusals
 included.
 
@@ -136,16 +141,16 @@ fresh stack.
 
 | # | Scenario | What it proves |
 | :--- | :--- | :--- |
-| 1 | First contact by signature | Neither party has the other's key. The buyer commits; the seller fetches the buyer's directory, verifies, and resolves its principal. Both sides reach `agreed`, both keep evidence with the directory bytes, and both hold the same digest input and `record_digest`. |
-| 2 | Bearer token | A token resolves the same `ResolvedCaller` type as a signature, with `authentication_method: bearer`. The commit is agreed with no signature evidence. |
+| 1 | First contact by signature | Neither party has the other's key. The buyer commits; the seller fetches the buyer's directory, verifies, and resolves its principal. Both sides reach `agreed`. Each keeps the counterparty's message as exact bytes with the directory it verified against, and that evidence verifies again offline. Both hold the same digest input and `record_digest`. |
+| 2 | Bearer token | A token resolves the same `ResolvedCaller` type as a signature, with `credential.method: bearer`. The commit is agreed with no signature evidence. |
 | 3 | Tampered body | A body changed after signing gets `403 content-digest` from the boundary. Nothing is written. |
 | 4 | Replay | The same signed request sent twice gets `200`, then `429 nonce-replayed`. |
 | 5 | Unknown key | The buyer's origin with a key its directory doesn't list gets `403 key-not-found`. |
 | 6 | cfbot | A request signed with Cloudflare's library verifies and resolves to a `PublicCaller` with cfbot's origin. cfbot can't read the buyer's issued proposal (`404 not_found`) or commit to it (`403 not_eligible`). |
-| 7 | Cloudflare verifies the buyer | cfbot verifies a request the buyer signed, with `web-bot-auth`'s `verify()`, after fetching and checking the buyer's directory. |
-| 8 | No credential | A commit with no credential gets `403 not_eligible`. An invalid token gets `401`, never "no credential". |
-| 9 | Buyer refuses an unverifiable answer | With the seller's test-only fault toggle, the buyer refuses an unsigned answer, an unbound one, and one bound to another request. Its re-sent `Commit` keeps its `idempotency_key`; the seller writes no second entry and the buyer agrees once the answer verifies. |
-| 10 | Key rotation | The buyer adds a key, signs with it, and retires the old one. The seller accepts the old key while its cached directory is valid, then refuses it after the cache expires. |
+| 7 | Cloudflare verifies the buyer | cfbot verifies a request the buyer signed, with `web-bot-auth`'s `verify()`, after fetching the buyer's directory and verifying the directory's own signature by that key with `http-message-sig`. |
+| 8 | No credential | A commit with no credential gets `403 not_eligible`. An invalid token gets `401`, never "no credential". A failing credential is refused at the boundary even with a body that isn't JSON. |
+| 9 | Buyer refuses an unverifiable answer | With the seller's test-only fault toggle, the buyer refuses an unsigned answer, an unbound one, and one bound to another request. The seller accepted on the first attempt; each re-sent `Commit` keeps its `idempotency_key`, the seller answers from its stored result and writes no second entry, and the buyer agrees once the answer verifies. |
+| 10 | Key rotation | The buyer adds a key and signs with it; the seller fetches the directory again and accepts the new key. The buyer retires the old key. The seller accepts the old key while its cached directory is valid, then refuses it after the cache expires. |
 
 ## Where the pieces live
 
