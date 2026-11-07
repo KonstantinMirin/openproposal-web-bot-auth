@@ -4,7 +4,7 @@ id: boundary-never-downgrades
 language: Python
 severity: error
 message: In the identity boundary, every except clause raises; a failing credential is refused, never downgraded.
-files: ["seller/identity.py"]
+files: ["seller/boundary.py"]
 rule:
   kind: except_clause
   not:

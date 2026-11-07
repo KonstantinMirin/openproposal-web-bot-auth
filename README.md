@@ -50,15 +50,15 @@ flowchart LR
 
 A bearer token and a Web Bot Auth signature are both transport-level
 credentials. The seller confirms either one once, in
-[`resolve_caller`](seller/identity.py), resolves it to the principal stored in
-its own database, and passes a frozen identity to the offer logic.
+[`IdentityBoundary`](seller/boundary.py), resolves it to the principal stored
+in its own database, and passes a frozen identity to the offer logic.
 
 ```mermaid
 flowchart LR
     W[Web Bot Auth signature] --> R
     T[Authorization: Bearer] --> R
     N[no credential] --> R
-    subgraph R["resolve_caller · seller/identity.py"]
+    subgraph R["IdentityBoundary · seller/boundary.py"]
         direction TB
         R1[1 read the credential] --> R2[2 confirm it<br/>RequestVerifier, or the token's SHA-256]
         R2 --> R3[3 resolve the stored principal<br/>by verified origin, or by token hash]
@@ -70,34 +70,41 @@ flowchart LR
 
 The code path, in order:
 
-1. Each route declares `caller: CallerDep`
-   ([`seller/app.py`](seller/app.py)), so FastAPI runs `resolve_caller` before
-   the handler. No route reads a header.
-2. `resolve_caller` ([`seller/identity.py`](seller/identity.py)) reads the
-   presented credential and refuses a request that presents both.
+1. Each route declares `caller: CallerDep`, and a route that reads the body
+   declares `body: RawBodyDep` ([`seller/http.py`](seller/http.py)). FastAPI
+   runs the boundary that `create_app` built ([`seller/app.py`](seller/app.py))
+   before the handler. No route takes a `Request` or reads a header.
+2. `IdentityBoundary.resolve` ([`seller/boundary.py`](seller/boundary.py))
+   reads the presented credential and refuses a request that presents both.
 3. A signature goes to the library's `RequestVerifier.verify`, which fetches
    the origin's directory through the resolver in
    [`shared/wba.py`](shared/wba.py) and checks `Content-Digest` against the
-   body. The boundary keeps the verified request with the directory it
-   verified against (`keep_request`, through the one evidence schema in
-   [`persistence/evidence.py`](persistence/evidence.py)), then resolves the
-   origin with `for_origin` (the ports in [`seller/ports.py`](seller/ports.py),
-   stored by [`seller/sqlite_store.py`](seller/sqlite_store.py)).
+   body. The boundary then resolves the origin with `for_origin` (stored by
+   [`seller/sqlite_store.py`](seller/sqlite_store.py)). It writes nothing: the
+   verified request travels in the credential as a `SignedMessage`.
 4. A token is confirmed and resolved by one lookup, `for_token`, which matches
    its SHA-256. The seller never stores the token.
-5. The boundary returns a frozen `ResolvedCaller` (a principal and a
-   `Credential`) or a `PublicCaller`. A verified origin with no row is an
-   established identity with no principal: a `PublicCaller` that carries the
-   origin.
+5. The boundary returns a frozen `ResolvedCaller` (a principal, a
+   `SignatureCredential` or a `BearerCredential`, and whether the signature
+   attributes the body's entries, § 4.1.2) or a `PublicCaller`. A verified
+   origin with no row is an established identity with no principal: a
+   `PublicCaller` that carries the signature. The types
+   ([`seller/caller.py`](seller/caller.py)) are strict, frozen, and
+   discriminated, and refuse an amended copy.
 6. The offer logic ([`seller/offers.py`](seller/offers.py)) takes that value.
    It checks only `isinstance(caller, ResolvedCaller)` and
-   `caller.principal.id`. It hands the caller to the boundary's
-   `provenance_of`, and stores the result with the entry it writes (`_accept`)
-   without reading it, so no offer decision depends on the credential.
+   `caller.principal.id`. It hands the caller to storage with the entry it
+   writes (`_accept`), and storage keeps how it authenticated and, for a
+   signature, the signed request with the directory it verified against,
+   through the one evidence schema in
+   [`persistence/evidence.py`](persistence/evidence.py), in the same
+   transaction. A request that writes no entry leaves no evidence. No offer
+   decision depends on the credential.
 
-A credential that fails is refused at the boundary, before anything reads the
-body. It's never downgraded to "no credential", and the refusal is a transport
-status with no `errors[]` object:
+A credential that fails is refused at the boundary, before anything parses the
+body (the boundary reads it, because the signature covers it through
+`Content-Digest`). It's never downgraded to "no credential", and the refusal is
+a transport status with no `errors[]` object:
 
 | Status | When | The answer also carries |
 | :--- | :--- | :--- |
@@ -127,7 +134,7 @@ flowchart LR
     F -- "signed request" --> RC
     F -- "Authorization: Bearer" --> RC
     subgraph seller[seller agent]
-        RC[resolve_caller] -- "ResolvedCaller<br/>method: web_bot_auth" --> O[offers.commit]
+        RC[IdentityBoundary] -- "ResolvedCaller<br/>method: web_bot_auth" --> O[offers.commit]
         RC -- "ResolvedCaller<br/>method: bearer" --> O
     end
     O -- "signed answer, either way" --> F
@@ -206,13 +213,13 @@ sequenceDiagram
     B->>S: GET /proposals/{id} (signed)
     S->>B: GET /.well-known/http-message-signatures-directory
     B-->>S: signed JWK Set (first contact, kept up to 300 s)
-    Note over S: verify, then resolve_caller finds the stored principal
+    Note over S: verify, then the boundary finds the stored principal
     S-->>B: 200 issued proposal (signed, bound to the request)
     B->>S: GET /.well-known/http-message-signatures-directory
     S-->>B: signed JWK Set
     Note over B: verify the answer and its binding,<br/>compose the writes, compute record_digest
     B->>S: POST /proposals/{id}/commit (signed, Content-Digest)
-    Note over S: resolve_caller, recompute record_digest,<br/>§ 5.6.1 checks, write commitment and acceptance
+    Note over S: the boundary, recompute record_digest,<br/>§ 5.6.1 checks, write commitment and acceptance
     S-->>B: 200 CommitResult (signed, bound to the request)
     Note over B: check the matching pair,<br/>keep the signed answer and the directory
 ```
@@ -280,7 +287,7 @@ fresh stack:
 | 3 | Tampered body | A body changed after signing gets `403 content-digest` from the boundary. Nothing is written. |
 | 4 | Replay | The same signed request sent twice gets `200`, then `429 nonce-replayed`. |
 | 5 | Unknown key | The buyer's origin with a key its directory doesn't list gets `403 key-not-found`. |
-| 6 | cfbot | A request signed with Cloudflare's library verifies and resolves to a `PublicCaller` with cfbot's origin. cfbot can't read the buyer's issued proposal (`404 not_found`) or commit to it (`403 not_eligible`). |
+| 6 | cfbot | A request signed with Cloudflare's library verifies and resolves to a `PublicCaller` with cfbot's origin, key, and `body_covered`, and the seller keeps no evidence for it. cfbot can't read the buyer's issued proposal (`404 not_found`) or commit to it (`403 not_eligible`). |
 | 7 | Cloudflare verifies the buyer | cfbot verifies a request the buyer signed, with `web-bot-auth`'s `verify()`, after fetching the buyer's directory and verifying the directory's own signature by that key with `http-message-sig`. |
 | 8 | No credential | A commit with no credential gets `403 not_eligible`. An invalid token gets `401`, never "no credential". A failing credential is refused at the boundary even with a body that isn't JSON. |
 | 9 | Buyer refuses an unverifiable answer | With the seller's test-only fault toggle, the buyer refuses an unsigned answer, an unbound one, and one bound to another request. The seller accepted on the first attempt; each re-sent `Commit` keeps its `idempotency_key`, the seller answers from its stored result and writes no second entry, and the buyer agrees once the answer verifies. |

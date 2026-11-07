@@ -40,9 +40,11 @@ import httpx
 from iab_agentic_primitives.web_bot_auth import (
     HTTPRequest,
     HTTPResponse,
+    MemoryNonceStore,
     Origin,
     RequestVerifier,
     ResponseVerifier,
+    ServerIdentity,
     StaticKeyResolver,
     parse_directory_response,
 )
@@ -404,9 +406,11 @@ class Flow:
             row = db.execute(
                 "SELECT * FROM signed_requests WHERE id = ?", (seller["evidence_id"],)
             ).fetchone()
-            again = RequestVerifier(
-                _stored_keys(db, row["directory_digest"], self.config.buyer)
-            ).verify_sync(
+            again = await RequestVerifier(
+                _stored_keys(db, row["directory_digest"], self.config.buyer),
+                identity=ServerIdentity.from_config(str(self.config.seller)),
+                nonces=MemoryNonceStore(),
+            ).verify(
                 HTTPRequest(
                     row["method"],
                     row["url"],
@@ -426,9 +430,9 @@ class Flow:
                 [tuple(x) for x in json.loads(row["request_headers"])],
                 row["request_body"],
             )
-            answered = ResponseVerifier(
+            answered = await ResponseVerifier(
                 _stored_keys(db, row["directory_digest"], self.config.seller)
-            ).verify_sync(
+            ).verify(
                 HTTPResponse(
                     row["status"], [tuple(x) for x in json.loads(row["headers"])], row["body"], sent
                 ),

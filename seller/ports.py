@@ -1,8 +1,8 @@
 """What the seller's logic needs from storage, as role ports and the values that cross them.
 
 Only domain values cross a port, never rows. seller/sqlite_store.py implements
-every port; the boundary, the offer logic, and the first-boot records each
-depend on the ports they use.
+every port; the boundary (its `PrincipalDirectory`, in seller/boundary.py), the
+offer logic, and the first-boot records each depend on the ports they use.
 """
 
 from __future__ import annotations
@@ -14,9 +14,9 @@ from typing import Protocol
 
 from openproposal import AssentEntry, ErrorObject
 
-from persistence.evidence import StoredRequest
 from protocol.values import JsonObject
-from shared.wba import AuthMethod
+
+from .caller import ResolvedCaller
 
 
 @dataclass(frozen=True)
@@ -49,33 +49,6 @@ class ProcessedCommit:
     error: ErrorObject | None
 
 
-@dataclass(frozen=True)
-class Provenance:
-    """How the entry's principal authenticated, and the signed request that carried it."""
-
-    principal_id: str
-    method: AuthMethod
-    evidence_id: int | None
-    attributed: bool
-
-
-class PrincipalDirectory(Protocol):
-    """The boundary's lookups: a principal by its verified origin, or by its token."""
-
-    def for_origin(self, origin: str) -> PrincipalRecord | None: ...
-    def for_token(self, token: str) -> PrincipalRecord | None: ...
-
-
-class EvidenceLog(Protocol):
-    """Where the boundary keeps a request it verified. Step 4 moves this into the entry write."""
-
-    def keep_request(self, stored: StoredRequest) -> int: ...
-
-
-class BoundaryRecords(PrincipalDirectory, EvidenceLog, Protocol):
-    """What the identity boundary needs."""
-
-
 class OfferRepository(Protocol):
     """Issued proposals, their assent log, and their agreed records."""
 
@@ -84,8 +57,12 @@ class OfferRepository(Protocol):
     def save_proposal(self, proposal: StoredProposal) -> None: ...
     def assent(self, proposal_id: str) -> list[AssentEntry]: ...
     def append_assent(
-        self, proposal_id: str, entry: AssentEntry, provenance: Provenance | None
-    ) -> None: ...
+        self, proposal_id: str, entry: AssentEntry, by: ResolvedCaller | None
+    ) -> None:
+        """Appends `entry`. For a buyer's entry, `by` is the caller that wrote it: storage
+        keeps how it authenticated and, for a signature, the signed request, in the same
+        transaction."""
+
     def save_agreed(
         self, proposal_id: str, digest: str, digest_input: bytes, entries: Sequence[AssentEntry]
     ) -> None: ...

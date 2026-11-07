@@ -8,13 +8,9 @@ from __future__ import annotations
 
 import ssl
 from pathlib import Path
-from typing import Literal
 
 import httpx
 from iab_agentic_primitives.web_bot_auth import DirectoryResolver, FetchPolicy
-
-#: How a caller authenticated: a Web Bot Auth signature, or a bearer token the seller issued.
-AuthMethod = Literal["web_bot_auth", "bearer"]
 
 #: What answers a client's requests: the network by default, a stand-in in tests.
 Transport = httpx.AsyncBaseTransport
@@ -51,8 +47,8 @@ def directory_resolver(
     client: httpx.AsyncClient, *, max_cache_age: int | None
 ) -> DirectoryResolver:
     """The resolver both parties verify with, fetching through `client`. Each
-    `VerifiedSignature` it yields carries the verified directory, whose `evidence()`
-    § 4.1.2 asks a party to keep.
+    `VerifiedRequest` and `VerifiedResponse` it yields carries the verified
+    directory response, which § 4.1.2 asks a party to keep.
 
     `max_cache_age` shortens how long a cached directory answers without a
     fetch, for the e2e stack's rotation scenario. None keeps the library's

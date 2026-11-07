@@ -5,7 +5,7 @@ hash and resolves the same `ResolvedCaller` type a signature resolves, with
 `authentication_method: bearer`. The offer logic is the same code either way.
 """
 
-from conftest import BUYER_OPERATOR, SELLER, signed
+from conftest import BUYER, BUYER_OPERATOR, SELLER, signed
 from settings import BEARER_TOKEN
 
 
@@ -16,14 +16,14 @@ def test_bearer_token_resolves_the_same_identity_type(web):
     by_signature = web.get(f"{SELLER}/whoami", headers=signed("GET", f"{SELLER}/whoami")).json()
 
     assert by_token["kind"] == by_signature["kind"] == "resolved"
-    assert by_token.keys() == by_signature.keys() == {"kind", "principal", "credential"}
-    assert by_token["principal"]["id"] == "buyer-bearer"
-    assert by_token["credential"]["method"] == "bearer"
     assert (
-        by_token["credential"]["origin"] is None and by_token["credential"]["evidence_id"] is None
+        by_token.keys() == by_signature.keys() == {"kind", "principal", "credential", "attributed"}
     )
+    assert by_token["principal"]["id"] == "buyer-bearer"
+    assert by_token["credential"] == {"method": "bearer"}  # no origin, no evidence
     assert by_signature["principal"]["id"] == "buyer-wba"
     assert by_signature["credential"]["method"] == "web_bot_auth"
+    assert by_signature["credential"]["origin"] == BUYER
 
 
 def test_commit_with_a_bearer_token(web, seller_db):

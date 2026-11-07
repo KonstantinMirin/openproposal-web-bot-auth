@@ -1,7 +1,7 @@
 """The real logic: reading an issued proposal and answering a buyer's `commit`.
 
 Nothing here reads a header or a credential. Each function takes the frozen
-caller that `resolve_caller` returned. Decisions read the generated types,
+caller that the identity boundary (seller/boundary.py) returned. Decisions read the generated types,
 parsed once from the stored raw JSON; the raw JSON stays the digest input.
 """
 
@@ -38,8 +38,8 @@ from protocol.record import (
 )
 from protocol.values import JsonObject, JsonValue, commitment_key, instant, matches
 
+from .caller import Caller, ResolvedCaller
 from .errors import OfferError
-from .identity import Caller, ResolvedCaller, provenance_of
 from .ports import OfferRepository, OfferStore, StoredProposal
 
 #: The statuses a `commit` can name (§ 4.3.2).
@@ -267,9 +267,10 @@ def _accept(
     now: datetime,
 ) -> None:
     """Writes the buyer's entry and the seller's matching `acceptance` (§ 4.1.2)."""
-    # The boundary's provenance goes to storage with the entry, unread here.
+    # The caller goes to storage with the entry, which keeps how it authenticated; its
+    # credential is unread here.
     document, proposal_id = issued.document, issued.proposal_id
-    store.append_assent(proposal_id, commit.entry, provenance_of(caller))
+    store.append_assent(proposal_id, commit.entry, caller)
     acceptance = acceptance_for(commit.entry, now)
     store.append_assent(proposal_id, acceptance, None)
     store.save_agreed(proposal_id, acceptance.record_digest, data, [commit.entry, acceptance])

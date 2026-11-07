@@ -26,3 +26,21 @@ layers =
     shared
     persistence
     protocol
+
+# The offer logic is credential-blind and framework-free: importing it loads no
+# HTTP framework, HTTP client, Web Bot Auth library, or storage engine.
+# The one ignored import is the seller.errors chain (OfferError renders a
+# JSONResponse); Step 5 moves the rendering to seller/http.py and deletes it.
+[importlinter:contract:offers-framework-free]
+name = The offer logic imports no HTTP stack, signing library, or database
+type = forbidden
+source_modules =
+    seller.offers
+forbidden_modules =
+    fastapi
+    starlette
+    httpx
+    iab_agentic_primitives
+    sqlite3
+ignore_imports =
+    seller.errors -> fastapi

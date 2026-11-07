@@ -84,7 +84,7 @@ class Keyring:
         self._clock = clock
         self._state_file = directory / "state.json"
         if not self._files():
-            kid = self._mint().kid
+            kid = self._mint().thumbprint
             self._save(KeyringState(active=kid, published={kid: 0.0}, stopped={}))
 
     def _files(self) -> list[Path]:
@@ -94,7 +94,7 @@ class Keyring:
         """A new key, written with mode 0600 by the library, then named by its kid."""
         pending = self.directory / "minting.jwk.new"
         key = Ed25519Key.load_or_create(pending)
-        pending.rename(self.directory / f"{key.kid}.jwk")
+        pending.rename(self.directory / f"{key.thumbprint}.jwk")
         return key
 
     def state(self) -> KeyringState:
@@ -129,7 +129,9 @@ class Keyring:
         key = self._mint()
         state = self.state()
         self._save(
-            state.model_copy(update={"published": {**state.published, key.kid: self._clock()}})
+            state.model_copy(
+                update={"published": {**state.published, key.thumbprint: self._clock()}}
+            )
         )
         return key
 

@@ -7,24 +7,22 @@ to. `StoredRequest` and `StoredResponse` carry the library's own `HTTPRequest`
 and `HTTPResponse`, and `load_request` and `load_response` rebuild equal ones.
 
 § 4.1.2 also asks a party to keep "the bytes of the key directory it verified
-against". Each verification stores the `VerifiedDirectory` it used: the exact
-body bytes, the header lines with that fetch's own directory signatures, and
-when it was fetched. Two rows merge only when all of that is identical, which
-happens when two signatures verified against one cached fetch.
+against". Each verification stores the directory response it used (a
+`KeptDirectory`, such as the library's `VerifiedDirectory`): the exact body
+bytes, the header lines with that fetch's own directory signatures, and when it
+was fetched. Two rows merge only when all of that is identical, which happens
+when two signatures verified against one cached fetch.
 """
 
 from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Iterable
 from dataclasses import dataclass
+from typing import Protocol
 
-from iab_agentic_primitives.web_bot_auth import (
-    HeaderLines,
-    HTTPRequest,
-    HTTPResponse,
-    VerifiedDirectory,
-)
+from iab_agentic_primitives.web_bot_auth import HeaderLines, HTTPRequest, HTTPResponse
 
 from protocol.record import canonical, sha256_hex
 from protocol.values import JsonObject, JsonValue
@@ -32,16 +30,15 @@ from protocol.values import JsonObject, JsonValue
 from .sqlite import inserted
 
 DIRECTORIES_SCHEMA = """
--- A verified key directory response: one row per fetch. evidence is
--- VerifiedDirectory.evidence(); body holds the exact bytes verified.
+-- A verified key directory response: one row per fetch. body holds the exact
+-- bytes verified.
 CREATE TABLE IF NOT EXISTS directories (
     digest      TEXT PRIMARY KEY,
     url         TEXT NOT NULL,
     status      INTEGER NOT NULL,
     headers     TEXT NOT NULL,
     body        BLOB NOT NULL,
-    fetched_at  REAL,
-    evidence    TEXT NOT NULL
+    fetched_at  REAL
 );
 """
 
@@ -87,6 +84,21 @@ RESPONSE_WITH_REQUEST = (
 )
 
 
+class KeptDirectory(Protocol):
+    """A verified key directory response, as fetched: what § 4.1.2 asks a party to keep."""
+
+    @property
+    def url(self) -> str | None: ...
+    @property
+    def status(self) -> int: ...
+    @property
+    def headers(self) -> Iterable[tuple[str, str]]: ...
+    @property
+    def body(self) -> bytes: ...
+    @property
+    def fetched_at(self) -> int | None: ...
+
+
 @dataclass(frozen=True)
 class StoredRequest:
     """A request to keep: who signed it, with which key, and the directory that confirmed it."""
@@ -94,7 +106,7 @@ class StoredRequest:
     request: HTTPRequest
     origin: str
     keyid: str | None
-    directory: VerifiedDirectory | None = None
+    directory: KeptDirectory | None = None
 
 
 @dataclass(frozen=True)
@@ -105,7 +117,7 @@ class StoredResponse:
     request: StoredRequest
     origin: str
     keyid: str
-    directory: VerifiedDirectory | None = None
+    directory: KeptDirectory | None = None
 
 
 def _lines(headers: HeaderLines) -> str:
@@ -182,7 +194,7 @@ def load_response(db: sqlite3.Connection, response_id: int) -> HTTPResponse:
     return HTTPResponse(row["status"], _headers(row["headers"]), row["body"], request)
 
 
-def save_directory(db: sqlite3.Connection, directory: VerifiedDirectory | None) -> str | None:
+def save_directory(db: sqlite3.Connection, directory: KeptDirectory | None) -> str | None:
     """Stores the directory a verification used and returns its row key."""
     if directory is None:
         return None
@@ -195,9 +207,8 @@ def save_directory(db: sqlite3.Connection, directory: VerifiedDirectory | None) 
     }
     digest = sha256_hex(canonical(fetch) + directory.body)
     db.execute(
-        "INSERT OR IGNORE INTO directories"
-        " (digest, url, status, headers, body, fetched_at, evidence)"
-        " VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "INSERT OR IGNORE INTO directories (digest, url, status, headers, body, fetched_at)"
+        " VALUES (?, ?, ?, ?, ?, ?)",
         (
             digest,
             directory.url,
@@ -205,7 +216,6 @@ def save_directory(db: sqlite3.Connection, directory: VerifiedDirectory | None) 
             json.dumps(headers),
             directory.body,
             directory.fetched_at,
-            json.dumps(directory.evidence()),
         ),
     )
     return digest

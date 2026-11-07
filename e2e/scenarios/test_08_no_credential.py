@@ -1,7 +1,8 @@
 """8. A commit with no credential is refused, and a bad credential is never treated as none.
 
-The boundary runs before anything reads the body, so a failing credential is
-refused even when the body isn't JSON.
+The boundary runs before anything parses the body. It reads the body, because
+a signature covers it through `Content-Digest`, but it never parses it, so a
+failing credential is refused even when the body isn't JSON.
 """
 
 from conftest import SELLER, commit_body, signed
@@ -30,7 +31,7 @@ def test_an_invalid_token_is_refused_not_downgraded(web):
     assert web.get(f"{SELLER}/whoami").json()["kind"] == "public"  # no credential at all
 
 
-def test_a_failing_credential_is_refused_before_the_body_is_read(web):
+def test_a_failing_credential_is_refused_before_the_body_is_parsed(web):
     url = f"{SELLER}/proposals/demo-wba-2/commit"
     broken = b"{not json"
     json_type = {"Content-Type": "application/json"}
@@ -49,7 +50,7 @@ def test_a_failing_credential_is_refused_before_the_body_is_read(web):
         "detail": "",
     }
 
-    # With a credential that verifies, the offer logic reads the body and rejects it.
+    # With a credential that verifies, the offer logic parses the body and rejects it.
     rejected = web.post(url, content=broken, headers=signed("POST", url, broken))
     assert rejected.status_code == 400
     assert rejected.json()["errors"][0]["code"] == "validation"

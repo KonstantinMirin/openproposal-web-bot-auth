@@ -104,7 +104,7 @@ def test_the_seller_signs_every_answer_and_serves_its_directory(seller: TestClie
 def test_the_seller_resolves_each_credential_through_its_injected_resources(
     seller: TestClient, buyer_key: Ed25519Key
 ) -> None:
-    assert seller.get("/whoami").json() == {"kind": "public", "credential": None}
+    assert seller.get("/whoami").json() == {"kind": "public", "signature": None}
 
     by_token = seller.get("/whoami", headers={"Authorization": f"Bearer {TOKEN}"}).json()
     assert by_token["principal"]["id"] == "buyer-bearer"

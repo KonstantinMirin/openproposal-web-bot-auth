@@ -15,7 +15,7 @@ def test_cloudflare_accepts_the_buyers_signature(web):
     assert verdict["ok"] is True
     assert verdict["verifier"] == "web-bot-auth@0.2.0 verify()"
     assert verdict["identity"] == BUYER
-    assert verdict["keyid"] == buyer_key().kid
+    assert verdict["keyid"] == buyer_key().thumbprint
     assert verdict["content_digest_matches"] is True
     # cfbot verified the directory's own signature by that key before using the key.
-    assert {"label": "key1", "keyid": buyer_key().kid} in verdict["directory_signatures"]
+    assert {"label": "key1", "keyid": buyer_key().thumbprint} in verdict["directory_signatures"]

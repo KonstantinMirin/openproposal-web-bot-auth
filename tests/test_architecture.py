@@ -1,30 +1,44 @@
 """The identity boundary's invariants, read from the source with `ast`; no app is imported.
 
-- The identity types are frozen and refuse unknown members.
-- Only the boundary module builds them.
-- No route declares a `Request`, except the one allowlisted route, which Step 4
-  removes. The allowlist is matched exactly, so it can only shrink.
+- The identity types are frozen, strict, and refuse unknown members.
+- Only the boundary module and the test factory build them.
+- No route declares a `Request`.
 - The offer logic reads no attribute of the caller's credential.
 
 Each check is a function over source text, so the tests below also run it on a
-planted violation and expect it to fire.
+planted violation and expect it to fire. The last tests hold the types to what
+their config promises: no amended copy, no coercion, no illegal credential.
 """
 
 from __future__ import annotations
 
 import ast
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
+from pydantic import BaseModel, ValidationError
+
+from tests import factories
 
 REPO = Path(__file__).resolve().parent.parent
-BOUNDARY = "seller/identity.py"
-IDENTITY_TYPES = frozenset({"Principal", "Credential", "ResolvedCaller", "PublicCaller"})
+#: Where the identity types live, and the only modules that build them.
+IDENTITY_MODULE = "seller/caller.py"
+BUILDERS = frozenset({"seller/boundary.py", "tests/factories.py"})
+IDENTITY_TYPES = frozenset(
+    {
+        "Principal",
+        "DirectoryResponse",
+        "SignedMessage",
+        "SignatureCredential",
+        "BearerCredential",
+        "ResolvedCaller",
+        "PublicCaller",
+    }
+)
 SCANNED = ("seller", "buyer", "shared", "runner", "tests", "e2e")
 ROUTE_DECORATORS = frozenset({"get", "post", "put", "patch", "delete"})
 ROUTERS = frozenset({"api", "operator"})
-#: (module, route) pairs allowed to declare `Request`. Step 4 empties it.
-REQUEST_ALLOWLIST = frozenset({("seller/app.py", "commit")})
 
 
 def _source(path: str) -> str:
@@ -44,7 +58,8 @@ def _keyword(call: ast.Call, name: str) -> ast.expr | None:
 
 
 def frozen_config(source: str) -> dict[str, bool]:
-    """For each identity type, whether it inherits a config with frozen=True, extra='forbid'."""
+    """For each identity type, whether it inherits a config with frozen=True,
+    extra='forbid', and strict=True."""
     classes = {n.name: n for n in ast.walk(ast.parse(source)) if isinstance(n, ast.ClassDef)}
 
     def own(node: ast.ClassDef) -> bool:
@@ -54,11 +69,14 @@ def frozen_config(source: str) -> dict[str, bool]:
             if [t.id for t in stmt.targets if isinstance(t, ast.Name)] != ["model_config"]:
                 continue
             frozen, extra = _keyword(stmt.value, "frozen"), _keyword(stmt.value, "extra")
+            strict = _keyword(stmt.value, "strict")
             return (
                 isinstance(frozen, ast.Constant)
                 and frozen.value is True
                 and isinstance(extra, ast.Constant)
                 and extra.value == "forbid"
+                and isinstance(strict, ast.Constant)
+                and strict.value is True
             )
         return False
 
@@ -73,8 +91,8 @@ def frozen_config(source: str) -> dict[str, bool]:
 
 
 def identity_constructions(path: str, source: str) -> list[int]:
-    """Lines where `source` builds an identity type, outside the boundary module."""
-    if path == BOUNDARY:
+    """Lines where `source` builds an identity type, outside the modules allowed to."""
+    if path in BUILDERS:
         return []
     lines = []
     for node in ast.walk(ast.parse(source)):
@@ -127,19 +145,19 @@ def credential_reads(source: str) -> list[int]:
 
 
 def test_identity_types_are_frozen_and_closed() -> None:
-    assert frozen_config(_source(BOUNDARY)) == dict.fromkeys(IDENTITY_TYPES, True)
+    assert frozen_config(_source(IDENTITY_MODULE)) == dict.fromkeys(IDENTITY_TYPES, True)
 
 
-def test_only_the_boundary_builds_identity_types() -> None:
+def test_only_the_boundary_and_the_factory_build_identity_types() -> None:
     built = {
         p: lines for p, s in _tree_sources().items() if (lines := identity_constructions(p, s))
     }
     assert built == {}
 
 
-def test_no_route_declares_request_beyond_the_allowlist() -> None:
+def test_no_route_declares_request() -> None:
     routes = set().union(*(request_routes(p, s) for p, s in _tree_sources().items()))
-    assert routes == REQUEST_ALLOWLIST
+    assert routes == set()
 
 
 def test_the_offer_logic_reads_no_credential_attribute() -> None:
@@ -165,8 +183,9 @@ def test_qualified_and_validated_constructions_fire(call: str) -> None:
 
 
 def test_a_thawed_identity_type_fires() -> None:
-    thawed = _source(BOUNDARY).replace("frozen=True", "frozen=False")
-    assert not all(frozen_config(thawed).values())
+    for setting in ("frozen=True", "strict=True"):
+        thawed = _source(IDENTITY_MODULE).replace(setting, setting.replace("True", "False"))
+        assert not all(frozen_config(thawed).values()), setting
 
 
 def test_a_planted_request_route_fires() -> None:
@@ -177,3 +196,46 @@ def test_a_planted_request_route_fires() -> None:
 def test_a_planted_credential_read_fires() -> None:
     planted = "def f(caller):\n    return caller.credential.method\n"
     assert credential_reads(planted) == [2]
+
+
+# ── The types refuse what their config promises ─────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        factories.principal(),
+        factories.signature_credential(),
+        factories.bearer_credential(),
+        factories.resolved_caller(),
+        factories.public_caller(),
+    ],
+    ids=type,
+)
+def test_no_identity_value_gives_an_amended_copy(value: BaseModel) -> None:
+    with pytest.raises(TypeError, match="never amended"):
+        value.model_copy(update={"credential": {"method": "nope"}})
+
+
+@pytest.mark.parametrize(
+    "build",
+    [
+        lambda: factories.bearer_credential(origin="https://buyer.example"),
+        lambda: factories.public_caller(signature=factories.bearer_credential()),
+        lambda: factories.signature_credential(body_covered="yes"),
+        lambda: factories.principal(kind="seller"),
+        lambda: factories.resolved_caller(credential={"method": "nope"}),
+        lambda: factories.resolved_caller(attributed=1),
+    ],
+    ids=[
+        "a bearer credential with an origin",
+        "a public caller with a bearer credential",
+        "a coerced boolean",
+        "a principal of another kind",
+        "an unknown credential method",
+        "a coerced attribution",
+    ],
+)
+def test_an_illegal_identity_does_not_construct(build: Callable[[], BaseModel]) -> None:
+    with pytest.raises(ValidationError):
+        build()

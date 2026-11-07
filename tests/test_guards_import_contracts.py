@@ -34,7 +34,17 @@ CASES = (
     ({"parties-independent", "layers"}, "runner/planted.py", "from seller import planted\n"),
     ({"layers"}, "shared/planted.py", "import seller.planted\n"),
     ({"layers"}, "protocol/planted.py", "import shared.planted\n"),
+    ({"offers-framework-free"}, "seller/offers.py", "import httpx\n"),
+    # Through the identity types the offer logic takes: the chain Step 4 removed.
+    ({"offers-framework-free"}, "seller/caller.py", "import iab_agentic_primitives\n"),
 )
+#: Modules present in every tree: the offer logic and the identity types it takes, and
+#: seller.errors with the one import the offers contract ignores, so its ignore line matches.
+NAMED = {
+    "seller/offers.py": "from . import caller\n",
+    "seller/caller.py": "",
+    "seller/errors.py": "import fastapi\n",
+}
 
 
 def _lint(tree: Path, planted: tuple[str, str] | None) -> str:
@@ -42,6 +52,8 @@ def _lint(tree: Path, planted: tuple[str, str] | None) -> str:
         (tree / package).mkdir(parents=True)
         (tree / package / "__init__.py").write_text("")
         (tree / package / "planted.py").write_text("")
+    for path, source in NAMED.items():
+        (tree / path).write_text(source)
     if planted is not None:
         path, source = planted
         (tree / path).write_text(source)

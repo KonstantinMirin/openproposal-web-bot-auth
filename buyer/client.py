@@ -17,13 +17,15 @@ from iab_agentic_primitives.web_bot_auth import (
     HTTPRequest,
     KeyResolver,
     Origin,
+    Refusal,
     RequestSigner,
     ResponseVerifier,
-    VerifiedSignature,
+    VerifiedResponse,
+    WebBotAuthError,
 )
-from iab_agentic_primitives.web_bot_auth.httpx import WebBotAuth
+from iab_agentic_primitives.web_bot_auth.httpx import WebBotAuth, verified_response
 
-from shared.wba import AuthMethod
+from shared.auth import AuthMethod
 
 #: How the buyer authenticates a request to a seller.
 Credential = AuthMethod
@@ -43,7 +45,7 @@ class Exchange:
     #: The response's header lines as received, in order and with their own case.
     headers: list[tuple[str, str]]
     body: bytes
-    verified: VerifiedSignature
+    verified: VerifiedResponse
     #: The key that signed the request, or None for a bearer request.
     keyid: str | None
 
@@ -80,7 +82,9 @@ async def call_seller(
         # Sends the request unsigned, and still verifies the seller's signed answer.
         auth = WebBotAuth.verify_only(verifier, expected_origin=Origin.parse(seller_origin))
     response = await client.request(method, url, content=body, headers=headers, auth=auth)
-    verified = response.extensions["web_bot_auth"]
+    verified = verified_response(response)
+    if verified is None:  # the auth refuses an unsigned answer, so this can't happen
+        raise WebBotAuthError(Refusal.SIGNATURE_MISSING, "the answer carries no verified signature")
     sent = [(k, v) for k, v in _lines(response.request.headers) if k.lower() != "authorization"]
     return Exchange(
         request=HTTPRequest(method, url, sent, body),
@@ -88,7 +92,7 @@ async def call_seller(
         headers=_lines(response.headers),
         body=response.content,
         verified=verified,
-        keyid=signer.key.kid if signer else None,
+        keyid=signer.key.thumbprint if signer else None,
     )
 
 

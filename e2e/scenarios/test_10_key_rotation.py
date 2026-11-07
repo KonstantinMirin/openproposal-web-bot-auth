@@ -16,7 +16,6 @@ key. The timing is the stack's own, which e2e/docker-compose.yml passes to the
 runner.
 """
 
-import json
 import time
 
 from conftest import BUYER, BUYER_OPERATOR, SELLER, buyer_key, signed
@@ -36,20 +35,20 @@ def _read(web) -> dict:
     return read
 
 
-def _last_signed_by_buyer(seller_db) -> str:
-    """The keyid of the last request the seller verified from the buyer's origin."""
-    return seller_db.execute(
-        "SELECT keyid FROM signed_requests WHERE origin = ? ORDER BY id DESC LIMIT 1", (BUYER,)
-    ).fetchone()["keyid"]
+def _verified_keyid(web, kid: str) -> str:
+    """The keyid the seller verified for a request signed with the buyer's key `kid`.
+
+    The seller keeps no evidence for a read, so `/whoami` is where it says which key it
+    verified: it can only verify `kid` from a directory that lists it.
+    """
+    whoami = web.get(URL, headers=signed("GET", URL, key=buyer_key(kid)))
+    assert whoami.status_code == 200, whoami.text
+    assert whoami.json()["credential"]["origin"] == BUYER
+    return whoami.json()["credential"]["keyid"]
 
 
-def _directories_listing(seller_db, kid: str) -> int:
-    rows = seller_db.execute("SELECT body FROM directories WHERE url LIKE 'https://buyer.%'")
-    return sum(kid in {k["kid"] for k in json.loads(r["body"])["keys"]} for r in rows)
-
-
-def test_key_rotation(web, seller_db):
-    old = buyer_key().kid
+def test_key_rotation(web):
+    old = buyer_key().thumbprint
 
     # 1. Publish the new key. Requests still go out signed with the old key, and verify.
     keys = web.post(f"{BUYER_OPERATOR}/keys").json()
@@ -57,7 +56,7 @@ def test_key_rotation(web, seller_db):
     new = keys["published_kid"]
     assert keys["active"] == old and set(keys["published"]) == {old, new}
     assert _read(web)["keyid"] == old
-    assert _last_signed_by_buyer(seller_db) == old
+    assert _verified_keyid(web, old) == old
     # The switch waits until no verifier can still be serving a directory without it.
     early = web.post(f"{BUYER_OPERATOR}/keys/{new}/activate")
     assert early.status_code == 409, early.text
@@ -67,8 +66,7 @@ def test_key_rotation(web, seller_db):
     assert web.post(f"{BUYER_OPERATOR}/keys/{new}/activate").json()["active"] == new
     switched_at = time.time()
     assert _read(web)["keyid"] == new
-    assert _last_signed_by_buyer(seller_db) == new
-    assert _directories_listing(seller_db, new) >= 1
+    assert _verified_keyid(web, new) == new
 
     # 3. Remove the old key once every signature it made has expired.
     assert web.delete(f"{BUYER_OPERATOR}/keys/{old}").status_code == 409  # too early
@@ -78,7 +76,7 @@ def test_key_rotation(web, seller_db):
     # After the seller's next refresh, the old key is refused.
     _until(switched_at + MAX_CACHE_AGE + 1)
     retired = buyer_key(old)
-    assert retired.kid == old
+    assert retired.thumbprint == old
     refused = web.get(URL, headers=signed("GET", URL, key=retired))
     assert refused.status_code == 403
     assert refused.json()["reason"] == "key-not-found"

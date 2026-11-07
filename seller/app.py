@@ -4,11 +4,12 @@
 at import time. Uvicorn builds the app with `--factory seller.app:app_from_env`,
 the only caller of `SellerSettings.from_env()`.
 
-Every agent-facing route takes the caller from `resolve_caller` and nothing
-else. The `/operator/` routes are the seller's own controls, outside the
-boundary: no front routes them, and each call carries the operator key
-(shared/operator.py). `ResponseSigningMiddleware` signs every response,
-refusals included, and binds it to the request it answers.
+Every agent-facing route takes the caller from the identity boundary
+(`CallerDep`, seller/http.py) and nothing else. The `/operator/` routes are
+the seller's own controls, outside the boundary: no front routes them, and
+each call carries the operator key (shared/operator.py).
+`ResponseSigningMiddleware` signs every response, refusals included, and binds
+it to the request it answers.
 """
 
 from __future__ import annotations
@@ -40,9 +41,10 @@ from shared.operator import OperatorKey
 from shared.wba import directory_resolver, http_client, tls_context
 
 from . import offers
-from .errors import OfferError, Refused
+from .boundary import IdentityBoundary, Refused
+from .errors import OfferError
 from .faults import FaultInjection
-from .identity import CallerDep
+from .http import CallerDep, RawBodyDep, refused
 from .resources import OfferStoreDep, OnboardingDep, SellerResources
 from .seed import issue, seed
 from .settings import SellerSettings
@@ -57,22 +59,20 @@ async def get_proposal(proposal_id: str, caller: CallerDep, store: OfferStoreDep
     return JSONResponse(offers.full_representation(store, caller, proposal_id))
 
 
-# Allowlisted: the route reads the raw body from Request. Step 4 replaces it with RawBodyDep.
-# ast-grep-ignore: routes-take-no-request
 @api.post("/proposals/{proposal_id}/commit")
 async def commit(
-    proposal_id: str, caller: CallerDep, store: OfferStoreDep, request: Request
+    proposal_id: str, caller: CallerDep, store: OfferStoreDep, body: RawBodyDep
 ) -> JSONResponse:
-    # The route takes the body as bytes, so nothing parses it before resolve_caller has
+    # The route takes the body as bytes, so nothing parses it before the boundary has
     # confirmed the credential: a failing credential is refused even when the JSON is broken.
-    body = offers.parse_commit(await request.body())
-    return JSONResponse(dump(offers.commit(store, caller, proposal_id, body)))
+    request = offers.parse_commit(body)
+    return JSONResponse(dump(offers.commit(store, caller, proposal_id, request)))
 
 
 @api.get("/whoami")
 async def whoami(caller: CallerDep) -> JSONResponse:
     """What the identity boundary resolved for this request."""
-    return JSONResponse(caller.model_dump())
+    return JSONResponse(caller.model_dump(mode="json"))
 
 
 @api.get("/health")
@@ -117,7 +117,7 @@ def create_app(
     nonces: NonceStore | None = None,
     resolver: KeyResolver | None = None,
 ) -> ASGIApp:
-    """The seller, from its settings. Its lifespan owns the store, the client, and the verifier.
+    """The seller, from its settings. Its lifespan owns the store, the client, and the boundary.
 
     `nonces` and `resolver` replace the in-memory nonce store and the directory
     resolver, as a deployment with several workers or a test does.
@@ -141,15 +141,16 @@ def create_app(
                 else resolver
             )
             verifier = RequestVerifier(
-                keys, nonces=MemoryNonceStore() if nonces is None else nonces
+                keys, identity=identity, nonces=MemoryNonceStore() if nonces is None else nonces
             )
-            yield {"resources": SellerResources(identity, store, client, verifier)}
+            boundary = IdentityBoundary(store, verifier, identity)
+            yield {"resources": SellerResources(store, client, boundary)}
         finally:
             await client.aclose()
             store.close()
 
     agent = FastAPI(title="Demo seller", lifespan=lifespan)
-    agent.add_exception_handler(Refused, _refused)
+    agent.add_exception_handler(Refused, refused)
     agent.add_exception_handler(OfferError, _rejected)
     agent.include_router(api)
     agent.include_router(operator, dependencies=[Depends(OperatorKey(settings.operator_key))])
@@ -161,13 +162,6 @@ def create_app(
     return DirectoryMiddleware(
         answering, [key], identity=identity, max_age=settings.directory_max_age
     )
-
-
-async def _refused(_request: Request, error: Exception) -> JSONResponse:
-    """The boundary's refusal. Async, so it runs on the event loop's thread."""
-    if not isinstance(error, Refused):
-        raise error
-    return error.response()
 
 
 async def _rejected(_request: Request, error: Exception) -> JSONResponse:

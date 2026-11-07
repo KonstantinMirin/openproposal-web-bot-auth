@@ -1,7 +1,6 @@
-"""The two ways the seller refuses a request.
+"""How the offer logic rejects a request: `OfferError`, with `errors[]` (§ 2.4).
 
-- `Refused`: the identity boundary refused the credential. The handler never ran.
-- `OfferError`: the offer logic rejected the request, with `errors[]` (§ 2.4).
+The identity boundary's own refusal, `Refused`, is in seller/boundary.py.
 """
 
 from __future__ import annotations
@@ -10,17 +9,6 @@ from typing import Any, Literal
 
 from fastapi.responses import JSONResponse
 from openproposal import ErrorObject
-
-
-class Refused(Exception):
-    def __init__(self, status: int, reason: str, detail: str, *, headers: dict | None = None):
-        super().__init__(detail)
-        self.status, self.reason, self.detail, self.headers = status, reason, detail, headers or {}
-
-    def response(self) -> JSONResponse:
-        body = {"refused_at": "identity-boundary", "reason": self.reason, "detail": self.detail}
-        return JSONResponse(body, status_code=self.status, headers=self.headers)
-
 
 # The informative HTTP status of each core code (§ 2.4).
 _STATUS = {

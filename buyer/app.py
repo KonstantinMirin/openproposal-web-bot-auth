@@ -27,9 +27,10 @@ from pydantic import BaseModel, TypeAdapter
 from starlette.types import ASGIApp
 
 from protocol.documents import load_yaml
+from shared.auth import AuthMethod
 from shared.keyring import Keyring, RotationError
 from shared.operator import OperatorKey
-from shared.wba import AuthMethod, Transport, directory_resolver, http_client, tls_context
+from shared.wba import Transport, directory_resolver, http_client, tls_context
 
 from .client import HTTPClient, call_signed
 from .flow import Buyer, Outcome
@@ -84,13 +85,16 @@ async def operator_read(trigger: Trigger, flow: FlowDep, settings: SettingsDep) 
 
 @operator.get("/keys")
 async def list_keys(keyring: KeyringDep) -> dict[str, str | list[str]]:
-    return {"published": [k.kid for k in keyring.published()], "active": keyring.active().kid}
+    return {
+        "published": [k.thumbprint for k in keyring.published()],
+        "active": keyring.active().thumbprint,
+    }
 
 
 @operator.post("/keys")
 async def publish_key(keyring: KeyringDep) -> dict[str, str | list[str]]:
     """Rotation, step 1: publish a new key next to the old one, which keeps signing."""
-    return {"published_kid": keyring.publish().kid, **await list_keys(keyring)}
+    return {"published_kid": keyring.publish().thumbprint, **await list_keys(keyring)}
 
 
 @operator.post("/keys/{kid}/activate")

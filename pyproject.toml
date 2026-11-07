@@ -78,8 +78,7 @@ max-statements = 50
 "e2e/scenarios/**" = ["S101", "PLR2004", "ANN"]
 # Exemptions for production files. They only shrink: each line lists the exact
 # codes today's tree reports in that file, and the step that removes them.
-"seller/identity.py" = ["PLR2004"]  # Step 4: refusal hints come from the library
-"seller/errors.py" = ["ANN204", "PLR0913"]  # Step 5: pure errors, rendering in seller/http.py
+"seller/errors.py" = ["PLR0913"]  # Step 5: pure errors, rendering in seller/http.py
 "seller/offers.py" = ["C901", "PLR0912", "PLR0913", "PLR0917"]  # Step 5: seller/offers/
 "buyer/client.py" = ["PLR0913", "TRY003"]  # Step 6: buyer/seller_client.py
 "buyer/flow.py" = ["PLR0913", "PLR2004", "TRY003"]  # Step 6: the buyer mirror
@@ -103,8 +102,10 @@ explicit_package_bases = true
 files = [
     "seller/__init__.py",
     "seller/app.py",
+    "seller/boundary.py",
+    "seller/caller.py",
     "seller/faults.py",
-    "seller/identity.py",
+    "seller/http.py",
     "seller/ports.py",
     "seller/resources.py",
     "seller/seed.py",
@@ -126,6 +127,7 @@ files = [
     "protocol/record.py",
     "protocol/values.py",
     "shared/__init__.py",
+    "shared/auth.py",
     "shared/keyring.py",
     "shared/lifespan.py",
     "shared/operator.py",
@@ -136,7 +138,9 @@ files = [
     "tests/_tools.py",
     "tests/conftest.py",
     "tests/test_apps.py",
+    "tests/factories.py",
     "tests/test_architecture.py",
+    "tests/test_boundary.py",
     "tests/test_buyer_repository.py",
     "tests/test_guards_ast_grep.py",
     "tests/test_guards_import_contracts.py",
@@ -160,8 +164,10 @@ follow_imports = "silent"
 [[tool.mypy.overrides]]
 module = [
     "seller.app",
+    "seller.boundary",
+    "seller.caller",
     "seller.faults",
-    "seller.identity",
+    "seller.http",
     "seller.ports",
     "seller.resources",
     "seller.seed",
@@ -175,6 +181,7 @@ module = [
     "persistence.*",
     "protocol.*",
     "runner.settings",
+    "shared.auth",
     "shared.keyring",
     "shared.lifespan",
     "shared.operator",
@@ -183,7 +190,9 @@ module = [
     "tests._tools",
     "tests.conftest",
     "tests.test_apps",
+    "tests.factories",
     "tests.test_architecture",
+    "tests.test_boundary",
     "tests.test_buyer_repository",
     "tests.test_guards_ast_grep",
     "tests.test_guards_import_contracts",
@@ -204,7 +213,8 @@ branch = true
 
 [tool.coverage.report]
 # The branch coverage measured on the tree before Step 0 (45.26), raised to each
-# step's measured total (Step 1: 50.90; Step 2: 77.57; Step 3: 79.98). It is never lowered.
-fail_under = 79.98
+# step's measured total (Step 1: 50.90; Step 2: 77.57; Step 3: 79.98; Step 4: 84.78). It is
+# never lowered.
+fail_under = 84.78
 precision = 2
 show_missing = false

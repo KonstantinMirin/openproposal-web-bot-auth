@@ -7,12 +7,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
-from iab_agentic_primitives.web_bot_auth import HTTPRequest
 from openproposal import AssentEntry, ErrorObject
 
-from persistence.evidence import StoredRequest, load_request
 from protocol.operations import acceptance_for
-from seller.ports import PrincipalRecord, Provenance, StoredProposal
+from seller.ports import PrincipalRecord, StoredProposal
 from seller.sqlite_store import SqliteSellerStore, token_hash
 
 BUYER = PrincipalRecord("buyer-wba", "Demo Buyer Agency LLC", "buyer.example")
@@ -63,18 +61,12 @@ def test_a_proposal_is_issued_once_and_its_document_replaced(store: SqliteSeller
 
 
 def test_the_assent_log_returns_the_same_entries_in_order(store: SqliteSellerStore) -> None:
+    # How a buyer's entry authenticated, and its evidence, are kept by the commit route:
+    # tests/test_boundary.py drives them through the app.
     acceptance = acceptance_for(COMMITMENT, datetime(2029, 1, 1, 0, 0, 1, tzinfo=UTC))
-    provenance = Provenance(BUYER.id, "web_bot_auth", evidence_id=None, attributed=True)
-    store.append_assent("p-1", COMMITMENT, provenance)
+    store.append_assent("p-1", COMMITMENT, None)
     store.append_assent("p-1", acceptance, None)
     assert store.assent("p-1") == [COMMITMENT, acceptance]
-    rows = store.db.execute(
-        "SELECT role, principal_id, authentication_method, attributed FROM assent ORDER BY id"
-    ).fetchall()
-    assert [tuple(r) for r in rows] == [
-        ("commitment", BUYER.id, "web_bot_auth", 1),
-        ("acceptance", None, None, 0),
-    ]
     store.save_agreed("p-1", COMMITMENT.record_digest, b"input", [COMMITMENT, acceptance])
     agreed = store.db.execute("SELECT digest_input FROM agreed_records").fetchone()
     assert agreed[0] == b"input"
@@ -96,17 +88,6 @@ def test_the_ledger_keeps_a_processed_commit_with_and_without_its_error(
     )
     assert two is not None and two.error == error
     assert store.processed(BUYER.id, "key-3") is None
-
-
-def test_a_kept_request_loads_back_as_an_equal_request(store: SqliteSellerStore) -> None:
-    request = HTTPRequest(
-        "POST",
-        "https://seller.example/proposals/p-1/commit",
-        [("Content-Type", "application/json"), ("Signature-Input", "sig1=()"), ("X-A", "1")],
-        b'{"a": 1}',
-    )
-    request_id = store.keep_request(StoredRequest(request, "https://buyer.example", "kid-1"))
-    assert load_request(store.db, request_id) == request  # names keep their case and order
 
 
 @pytest.mark.parametrize(

@@ -129,14 +129,14 @@ signature: sig1=:5kF9XH4bsuauHZoFccx+QIPx31fC1lEEETIkSXE22ZRLN8OIL1otTSDNxFNjTIx
 <section id="boundary">
 <h2>The identity boundary</h2>
 <div class="prose">
-  <p>A bearer token and a Web Bot Auth signature are both transport-level credentials. The seller handles them in one place, <code>resolve_caller</code> in <code>seller/identity.py</code>. Every agent-facing route asks that function for its caller and never reads a header itself.</p>
+  <p>A bearer token and a Web Bot Auth signature are both transport-level credentials. The seller handles them in one place, <code>IdentityBoundary</code> in <code>seller/boundary.py</code>. Every agent-facing route asks it for its caller and never reads a header itself.</p>
 </div>
 
 <figure>
 <div class="diagram">
 <svg viewBox="0 0 760 404" role="img" aria-labelledby="f2-title f2-desc">
   <title id="f2-title">One resolver for both credentials</title>
-  <desc id="f2-desc">A signature, a bearer token, or no credential enters resolve_caller. It reads the credential, confirms it with the verifier or the token hash, resolves it to the stored principal, and freezes the result. A frozen ResolvedCaller or PublicCaller reaches the offer logic. A failing credential is refused with 400, 401, 403, 429, or 503, and the handler never runs.</desc>
+  <desc id="f2-desc">A signature, a bearer token, or no credential enters the IdentityBoundary. It reads the credential, confirms it with the verifier or the token hash, resolves it to the stored principal, and freezes the result. A frozen ResolvedCaller or PublicCaller reaches the offer logic. A failing credential is refused with 400, 401, 403, 429, or 503, and the handler never runs.</desc>
 
   <rect class="box" x="10" y="36" width="196" height="72" rx="8"/>
   <text class="t-title" x="22" y="60">Web Bot Auth</text>
@@ -152,7 +152,7 @@ signature: sig1=:5kF9XH4bsuauHZoFccx+QIPx31fC1lEEETIkSXE22ZRLN8OIL1otTSDNxFNjTIx
   <path class="wire" d="M222,65 H254" marker-end="url(#a-fg)"/>
 
   <rect class="frame-accent" x="240" y="10" width="272" height="316" rx="12"/>
-  <text x="256" y="32"><tspan class="t-mono t-title">resolve_caller</tspan><tspan class="t-muted" dx="8">seller/identity.py</tspan></text>
+  <text x="256" y="32"><tspan class="t-mono t-title">IdentityBoundary</tspan><tspan class="t-muted" dx="8">seller/boundary.py</tspan></text>
 
   <rect class="box" x="256" y="46" width="240" height="38" rx="6"/>
   <text x="270" y="70"><tspan class="t-step">1 </tspan>Read the credential</text>
@@ -198,11 +198,11 @@ signature: sig1=:5kF9XH4bsuauHZoFccx+QIPx31fC1lEEETIkSXE22ZRLN8OIL1otTSDNxFNjTIx
 <ol>
   <li><strong>Read.</strong> The boundary finds which credential the request presents. A request that presents both a signature and a token gets <code>400</code>.</li>
   <li><strong>Confirm.</strong> A signature goes to the library's <code>RequestVerifier</code>, which fetches the directory and checks <code>Content-Digest</code> against the body. A token is confirmed when its SHA-256 matches a stored row. The seller never stores the token itself.</li>
-  <li><strong>Resolve.</strong> The confirmed credential maps to the principal in the seller's own <code>credentials</code> table: by verified origin, or by token hash. A verified origin with no row is an established identity with no principal: a <code>PublicCaller</code> that carries the origin.</li>
+  <li><strong>Resolve.</strong> The confirmed credential maps to the principal in the seller's own <code>credentials</code> table: by verified origin, or by token hash. A verified origin with no row is an established identity with no principal: a <code>PublicCaller</code> that carries the signature.</li>
   <li><strong>Freeze.</strong> The boundary returns one immutable value, <code>ResolvedCaller</code> or <code>PublicCaller</code>. The offer logic receives it and can't change it.</li>
 </ol>
-<p>The offer logic is credential-blind. The boundary puts how the caller authenticated, the evidence it kept, and the attribution of § 4.1.2 into one <code>Credential</code> record. The offer logic hands that record to storage with the entry it writes, and never reads it, so no offer decision depends on which credential the caller used.</p>
-<p>A credential that fails is refused at the boundary, before anything reads the body. The refusal is a transport status with no <code>errors[]</code> object:</p>
+<p>The offer logic is credential-blind. The caller carries how it authenticated (a signature with the signed request, or a bearer token) and the attribution of § 4.1.2. The offer logic hands the caller to storage with the entry it writes, and never reads its credential, so no offer decision depends on which credential the caller used. The boundary writes nothing: the signed request is kept only with an entry it carried.</p>
+<p>A credential that fails is refused at the boundary, before anything parses the body. The refusal is a transport status with no <code>errors[]</code> object:</p>
 </div>
 <div class="table-wrap">
 <table>
@@ -268,7 +268,7 @@ signature: sig1=:5kF9XH4bsuauHZoFccx+QIPx31fC1lEEETIkSXE22ZRLN8OIL1otTSDNxFNjTIx
   <text class="t-small t-muted" x="380" y="176" text-anchor="middle">first contact; kept for up to 300 s</text>
 
   <rect class="box" x="500" y="192" width="180" height="46" rx="6"/>
-  <text class="t-small" x="590" y="212" text-anchor="middle">Verify; resolve_caller finds</text>
+  <text class="t-small" x="590" y="212" text-anchor="middle">Verify; the boundary finds</text>
   <text class="t-small" x="590" y="229" text-anchor="middle">the stored principal</text>
 
   <path class="wire-muted" d="M590,272 H174" marker-end="url(#a-muted)"/>
@@ -558,7 +558,7 @@ signature: sig1=:5kF9XH4bsuauHZoFccx+QIPx31fC1lEEETIkSXE22ZRLN8OIL1otTSDNxFNjTIx
 <h3>Call the seller without a credential</h3>
 <div class="prose"><p>The seller answers <code>200</code> with a <code>PublicCaller</code> that has no credential. The answer itself is signed: look for <code>Signature-Agent</code>, <code>Signature-Input</code>, and <code>Signature</code>.</p></div>
 <pre><code>curl -si https://seller.wba-demo.noetis.dev/whoami
-# {"kind":"public","credential":null}</code></pre>
+# {"kind":"public","signature":null}</code></pre>
 
 <h3>Present a failing credential</h3>
 <div class="prose"><p>A failing credential is refused, never treated as no credential. A token the seller didn't issue gets <code>401</code>, and a signature without <code>Signature-Agent</code> gets <code>403</code> with an <code>Accept-Signature</code> header that says how to sign:</p></div>

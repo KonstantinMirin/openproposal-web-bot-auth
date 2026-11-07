@@ -28,16 +28,23 @@ CASES = (
     (
         "identity-built-only-by-the-boundary",
         "seller/app.py",
-        "from .identity import Principal\n\n"
+        "from .caller import Principal\n\n"
         "p = Principal(id='x', kind='buyer', legal_name='X', domain='x.example')\n",
-        "from .identity import Principal\n\n\ndef name(p: Principal) -> str:\n    return p.id\n",
+        "from .caller import Principal\n\n\ndef name(p: Principal) -> str:\n    return p.id\n",
     ),
     (
         "identity-built-only-by-the-boundary",
         "tests/test_planted.py",
-        "from seller.identity import ResolvedCaller\n\nc = ResolvedCaller.model_validate({})\n",
-        "from seller.identity import ResolvedCaller\n\n\ndef kind(c: ResolvedCaller) -> str:\n"
+        "from seller.caller import ResolvedCaller\n\nc = ResolvedCaller.model_validate({})\n",
+        "from seller.caller import ResolvedCaller\n\n\ndef kind(c: ResolvedCaller) -> str:\n"
         "    return c.kind\n",
+    ),
+    (
+        "identity-built-only-by-the-boundary",
+        "seller/sqlite_store.py",
+        "from .caller import BearerCredential\n\nb = BearerCredential(method='bearer')\n",
+        "from .caller import BearerCredential\n\n\ndef m(b: BearerCredential) -> str:\n"
+        "    return b.method\n",
     ),
     (
         "identity-never-amended",
@@ -47,7 +54,7 @@ CASES = (
     ),
     (
         "boundary-never-downgrades",
-        "seller/identity.py",
+        "seller/boundary.py",
         "async def resolve(verifier):\n    try:\n        await verifier.verify()\n"
         "    except Exception:\n        return None\n",
         "async def resolve(verifier):\n    try:\n        await verifier.verify()\n"
@@ -62,7 +69,7 @@ CASES = (
     ),
     (
         "routes-take-no-request",
-        "seller/app.py",
+        "seller/http.py",
         "@api.post('/x')\nasync def x(caller: CallerDep, request: Request) -> None:\n    pass\n",
         "@api.post('/x')\nasync def x(caller: CallerDep, body: bytes) -> None:\n    pass\n",
     ),

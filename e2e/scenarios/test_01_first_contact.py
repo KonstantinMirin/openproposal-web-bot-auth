@@ -14,10 +14,13 @@ from conftest import BUYER, BUYER_OPERATOR, SELLER, stored_keys
 from iab_agentic_primitives.web_bot_auth import (
     HTTPRequest,
     HTTPResponse,
+    MemoryNonceStore,
     Origin,
     RequestVerifier,
     ResponseVerifier,
+    ServerIdentity,
 )
+from iab_agentic_primitives.web_bot_auth.sync import SyncRequestVerifier, SyncResponseVerifier
 
 from persistence.evidence import RESPONSE_WITH_REQUEST
 
@@ -76,11 +79,15 @@ def test_first_contact_by_signature(web, seller_db, buyer_db):
 
     # The seller's evidence verifies again, offline, against the directory bytes it kept.
     request_headers = [tuple(line) for line in json.loads(evidence["headers"])]
-    again = RequestVerifier(
-        stored_keys(seller_db, evidence["directory_digest"], BUYER)
-    ).verify_sync(
-        HTTPRequest(evidence["method"], evidence["url"], request_headers, evidence["body"])
+    verifier = RequestVerifier(
+        stored_keys(seller_db, evidence["directory_digest"], BUYER),
+        identity=ServerIdentity.from_config(SELLER),
+        nonces=MemoryNonceStore(),
     )
+    with SyncRequestVerifier(verifier) as sync:
+        again = sync.verify(
+            HTTPRequest(evidence["method"], evidence["url"], request_headers, evidence["body"])
+        )
     assert str(again.origin) == BUYER and again.keyid == evidence["keyid"] and again.body_covered
 
     # The buyer kept the seller's signed answer as received, bound to its request.
@@ -94,17 +101,18 @@ def test_first_contact_by_signature(web, seller_db, buyer_db):
         [tuple(line) for line in json.loads(answer["request_headers"])],
         answer["request_body"],
     )
-    answered = ResponseVerifier(
-        stored_keys(buyer_db, answer["directory_digest"], SELLER)
-    ).verify_sync(
-        HTTPResponse(
-            answer["status"],
-            [tuple(line) for line in json.loads(answer["headers"])],
-            answer["body"],
-            sent,
-        ),
-        expected_origin=Origin.parse(SELLER),
-    )
+    with SyncResponseVerifier(
+        ResponseVerifier(stored_keys(buyer_db, answer["directory_digest"], SELLER))
+    ) as sync_response:
+        answered = sync_response.verify(
+            HTTPResponse(
+                answer["status"],
+                [tuple(line) for line in json.loads(answer["headers"])],
+                answer["body"],
+                sent,
+            ),
+            expected_origin=Origin.parse(SELLER),
+        )
     assert answered.bound and answered.body_covered and answered.keyid == answer["keyid"]
 
     # Both parties hold the same digest input, and it hashes to the entries' record_digest.

@@ -1,5 +1,6 @@
 # A resolved caller is frozen. model_copy(update=...) builds an amended copy
-# without validation, so nothing in the seller calls it on the identity.
+# without validation, so nothing in the seller calls it on the identity. The
+# types also refuse it at run time (seller/caller.py).
 id: identity-never-amended
 language: Python
 severity: error

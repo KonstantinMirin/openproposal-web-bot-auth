@@ -12,15 +12,17 @@ from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from pathlib import Path
 
+from iab_agentic_primitives.web_bot_auth import HTTPRequest
 from openproposal import AssentEntry, AssentEntryRole, ErrorObject, dump, dump_json
 
 from persistence import evidence
 from persistence.sqlite import one_of, open_db, transaction
 from protocol.record import sha256_hex
 from protocol.values import JsonObject
-from shared.wba import AuthMethod
+from shared.auth import AuthMethod
 
-from .ports import PrincipalRecord, ProcessedCommit, Provenance, StoredProposal
+from .caller import ResolvedCaller, SignatureCredential
+from .ports import PrincipalRecord, ProcessedCommit, StoredProposal
 
 SCHEMA = f"""
 CREATE TABLE IF NOT EXISTS principals (
@@ -48,7 +50,8 @@ CREATE TABLE IF NOT EXISTS proposals (
     document            TEXT NOT NULL
 );
 -- The assent log, in order. A buyer's entry names how its principal
--- authenticated and the signed request that carried it (persistence/evidence.py).
+-- authenticated and the signed request that carried it (persistence/evidence.py),
+-- which is written with the entry and never without one.
 CREATE TABLE IF NOT EXISTS assent (
     id                     INTEGER PRIMARY KEY,
     proposal_id            TEXT NOT NULL REFERENCES proposals (proposal_id),
@@ -103,6 +106,14 @@ def _document(text: str) -> JsonObject:
     return document
 
 
+def _signed_request(signature: SignatureCredential) -> evidence.StoredRequest:
+    """The verified request as the evidence schema keeps it: the exact lines, in order."""
+    message = signature.message
+    lines = [(k.decode("latin-1"), v.decode("latin-1")) for k, v in message.headers]
+    request = HTTPRequest(message.method, message.url, lines, message.body)
+    return evidence.StoredRequest(request, signature.origin, signature.keyid, message.directory)
+
+
 class SqliteSellerStore:
     def __init__(self, path: Path) -> None:
         self.db = open_db(path, evidence.SCHEMA, SCHEMA)
@@ -155,11 +166,6 @@ class SqliteSellerStore:
         query = f"{_PRINCIPAL_BY_CREDENTIAL} WHERE c.token_hash = ?"
         return _principal(self.db.execute(query, (token_hash(token),)).fetchone())
 
-    # Evidence (EvidenceLog)
-
-    def keep_request(self, stored: evidence.StoredRequest) -> int:
-        return evidence.save_request(self.db, stored)
-
     # Proposals and assent (OfferRepository)
 
     def issued(self, proposal_id: str) -> StoredProposal | None:
@@ -186,9 +192,14 @@ class SqliteSellerStore:
         return [AssentEntry.model_validate(json.loads(row["entry"])) for row in rows]
 
     def append_assent(
-        self, proposal_id: str, entry: AssentEntry, provenance: Provenance | None
+        self, proposal_id: str, entry: AssentEntry, by: ResolvedCaller | None
     ) -> None:
-        """Appends an entry, linked to how its principal authenticated, when a buyer wrote it."""
+        """Appends an entry. A buyer's entry keeps how its principal authenticated and, for a
+        signature, the signed request that carried it, in the caller's transaction."""
+        method: AuthMethod | None = None if by is None else by.credential.method
+        evidence_id = None
+        if by is not None and isinstance(by.credential, SignatureCredential):
+            evidence_id = evidence.save_request(self.db, _signed_request(by.credential))
         self.db.execute(
             "INSERT INTO assent (proposal_id, role, entry, idempotency_key, principal_id,"
             " authentication_method, evidence_id, attributed) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -197,10 +208,10 @@ class SqliteSellerStore:
                 entry.role,
                 dump_json(entry),
                 entry.idempotency_key,
-                provenance.principal_id if provenance else None,
-                provenance.method if provenance else None,
-                provenance.evidence_id if provenance else None,
-                int(provenance.attributed) if provenance else 0,
+                None if by is None else by.principal.id,
+                method,
+                evidence_id,
+                int(by is not None and by.attributed),
             ),
         )
 
