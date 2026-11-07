@@ -1,230 +1,204 @@
-"""The buyer's side of offer acceptance: read the issued proposal, commit, and check the answer."""
+"""The buyer's side of offer acceptance: read the issued proposal, commit, check the answer.
+
+`Buyer.commit` is a sequence of protocol operations: resolve the seller in the
+buyer's own records, read the proposal (`SellerClient.read`), compose the
+`commit` (`protocol.compose_commit`), send it (`SellerClient.commit`), check
+the answer (`protocol.check_result`), and keep the agreement
+(`BuyerRepository.keep_agreement`). Each step returns a value; the first
+refusal ends the flow, and the outcome says which state it reached.
+"""
 
 from __future__ import annotations
 
-import json
 import uuid
-from collections.abc import Mapping
+from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
 
-from iab_agentic_primitives.web_bot_auth import (
-    HTTPResponse,
-    KeyResolver,
-    RequestSigner,
-    WebBotAuthError,
-)
-from openproposal import ErrorObject, LineItemWrites, Proposal, dump
-from pydantic import BaseModel, ValidationError
+from iab_agentic_primitives.web_bot_auth import RequestSigner
+from openproposal import Commit, LineItemWrites, dump
 
-from persistence.evidence import StoredRequest, StoredResponse
 from protocol.attribution import attributes
-from protocol.operations import (
-    RECEIVE,
-    ProtocolViolation,
-    check_result,
-    compose_commit,
-    parse_commit,
-    parse_errors,
-    parse_result,
-)
-from protocol.values import JsonObject
+from protocol.operations import ProtocolViolation, check_result, compose_commit, parse_commit
+from shared.auth import AuthMethod
+from shared.control import Agreed, Outcome, Read, Refused, Rejected, SellerView
 from shared.keyring import Keyring
 
-from .client import Credential, Exchange, HTTPClient, call_seller
-from .repository import BuyerRepository, CommitKey, Counterparty
+from .credentials import Bearer, BuyerCredential, SignWith
+from .plan import Plan
+from .refusal import Reason, Refusal
+from .repository import BuyerRepository, CommitKey, Counterparty, PendingCommit
+from .seller_client import Accepted, ReadProposal, Rejection, SellerClient
+from .settings import BuyerSettings
 
 
-class Outcome(BaseModel):
-    """What the operator trigger reports."""
+@dataclass(frozen=True)
+class _Call:
+    """Who the buyer calls, and with which credential."""
 
-    state: str  # read | agreed | rejected (the seller said no) | refused (the buyer said no)
-    detail: str | None = None
-    seller: dict[str, Any] | None = None
-    authentication_method: Credential | None = None
-    keyid: str | None = None
-    record_digest: str | None = None
-    entries: list[dict[str, Any]] | None = None
-    errors: list[dict[str, Any]] | None = None
-    attributed: bool | None = None
-    evidence_id: int | None = None
-    commit_id: int | None = None
+    seller: Counterparty
+    credential: BuyerCredential
+
+    @property
+    def view(self) -> SellerView:
+        return _view(self.seller)
+
+    def refused(self, refusal: Refusal) -> Refused:
+        return _refused(self.view, self.credential.method, refusal)
+
+    def rejected(self, rejection: Rejection, commit_id: int | None) -> Rejected:
+        return Rejected(
+            seller=self.view,
+            authentication_method=self.credential.method,
+            errors=[dump(e) for e in rejection.errors],
+            commit_id=commit_id,
+        )
 
 
-class Refusal(Exception):
-    """The buyer refuses what the seller sent, so it writes nothing."""
+def _view(seller: Counterparty) -> SellerView:
+    return SellerView(origin=str(seller.origin), domain=seller.domain, legal_name=seller.legal_name)
+
+
+def _refused(seller: SellerView | None, method: AuthMethod, refusal: Refusal) -> Refused:
+    return Refused(
+        seller=seller, authentication_method=method, reason=refusal.reason, detail=refusal.detail
+    )
 
 
 class Buyer:
     def __init__(
         self,
-        store: BuyerRepository,
-        resolver: KeyResolver,
+        repo: BuyerRepository,
+        client: SellerClient,
         keyring: Keyring,
-        origin: str,
-        plan: Mapping[str, LineItemWrites],
-        *,
-        client: HTTPClient,
-        signature_lifetime: int = 300,
+        settings: BuyerSettings,
+        plan: Plan,
     ) -> None:
-        self.store, self.resolver, self.keyring, self.origin = store, resolver, keyring, origin
-        self.plan, self.client, self.signature_lifetime = plan, client, signature_lifetime
+        self.repo, self.client, self.keyring = repo, client, keyring
+        self.settings, self.plan = settings, plan
 
     @property
     def signer(self) -> RequestSigner:
         """Signs as this buyer's origin with its active key."""
-        return RequestSigner(self.keyring.active(), self.origin, lifetime=self.signature_lifetime)
+        return RequestSigner(
+            self.keyring.active(),
+            str(self.settings.self_origin),
+            lifetime=self.settings.signature_lifetime,
+        )
 
-    async def _call(
-        self,
-        seller: Counterparty,
-        credential: Credential,
-        method: str,
-        path: str,
-        body: bytes = b"",
-    ) -> Exchange:
-        token = seller.bearer_token.get_secret_value() if seller.bearer_token else None
-        try:
-            exchange = await call_seller(
-                self.client,
-                method,
-                f"{seller.origin}{path}",
-                seller_origin=str(seller.origin),
-                resolver=self.resolver,
-                signer=self.signer if credential == "web_bot_auth" else None,
-                token=token,
-                body=body,
-            )
-        except WebBotAuthError as e:
-            raise Refusal(f"the seller's response is refused: {e.reason}: {e}") from e
-        # The seller is whoever the verified origin is in this buyer's own records.
-        if self.store.counterparty(str(exchange.verified.origin)) is None:
-            raise Refusal(f"{exchange.verified.origin} is not a seller this buyer deals with")
-        return exchange
-
-    def _seller(self, origin: str) -> Counterparty:
-        seller = self.store.counterparty(origin)
+    def _call(self, seller_origin: str, method: AuthMethod) -> _Call | Refused:
+        """The seller, resolved once from the buyer's own records, and the credential."""
+        seller = self.repo.counterparty(seller_origin)
         if seller is None:
-            raise Refusal(f"{origin} is not a seller this buyer deals with")
-        return seller
+            detail = f"{seller_origin} is not a seller this buyer deals with"
+            return _refused(None, method, Refusal(Reason.UNKNOWN_SELLER, detail))
+        credential = self._credential(seller, method)
+        if isinstance(credential, Refusal):
+            return _refused(_view(seller), method, credential)
+        return _Call(seller, credential)
 
-    async def read(self, seller_origin: str, proposal_id: str, credential: Credential) -> Outcome:
-        try:
-            seller = self._seller(seller_origin)
-            exchange = await self._call(seller, credential, "GET", f"/proposals/{proposal_id}")
-        except Refusal as e:
-            return Outcome(state="refused", detail=str(e))
-        # A signed refusal verifies as well as an answer does, so the status decides.
-        state = "read" if exchange.status == 200 else "rejected"
-        return Outcome(
-            state=state,
-            detail=f"status {exchange.status}: {exchange.body.decode()}",
-            seller=_party(seller),
-            authentication_method=credential,
-            keyid=exchange.keyid,
+    def _credential(self, seller: Counterparty, method: AuthMethod) -> BuyerCredential | Refusal:
+        if method == "web_bot_auth":
+            return SignWith(self.signer)
+        if seller.bearer_token is None:
+            return Refusal(Reason.NOT_ISSUED, f"{seller.origin} issued this buyer no token")
+        return Bearer(seller.bearer_token)
+
+    async def read(self, seller_origin: str, proposal_id: str, method: AuthMethod) -> Outcome:
+        """Reads the proposal and verifies the seller's signed answer."""
+        call = self._call(seller_origin, method)
+        if isinstance(call, Refused):
+            return call
+        answer = await self.client.read(call.seller, call.credential, proposal_id)
+        if isinstance(answer, Refusal):
+            return call.refused(answer)
+        if isinstance(answer, Rejection):
+            return call.rejected(answer, None)
+        return Read(
+            seller=call.view,
+            authentication_method=method,
+            keyid=call.credential.keyid,
+            proposal=answer.raw,
         )
 
     async def commit(
-        self, seller_origin: str, proposal_id: str, line_item_ids: list[str], credential: Credential
+        self, seller_origin: str, proposal_id: str, line_item_ids: Sequence[str], method: AuthMethod
     ) -> Outcome:
-        try:
-            return await self._commit(seller_origin, proposal_id, line_item_ids, credential)
-        except Refusal as e:
-            return Outcome(state="refused", detail=str(e), authentication_method=credential)
-
-    async def _commit(
-        self, seller_origin: str, proposal_id: str, line_item_ids: list[str], credential: Credential
-    ) -> Outcome:
-        seller = self._seller(seller_origin)
-
-        # 1. Read the issued proposal.
-        read = await self._call(seller, credential, "GET", f"/proposals/{proposal_id}")
-        if read.status != 200:
-            raise Refusal(f"reading {proposal_id} returned {read.status}: {read.body.decode()}")
-        # The typed value decides; the raw JSON, unknown members and all, is the digest input.
-        proposal = Proposal.model_validate_json(read.body, context=RECEIVE)
-        raw: JsonObject = json.loads(read.body)
-        if proposal.seller.domain != seller.domain:
-            raise Refusal(f"{proposal_id} names seller {proposal.seller.domain}")
-
-        # 2. Compose the Commit, or re-send the pending one whole (§ 4.1.2, § 5.6.1).
-        key = CommitKey(seller_origin, proposal_id, tuple(line_item_ids))
-        pending = self.store.pending(key)
-        if pending is None:
-            composed = compose_commit(
-                proposal,
-                raw,
-                {name: self.plan[name] for name in line_item_ids},
-                at=datetime.now(UTC),
-                key=str(uuid.uuid4()),
-            )
-            pending = self.store.add_pending(key, composed.commit, composed.digest_input)
-        commit = parse_commit(pending.body)
-
-        # 3. Send it, signed or with the bearer token.
-        answer = await self._call(
-            seller, credential, "POST", f"/proposals/{proposal_id}/commit", pending.body
+        """Reads, commits to `line_item_ids`, verifies the signed answer, keeps the agreement."""
+        call = self._call(seller_origin, method)
+        if isinstance(call, Refused):
+            return call
+        writes = self.plan.writes_for(line_item_ids)
+        if isinstance(writes, Refusal):
+            return call.refused(writes)
+        read = await self.client.read(call.seller, call.credential, proposal_id)
+        if not isinstance(read, ReadProposal):
+            return call.refused(_unreadable(proposal_id, read))
+        pending = self._pending(
+            CommitKey(str(call.seller.origin), proposal_id, tuple(writes)), read, writes
         )
-        if answer.status != 200:
-            errors = json.loads(answer.body).get("errors")
-            stored = _stored_errors(answer.body)
-            if stored and all(e.retry != "same" for e in stored):
-                self.store.settle_rejected(pending.id, stored)
-            return Outcome(
-                state="rejected",
-                errors=errors,
-                detail=answer.body.decode(),
-                seller=_party(seller),
-                authentication_method=credential,
-                commit_id=pending.id,
-            )
+        answer = await self.client.commit(call.seller, call.credential, proposal_id, pending.body)
+        if isinstance(answer, Refusal):
+            return call.refused(answer)
+        if isinstance(answer, Rejection):
+            return self._rejected(call, answer, pending)
+        return self._agree(call, read, pending, answer)
 
-        # 4. Check the matching pair from the agreed record (§ 4.1.2).
+    def _pending(
+        self, key: CommitKey, read: ReadProposal, writes: dict[str, LineItemWrites]
+    ) -> PendingCommit:
+        """The pending `commit` for `key`, re-sent whole, or a newly composed one (§ 5.6.1)."""
+        pending = self.repo.pending(key)
+        if pending is not None:
+            return pending
+        composed = compose_commit(
+            read.proposal, read.raw, writes, at=datetime.now(UTC), key=str(uuid.uuid4())
+        )
+        return self.repo.add_pending(key, composed.commit, composed.digest_input)
+
+    def _rejected(self, call: _Call, rejection: Rejection, pending: PendingCommit) -> Rejected:
+        """The seller said no. A stored rejection settles the commit; `retry: same` doesn't."""
+        if all(e.retry != "same" for e in rejection.errors):
+            self.repo.settle_rejected(pending.id, rejection.errors)
+        return call.rejected(rejection, pending.id)
+
+    def _agree(
+        self, call: _Call, read: ReadProposal, pending: PendingCommit, answer: Accepted
+    ) -> Outcome:
+        """Checks the pair from the agreed record (§ 4.1.2), then keeps the signed answer and
+        settles the commit, in one transaction."""
+        commit: Commit = parse_commit(pending.body)
         try:
-            result = parse_result(answer.body)
-            acceptance = check_result(commit, result, pending.digest_input)
+            acceptance = check_result(commit, answer.result, pending.digest_input)
         except ProtocolViolation as e:
-            raise Refusal(f"the seller's CommitResult is refused: {e}") from e
-
-        # 5. Keep the signed answer as evidence and settle the commit, in one transaction.
-        verified = answer.verified
+            return call.refused(
+                Refusal(Reason.RESULT_MISMATCH, f"the seller's CommitResult is refused: {e}")
+            )
+        verified = answer.exchange.verified
         attributed = attributes(
-            verified.origin.host, proposal.seller.domain, body_covered=verified.body_covered
+            verified.origin.host, read.proposal.seller.domain, body_covered=verified.body_covered
         )
-        kept = StoredResponse(
-            response=HTTPResponse(answer.status, answer.headers, answer.body, answer.request),
-            request=StoredRequest(answer.request, self.origin, answer.keyid),
-            origin=str(verified.origin),
-            keyid=verified.keyid,
-            directory=None if verified.directory is None else verified.directory.evidence,
-        )
-        evidence_id = self.store.keep_agreement(
-            pending.id, kept, result.entries, attributed=attributed
-        )
-        return Outcome(
-            state="agreed",
-            seller=_party(seller),
-            authentication_method=credential,
-            keyid=answer.keyid,
-            record_digest=acceptance.record_digest,
-            entries=[dump(e) for e in result.entries],
+        evidence_id = self.repo.keep_agreement(
+            pending.id,
+            answer.exchange.evidence(str(self.settings.self_origin)),
+            answer.result.entries,
             attributed=attributed,
-            evidence_id=evidence_id,
+        )
+        return Agreed(
+            seller=call.view,
+            authentication_method=call.credential.method,
+            keyid=call.credential.keyid,
+            record_digest=acceptance.record_digest,
+            entries=[dump(e) for e in answer.result.entries],
+            attributed=attributed,
             commit_id=pending.id,
+            evidence_id=evidence_id,
         )
 
 
-def _stored_errors(body: bytes) -> list[ErrorObject]:
-    """The seller's § 2.4 errors, or none when the body isn't a well-formed errors[] envelope."""
-    try:
-        return parse_errors(body)
-    except (ValidationError, ProtocolViolation):
-        return []
-
-
-def _party(seller: Counterparty) -> dict[str, str]:
-    return {
-        "origin": str(seller.origin),
-        "domain": seller.domain,
-        "legal_name": seller.legal_name,
-    }
+def _unreadable(proposal_id: str, answer: Rejection | Refusal) -> Refusal:
+    """The read before a commit failed, so there is nothing to commit to."""
+    if isinstance(answer, Refusal):
+        return answer
+    codes = ", ".join(e.code for e in answer.errors)
+    return Refusal(Reason.UNREADABLE_PROPOSAL, f"reading {proposal_id} was refused: {codes}")

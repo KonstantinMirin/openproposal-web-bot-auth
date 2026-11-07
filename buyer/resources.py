@@ -15,9 +15,10 @@ from fastapi import Depends, Request
 from shared.keyring import Keyring
 from shared.lifespan import state_of
 
-from .client import HTTPClient
+from .cfbot import Cfbot
 from .flow import Buyer
 from .repository import BuyerRepository
+from .seller_client import HTTPClient
 from .settings import BuyerSettings
 
 
@@ -28,8 +29,10 @@ class BuyerResources:
     keyring: Keyring
     #: The one client every call to a seller, a directory, or cfbot goes through.
     client: HTTPClient
-    #: The offer flow, over the store, the keyring, the client, the resolver, and the plan.
+    #: The offer flow, over the store, the seller client, the keyring, and the plan.
     flow: Buyer
+    #: The one peer the buyer signs for without verifying an answer.
+    cfbot: Cfbot
 
 
 def resources(request: Request) -> BuyerResources:
@@ -52,6 +55,11 @@ def flow(resources: ResourcesDep) -> Buyer:
     return resources.flow
 
 
+def cfbot(resources: ResourcesDep) -> Cfbot:
+    return resources.cfbot
+
+
 SettingsDep = Annotated[BuyerSettings, Depends(settings)]
 KeyringDep = Annotated[Keyring, Depends(keyring)]
 FlowDep = Annotated[Buyer, Depends(flow)]
+CfbotDep = Annotated[Cfbot, Depends(cfbot)]

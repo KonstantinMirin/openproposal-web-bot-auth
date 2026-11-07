@@ -53,6 +53,8 @@ from iab_agentic_primitives.web_bot_auth import (
 from persistence.evidence import RESPONSE_WITH_REQUEST
 from protocol.record import digest_of, sha256_hex
 from protocol.values import instant
+from shared.auth import AuthMethod
+from shared.control import OUTCOME, Agreed, CloudflareCheck, CommitTrigger, Issued, IssueRequest
 from shared.operator import HEADER as OPERATOR_HEADER
 from shared.wba import http_client, tls_context
 
@@ -254,31 +256,36 @@ class Flow:
 
     async def issue(self, principal_id: str) -> dict[str, Any]:
         response = await self.control.post(
-            f"{self.config.seller_control}/operator/issue", json={"principal_id": principal_id}
+            f"{self.config.seller_control}/operator/issue",
+            json=IssueRequest(principal_id=principal_id).model_dump(),
         )
         expect(
             response.status_code == 200, f"issue returned {response.status_code}: {response.text}"
         )
-        issued = response.json()
-        return {"detail": issued["proposal_id"], **issued}
+        issued = Issued.model_validate_json(response.content)
+        return {"detail": issued.proposal_id, **issued.model_dump()}
 
-    async def commit(self, proposal_id: str, credential: str) -> dict[str, Any]:
+    async def commit(self, proposal_id: str, credential: AuthMethod) -> dict[str, Any]:
+        trigger = CommitTrigger(
+            seller=str(self.config.seller),
+            proposal_id=proposal_id,
+            line_item_ids=[LINE_ITEM],
+            credential=credential,
+        )
         response = await self.control.post(
-            f"{self.config.buyer_control}/operator/commit",
-            json={
-                "seller": str(self.config.seller),
-                "proposal_id": proposal_id,
-                "line_item_ids": [LINE_ITEM],
-                "credential": credential,
-            },
+            f"{self.config.buyer_control}/operator/commit", json=trigger.model_dump()
         )
         expect(
             response.status_code == 200, f"commit returned {response.status_code}: {response.text}"
         )
-        outcome = response.json()
-        expect(outcome["state"] == "agreed", f"{outcome['state']}: {outcome.get('detail')}")
-        expect(outcome["authentication_method"] == credential, "the buyer used another credential")
-        return {"detail": f"agreed, record_digest {outcome['record_digest']}", "outcome": outcome}
+        outcome = OUTCOME.validate_json(response.content)
+        if not isinstance(outcome, Agreed):
+            raise Check(f"{outcome.state}: {outcome.model_dump_json()}")
+        expect(outcome.authentication_method == credential, "the buyer used another credential")
+        return {
+            "detail": f"agreed, record_digest {outcome.record_digest}",
+            "outcome": outcome.model_dump(mode="json"),
+        }
 
     async def seller_view(self, proposal_id: str, credential: str, principal_id: str) -> dict:
         """What the seller's boundary resolved, and the signed request it kept."""
@@ -448,12 +455,16 @@ class Flow:
     async def cloudflare(self) -> dict[str, Any]:
         response = await self.control.post(f"{self.config.buyer_control}/operator/cloudflare-check")
         expect(response.status_code == 200, f"cloudflare-check returned {response.status_code}")
-        check = response.json()
-        verdict = check["verdict"]
-        expect(check["status"] == 200 and verdict.get("ok") is True, f"cfbot refused: {verdict}")
-        expect(verdict["identity"] == str(self.config.buyer), f"cfbot saw {verdict['identity']}")
+        check = CloudflareCheck.model_validate_json(response.content)
+        verdict = check.verdict
+        expect(
+            check.status == 200 and isinstance(verdict, dict) and verdict.get("ok") is True,
+            f"cfbot refused: {verdict}",
+        )
+        assert isinstance(verdict, dict)  # noqa: S101 -- narrowed by the check above
+        expect(verdict.get("identity") == str(self.config.buyer), f"cfbot saw {verdict}")
         return {
-            "detail": f"{verdict['verifier']} accepted {verdict['identity']}",
+            "detail": f"{verdict.get('verifier')} accepted {verdict.get('identity')}",
             "verdict": verdict,
         }
 
@@ -492,10 +503,11 @@ async def run_once(config: RunnerSettings) -> dict[str, Any]:
                 lambda origin=origin: flow.directory(origin),
             )
 
-        for path, credential, principal in (
+        paths: tuple[tuple[str, AuthMethod, str], ...] = (
             ("signature", "web_bot_auth", "buyer-wba"),
             ("bearer", "bearer", "buyer-bearer"),
-        ):
+        )
+        for path, credential, principal in paths:
             label = "a Web Bot Auth signature" if path == "signature" else "a bearer token"
             issued = await run.step(
                 f"{path}-issue",

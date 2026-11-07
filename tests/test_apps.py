@@ -1,8 +1,8 @@
 """Each agent's composition root: built from settings over tmp_path, never from /data.
 
 The lifespan opens the store and the one client and closes both on shutdown.
-The fault switch belongs to one app instance. The buyer's trigger follows its
-configured seller (defect 7a).
+The fault switch belongs to one app instance. The buyer's flow is in
+tests/test_buyer.py.
 """
 
 from __future__ import annotations
@@ -11,7 +11,6 @@ import sqlite3
 from collections.abc import Iterator
 from pathlib import Path
 
-import httpx
 import pytest
 from fastapi.testclient import TestClient
 from iab_agentic_primitives.web_bot_auth import (
@@ -194,7 +193,8 @@ def test_the_fault_mode_belongs_to_one_app(tmp_path: Path) -> None:
     other = TestClient(seller_app(tmp_path / "other", faults=True), base_url=SELLER)
     with one, other:
         assert _commit_signed(one) and _commit_signed(other)
-        assert one.put("/test/fault", json={"mode": "strip"}).json() == {"mode": "strip"}
+        fault = one.put("/test/fault", json={"mode": "strip"}).json()
+        assert fault == {"mode": "strip", "on": "commit"}
         assert not _commit_signed(one)
         assert _commit_signed(other)
         assert one.put("/test/fault", json={"mode": "none"}).status_code == 200
@@ -252,73 +252,10 @@ def test_the_fault_switch_is_absent_unless_the_settings_turn_it_on(seller: TestC
 # The buyer
 
 
-class Network:
-    """Answers the buyer's calls in place of the network, and records them."""
-
-    def __init__(self) -> None:
-        self.requests: list[httpx.Request] = []
-
-    def __call__(self, request: httpx.Request) -> httpx.Response:
-        self.requests.append(request)
-        if request.url.path == "/verify":
-            return httpx.Response(200, json={"ok": True, "identity": BUYER})
-        return httpx.Response(503, json={"down": True})  # unsigned, so the buyer refuses it
-
-
 @pytest.fixture
-def network() -> Network:
-    return Network()
-
-
-@pytest.fixture
-def buyer(tmp_path: Path, network: Network) -> Iterator[TestClient]:
-    app = create_buyer(buyer_settings(tmp_path), transport=httpx.MockTransport(network))
-    with TestClient(app) as client:
+def buyer(tmp_path: Path) -> Iterator[TestClient]:
+    with TestClient(create_buyer(buyer_settings(tmp_path))) as client:
         yield client
-
-
-def test_a_trigger_that_omits_the_seller_targets_the_configured_seller(
-    buyer: TestClient, network: Network
-) -> None:
-    """Defect 7a: the default used to be a literal, so this trigger was refused unsent."""
-    outcome = buyer.post("/operator/read", json={"proposal_id": "p-1"}, headers=OPERATOR).json()
-    assert [str(r.url) for r in network.requests] == [f"{SELLER}/proposals/p-1"]
-    assert outcome["state"] == "refused"
-    assert "signature-missing" in outcome["detail"]
-
-
-def test_a_commit_trigger_that_omits_the_seller_targets_the_configured_seller(
-    buyer: TestClient, network: Network
-) -> None:
-    trigger = {"proposal_id": "p-1", "line_item_ids": ["business-daily-display"]}
-    outcome = buyer.post("/operator/commit", json=trigger, headers=OPERATOR).json()
-    assert [str(r.url) for r in network.requests] == [f"{SELLER}/proposals/p-1"]
-    assert outcome["state"] == "refused"
-
-
-def test_a_commit_trigger_names_its_line_items(buyer: TestClient, network: Network) -> None:
-    response = buyer.post("/operator/commit", json={"proposal_id": "p-1"}, headers=OPERATOR)
-    assert response.status_code == 400
-    assert network.requests == []
-
-
-def test_a_trigger_for_another_seller_is_refused_unsent(
-    buyer: TestClient, network: Network
-) -> None:
-    trigger = {"seller": "https://other.example", "proposal_id": "p-1"}
-    outcome = buyer.post("/operator/read", json=trigger, headers=OPERATOR).json()
-    assert outcome["state"] == "refused"
-    assert network.requests == []
-
-
-def test_the_buyer_signs_for_cfbot_at_its_configured_origin(
-    buyer: TestClient, network: Network
-) -> None:
-    check = buyer.post("/operator/cloudflare-check", headers=OPERATOR).json()
-    assert check == {"status": 200, "verdict": {"ok": True, "identity": BUYER}}
-    (sent,) = network.requests
-    assert str(sent.url) == "https://cfbot.example/verify"
-    assert f'"{BUYER}' in sent.headers["signature-agent"]
 
 
 def test_the_buyer_rotates_its_keys_through_its_operator_routes(buyer: TestClient) -> None:

@@ -120,11 +120,23 @@ refusals included, and binds it to the request it answers.
 ## Bearer and Web Bot Auth interop
 
 The same flow runs with either credential. The buyer picks one per call
-([`buyer/client.py`](buyer/client.py)): `WebBotAuth(signer, verifier)` signs
-the request, and `WebBotAuth.verify_only(verifier)` sends the token. Either
-way the buyer verifies the seller's signed answer. On the seller, both reach
-the same `ResolvedCaller` type and the same offer code; only
-`credential.method` differs, and the offer logic doesn't read it.
+([`buyer/credentials.py`](buyer/credentials.py)): `SignWith` signs the request
+with `WebBotAuth(signer, verifier, expect=seller)`, and `Bearer` sends the
+token with `WebBotAuth.verify_only(verifier, expect=seller)`. Either way the
+buyer verifies the seller's signed answer against the origin it knows the
+seller by. On the seller, both reach the same `ResolvedCaller` type and the
+same offer code; only `credential.method` differs, and the offer logic doesn't
+read it.
+
+The buyer mirrors the seller's boundary
+([`buyer/seller_client.py`](buyer/seller_client.py)). Its one client to a
+seller verifies each answer, then parses it as the document its status says it
+is (a `Proposal`, a `CommitResult`, or a § 2.4 `errors[]`), inside one refusal
+boundary. An answer that fails either step comes back as a refusal, never as an
+exception, and the buyer keeps nothing from it. The buyer's operator routes
+answer a discriminated `Outcome` ([`shared/control.py`](shared/control.py)):
+`read`, `agreed`, `rejected` (the seller said no), or `refused` (the buyer said
+no, with its reason).
 
 ```mermaid
 flowchart LR
@@ -234,8 +246,11 @@ answer, a `CommitResult` or a rejection, which
 [`seller/http.py`](seller/http.py) renders as `{"errors": [...]}` with the
 § 2.4 status. A control-plane failure (the operator key, a control route's bad
 input, a route the seller doesn't have) is `{"error": ..., "detail": ...}`. The buyer
-([`buyer/flow.py`](buyer/flow.py)) re-sends a pending `Commit` whole until the
-seller's answer verifies. Both parties keep the counterparty's signed message
+([`buyer/flow.py`](buyer/flow.py)) runs the same protocol operations in
+order: read, `compose_commit`, commit, `check_result`, and keep the agreement.
+It re-sends a pending `Commit` whole until the seller's answer verifies, and it
+settles a commit as rejected only on a stored rejection (`retry` other than
+`same`). Both parties keep the counterparty's signed message
 as exact bytes, with the exact directory bytes it verified against, so the
 evidence verifies again offline (§ 4.1.2).
 
@@ -296,7 +311,7 @@ fresh stack:
 | 6 | cfbot | A request signed with Cloudflare's library verifies and resolves to a `PublicCaller` with cfbot's origin, key, and `body_covered`, and the seller keeps no evidence for it. cfbot can't read the buyer's issued proposal (`404 not_found`) or commit to it (`403 not_eligible`). |
 | 7 | Cloudflare verifies the buyer | cfbot verifies a request the buyer signed, with `web-bot-auth`'s `verify()`, after fetching the buyer's directory and verifying the directory's own signature by that key with `http-message-sig`. |
 | 8 | No credential | A commit with no credential gets `403 not_eligible`. An invalid token gets `401`, never "no credential". A failing credential is refused at the boundary even with a body that isn't JSON. |
-| 9 | Buyer refuses an unverifiable answer | With the seller's test-only fault toggle, the buyer refuses an unsigned answer, an unbound one, and one bound to another request. The seller accepted on the first attempt; each re-sent `Commit` keeps its `idempotency_key`, the seller answers from its stored result and writes no second entry, and the buyer agrees once the answer verifies. |
+| 9 | Buyer refuses an unverifiable answer | With the seller's test-only fault toggle, the buyer refuses an unsigned answer, an unbound one, one bound to another request, and one whose `Content-Digest` doesn't match its body, on a read and on a commit, by signature and by bearer token (a bearer request has no signature to bind to, so only the unsigned and the wrong-digest answers apply). On a commit, the seller accepted on the first attempt; each re-sent `Commit` keeps its `idempotency_key`, the seller answers from its stored result and writes no second entry, and the buyer agrees once the answer verifies. |
 | 10 | Key rotation | The standard order. The buyer publishes a new key and keeps signing with the old one, which the seller accepts. Once no verifier can still hold a copy without the new key, it switches; the seller fetches the directory again and accepts the new key. Once the old key's signatures have expired the buyer removes it, and after the seller's next refresh a request signed with it gets `403 key-not-found`. The stack waits 20 s. Production waits 600 s: the directory's `Cache-Control: max-age=300` plus the verifier's `max_cache_age` of 300 s. |
 | 11 | Operator controls | The front never routes an agent's own controls (`/operator/`, cfbot's `/run/`), and each agent refuses a call without its `OPERATOR_KEY`. The seller issues a fresh proposal on an operator call, which the live runner uses. |
 

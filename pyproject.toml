@@ -78,8 +78,6 @@ max-statements = 50
 "e2e/scenarios/**" = ["S101", "PLR2004", "ANN"]
 # Exemptions for production files. They only shrink: each line lists the exact
 # codes today's tree reports in that file, and the step that removes them.
-"buyer/client.py" = ["PLR0913", "TRY003"]  # Step 6: buyer/seller_client.py
-"buyer/flow.py" = ["PLR0913", "PLR2004", "TRY003"]  # Step 6: the buyer mirror
 "runner/live.py" = ["ANN401", "PLR2004", "TRY003"]  # Step 7: runner/ split
 
 [tool.mypy]
@@ -91,7 +89,6 @@ warn_unused_ignores = true
 # outside the scope is still analyzed for its callers, but reports nothing
 # (the follow_imports override below). Out of scope today, by the step that
 # brings it in:
-#   Step 6: buyer/flow
 #   Step 7: runner/live
 #   Step 8: the rest of tests/, and e2e/
 # tests/ has no __init__.py, so its modules are named from the repository root.
@@ -117,10 +114,15 @@ files = [
     "seller/sqlite_store.py",
     "buyer/__init__.py",
     "buyer/app.py",
-    "buyer/client.py",
+    "buyer/cfbot.py",
+    "buyer/credentials.py",
+    "buyer/flow.py",
     "buyer/http.py",
+    "buyer/plan.py",
+    "buyer/refusal.py",
     "buyer/repository.py",
     "buyer/resources.py",
+    "buyer/seller_client.py",
     "buyer/settings.py",
     "persistence/__init__.py",
     "persistence/evidence.py",
@@ -134,6 +136,7 @@ files = [
     "protocol/values.py",
     "shared/__init__.py",
     "shared/auth.py",
+    "shared/control.py",
     "shared/handlers.py",
     "shared/keyring.py",
     "shared/lifespan.py",
@@ -184,16 +187,12 @@ module = [
     "seller.seed",
     "seller.settings",
     "seller.sqlite_store",
-    "buyer.app",
-    "buyer.client",
-    "buyer.http",
-    "buyer.repository",
-    "buyer.resources",
-    "buyer.settings",
+    "buyer.*",
     "persistence.*",
     "protocol.*",
     "runner.settings",
     "shared.auth",
+    "shared.control",
     "shared.handlers",
     "shared.keyring",
     "shared.lifespan",
@@ -229,7 +228,8 @@ branch = true
 [tool.coverage.report]
 # The branch coverage measured on the tree before Step 0 (45.26), raised to each
 # step's measured total (Step 1: 50.90; Step 2: 77.57; Step 3: 79.98; Step 4: 84.78;
-# Step 5: 88.07; the refusal body and the library at f1f4092: 88.40). It is never lowered.
-fail_under = 88.40
+# Step 5: 88.07; the refusal body and the library at f1f4092: 88.40; Step 6: 91.58).
+# It is never lowered.
+fail_under = 91.58
 precision = 2
 show_missing = false

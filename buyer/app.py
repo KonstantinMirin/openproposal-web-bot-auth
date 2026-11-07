@@ -16,115 +16,103 @@ from __future__ import annotations
 import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from pathlib import Path
 from typing import TypedDict
 
 from fastapi import APIRouter, Depends, FastAPI
 from iab_agentic_primitives.web_bot_auth import KeyResolver, ServerIdentity
 from iab_agentic_primitives.web_bot_auth.asgi import DirectoryMiddleware
-from openproposal import LineItemWrites
-from pydantic import BaseModel, TypeAdapter
 from starlette.types import ASGIApp
 
-from protocol.documents import load_yaml
-from shared.auth import AuthMethod
+from shared.control import (
+    CloudflareCheck,
+    CommitTrigger,
+    Health,
+    KeyState,
+    Outcome,
+    PublishedKey,
+    ReadTrigger,
+)
 from shared.keyring import Keyring
-from shared.operator import ControlError, OperatorKey
+from shared.operator import OperatorKey
 from shared.wba import Transport, directory_resolver, http_client, tls_context
 
-from .client import HTTPClient, call_signed
-from .flow import Buyer, Outcome
+from .cfbot import Cfbot
+from .flow import Buyer
 from .http import install_handlers
+from .plan import Plan
 from .repository import BuyerRepository, Counterparty
-from .resources import BuyerResources, FlowDep, KeyringDep, ResourcesDep, SettingsDep
+from .resources import BuyerResources, CfbotDep, FlowDep, KeyringDep, SettingsDep
+from .seller_client import HTTPClient, SellerClient
 from .settings import BuyerSettings
-
-PLAN = Path(__file__).parent / "plan.yaml"
-#: The buyer's plan: a § 3.4 `LineItemWrites` per line item, checked strictly.
-_PLAN = TypeAdapter(dict[str, LineItemWrites])
 
 #: The routes any caller reaches. Agents reach only the directory, which the middleware serves.
 api = APIRouter()
 
 
 @api.get("/health")
-async def health() -> dict[str, bool]:
-    return {"ok": True}
+async def health() -> Health:
+    return Health(ok=True)
 
 
 #: The buyer's own controls. `create_app` puts the operator-key guard on them.
 operator = APIRouter(prefix="/operator")
 
 
-class Trigger(BaseModel):
-    #: The seller's origin; the settings' `peer_seller_origin` when omitted.
-    seller: str | None = None
-    proposal_id: str
-    line_item_ids: list[str] = []
-    credential: AuthMethod = "web_bot_auth"
-
-
-def _seller(trigger: Trigger, settings: BuyerSettings) -> str:
+def _seller(trigger: ReadTrigger, settings: BuyerSettings) -> str:
     return str(settings.peer_seller_origin) if trigger.seller is None else trigger.seller
 
 
 @operator.post("/commit")
-async def operator_commit(trigger: Trigger, flow: FlowDep, settings: SettingsDep) -> Outcome:
+async def operator_commit(trigger: CommitTrigger, flow: FlowDep, settings: SettingsDep) -> Outcome:
     """Runs the whole flow: read, commit, verify the signed answer, keep the evidence."""
-    if not trigger.line_item_ids:
-        raise ControlError(400, "no-line-items", "name the line items to commit")
     return await flow.commit(
         _seller(trigger, settings), trigger.proposal_id, trigger.line_item_ids, trigger.credential
     )
 
 
 @operator.post("/read")
-async def operator_read(trigger: Trigger, flow: FlowDep, settings: SettingsDep) -> Outcome:
+async def operator_read(trigger: ReadTrigger, flow: FlowDep, settings: SettingsDep) -> Outcome:
     """Reads the proposal and verifies the seller's signed response."""
     return await flow.read(_seller(trigger, settings), trigger.proposal_id, trigger.credential)
 
 
+def _keys(keyring: Keyring) -> KeyState:
+    return KeyState(
+        published=[k.thumbprint for k in keyring.published()], active=keyring.active().thumbprint
+    )
+
+
 @operator.get("/keys")
-async def list_keys(keyring: KeyringDep) -> dict[str, str | list[str]]:
-    return {
-        "published": [k.thumbprint for k in keyring.published()],
-        "active": keyring.active().thumbprint,
-    }
+async def list_keys(keyring: KeyringDep) -> KeyState:
+    return _keys(keyring)
 
 
 @operator.post("/keys")
-async def publish_key(keyring: KeyringDep) -> dict[str, str | list[str]]:
+async def publish_key(keyring: KeyringDep) -> PublishedKey:
     """Rotation, step 1: publish a new key next to the old one, which keeps signing."""
-    return {"published_kid": keyring.publish().thumbprint, **await list_keys(keyring)}
+    kid = keyring.publish().thumbprint
+    return PublishedKey(published_kid=kid, **_keys(keyring).model_dump())
 
 
 @operator.post("/keys/{kid}/activate")
-async def activate_key(kid: str, keyring: KeyringDep) -> dict[str, str | list[str]]:
+async def activate_key(kid: str, keyring: KeyringDep) -> KeyState:
     """Rotation, step 2: sign with the new key, once verifiers' caches list it."""
     keyring.activate(kid)
-    return await list_keys(keyring)
+    return _keys(keyring)
 
 
 @operator.delete("/keys/{kid}")
-async def retire_key(kid: str, keyring: KeyringDep) -> dict[str, str | list[str]]:
+async def retire_key(kid: str, keyring: KeyringDep) -> KeyState:
     """Rotation, step 3: take the old key out of the directory, once its signatures expired."""
     keyring.retire(kid)
-    return await list_keys(keyring)
+    return _keys(keyring)
 
 
 @operator.post("/cloudflare-check")
-async def cloudflare_check(resources: ResourcesDep) -> dict[str, object]:
+async def cloudflare_check(cfbot: CfbotDep, settings: SettingsDep) -> CloudflareCheck:
     """Signs a request to cfbot, whose verifier is Cloudflare's library, and returns its verdict."""
-    settings = resources.settings
     body = json.dumps({"from": str(settings.self_origin), "says": "verify me"}).encode()
-    response = await call_signed(
-        resources.client,
-        "POST",
-        f"{settings.peer_cfbot_origin}/verify",
-        signer=resources.flow.signer,
-        body=body,
-    )
-    return {"status": response.status_code, "verdict": response.json()}
+    return await cfbot.verify(body)
 
 
 class _State(TypedDict):
@@ -189,18 +177,14 @@ def _resources(
     store.add_counterparty(
         Counterparty(seller, seller.host, "Demo Seller Inc.", settings.bearer_token)
     )
-    flow = Buyer(
-        store,
+    keys = (
         directory_resolver(client, max_cache_age=settings.max_cache_age)
         if resolver is None
-        else resolver,
-        keyring,
-        str(settings.self_origin),
-        _PLAN.validate_python(load_yaml(PLAN)),
-        client=client,
-        signature_lifetime=settings.signature_lifetime,
+        else resolver
     )
-    return BuyerResources(settings, store, keyring, client, flow)
+    flow = Buyer(store, SellerClient(client, keys), keyring, settings, Plan.load())
+    cfbot = Cfbot(client, settings.peer_cfbot_origin, lambda: flow.signer)
+    return BuyerResources(settings, store, keyring, client, flow, cfbot)
 
 
 def app_from_env() -> ASGIApp:

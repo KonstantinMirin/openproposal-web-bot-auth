@@ -3,16 +3,19 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Union
 
 from openproposal import AssentEntry, AssentEntryRoles, Instant
 
-#: A JSON value, as `json.loads` returns it. The § 4.1.1 binding record and the
-#: digest input are computed over raw JSON, so that members a receiver doesn't
-#: know survive and every value stays exact.
-JsonValue = Union[None, bool, int, float, str, list["JsonValue"], dict[str, "JsonValue"]]  # noqa: UP007
+# A JSON value, as `json.loads` returns it: pydantic's own recursive alias, so that
+# a model field can hold one too. The § 4.1.1 binding record and the digest input
+# are computed over raw JSON, so that members a receiver doesn't know survive and
+# every value stays exact.
+from pydantic import JsonValue
+
 #: A JSON object.
 JsonObject = dict[str, JsonValue]
+
+__all__ = ["JsonObject", "JsonValue", "commitment_key", "instant", "matches", "objects", "strings"]
 
 
 def objects(value: JsonValue) -> list[JsonObject]:

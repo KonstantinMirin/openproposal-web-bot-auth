@@ -308,7 +308,7 @@ signature: sig1=:5kF9XH4bsuauHZoFccx+QIPx31fC1lEEETIkSXE22ZRLN8OIL1otTSDNxFNjTIx
 <p>Each side does the following:</p>
 <ul>
   <li><strong>The seller</strong> shows an issued proposal only to its buyer. On a commit it recomputes <code>record_digest</code> over the line items plus the commit's writes, runs the checks of § 5.6.1, and writes the buyer's <code>commitment</code> entry and its own <code>acceptance</code>. A repeated commit with the same <code>idempotency_key</code> gets the stored result.</li>
-  <li><strong>The buyer</strong> refuses an answer it can't verify: unsigned, unbound, or bound to another request. It re-sends the same <code>Commit</code> until an answer verifies, and then checks that the acceptance matches its commitment.</li>
+  <li><strong>The buyer</strong> refuses an answer it can't verify: unsigned, unbound, bound to another request, or with a <code>Content-Digest</code> that doesn't match its body. It refuses an answer that verifies but doesn't parse, too. It re-sends the same <code>Commit</code> until an answer verifies, and then checks that the acceptance matches its commitment.</li>
   <li><strong>Both</strong> keep the counterparty's signed message as exact bytes, with the exact directory bytes it verified against. That evidence verifies again later, offline, which is what § 4.1.2 asks a party to be able to show.</li>
 </ul>
 </div>

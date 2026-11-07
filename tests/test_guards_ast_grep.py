@@ -62,7 +62,7 @@ CASES = (
     ),
     (
         "buyer-verifies-every-answer",
-        "buyer/client.py",
+        "buyer/seller_client.py",
         "def auth(signer, verifier):\n    return WebBotAuth(signer, verifier)\n",
         "def auth(signer, verifier, origin):\n"
         "    return WebBotAuth(signer, verifier, expect=origin)\n",
@@ -120,6 +120,17 @@ def test_rule_fires_on_the_violation_and_not_on_its_clean_twin(
 ) -> None:
     assert _scan(tmp_path / "bad", rule, path, bad) == [bad.count("\n")]
     assert _scan(tmp_path / "good", rule, path, good) == []
+
+
+def test_only_cfbot_signs_without_verifying_the_answer(tmp_path: Path) -> None:
+    """The rule's one exemption is the sign-only peer, buyer/cfbot.py, and nothing else."""
+    sign_only = "def auth(signer):\n    return WebBotAuth(signer)\n"
+    assert (
+        _scan(tmp_path / "cfbot", "buyer-verifies-every-answer", "buyer/cfbot.py", sign_only) == []
+    )
+    assert _scan(tmp_path / "flow", "buyer-verifies-every-answer", "buyer/flow.py", sign_only) == [
+        2
+    ]
 
 
 def test_every_committed_rule_has_a_proof() -> None:

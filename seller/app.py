@@ -31,9 +31,9 @@ from iab_agentic_primitives.web_bot_auth import (
     keyfile,
 )
 from iab_agentic_primitives.web_bot_auth.asgi import DirectoryMiddleware, ResponseSigningMiddleware
-from pydantic import BaseModel
 from starlette.types import ASGIApp
 
+from shared.control import Health, Issued, IssueRequest
 from shared.operator import ControlError, OperatorKey
 from shared.wba import directory_resolver, http_client, tls_context
 
@@ -77,12 +77,8 @@ async def whoami(caller: CallerDep) -> JSONResponse:
 
 
 @api.get("/health")
-async def health() -> dict[str, bool]:
-    return {"ok": True}
-
-
-class Issue(BaseModel):
-    principal_id: str
+async def health() -> Health:
+    return Health(ok=True)
 
 
 #: The seller's own controls. `create_app` puts the operator-key guard on them.
@@ -90,9 +86,7 @@ operator = APIRouter(prefix="/operator")
 
 
 @operator.post("/issue")
-async def issue_proposal(
-    body: Issue, store: OnboardingDep, template: TemplateDep
-) -> dict[str, str]:
+async def issue_proposal(body: IssueRequest, store: OnboardingDep, template: TemplateDep) -> Issued:
     """Issues a fresh copy of the seed proposal to a buyer this seller knows (§ 4.3).
 
     The live runner (runner/live.py) commits to a fresh proposal on every run,
@@ -102,7 +96,7 @@ async def issue_proposal(
         issued = issue_fresh(store, body.principal_id, template, datetime.now(UTC))
     except UnknownPrincipal as e:
         raise ControlError(404, "unknown-principal", f"no principal {e}") from e
-    return {"proposal_id": issued.proposal_id, "principal_id": issued.buyer_principal_id}
+    return Issued(proposal_id=issued.proposal_id, principal_id=issued.buyer_principal_id)
 
 
 class _State(TypedDict):
