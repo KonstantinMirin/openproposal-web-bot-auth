@@ -21,7 +21,7 @@ with no knowledge of each other's keys:
   "no credential", and the handler never runs.
 - Both parties compute the same `record_digest`, keep the same agreed record,
   and keep the counterparty's signed message with the directory it verified
-  against.
+  against, as the library's `VerifiedDirectory.evidence()` gives it.
 - Cloudflare's `web-bot-auth` library accepts the buyer's signatures, and the
   seller verifies an agent built on that library.
 
@@ -184,7 +184,7 @@ fresh stack.
   (§ 3), and it keeps one version per proposal.
 - **Shared state.** The nonce store and the directory cache are in memory, in
   one process.
-- **Directory evidence.** The library's `VerifiedDirectory` holds the parsed
-  keys, not the bytes they came from, so
-  [`shared/wba.py`](shared/wba.py) captures the directory response with a
-  client hook and keeps it once the library has verified it.
+- **Distinct parties.** Both parties sit under `noetis.dev` for the demo, so
+  `Party.domain` stores each agent's host. Real parties have distinct
+  registrable domains (§ 2.2), and § 4.1.2 attributes an entry by the party's
+  domain.
