@@ -19,6 +19,7 @@ import base64
 
 from iab_agentic_primitives.web_bot_auth import HTTPRequest, ResponseSigner
 from iab_agentic_primitives.web_bot_auth.asgi import request_url
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 SIGNATURE_FIELDS = (b"signature", b"signature-input", b"signature-agent")
 MODES = ("none", "strip", "unbound", "rebound")
@@ -28,26 +29,28 @@ _OTHER_SIGNATURE = "sig1=:" + base64.b64encode(bytes(64)).decode() + ":"
 class FaultInjection:
     mode = "none"
 
-    def __init__(self, app, signer: ResponseSigner, base_url: str) -> None:
+    def __init__(self, app: ASGIApp, signer: ResponseSigner, base_url: str) -> None:
         self.app, self.signer, self.base_url = app, signer, base_url
 
-    async def __call__(self, scope, receive, send):
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http" or self.mode == "none" or not scope["path"].endswith("/commit"):
             await self.app(scope, receive, send)
             return
-        mode, parts = self.mode, {}
+        mode = self.mode
+        start: Message = {}
+        body = bytearray()
 
-        async def capture(message):
+        async def capture(message: Message) -> None:
             if message["type"] == "http.response.start":
-                parts["start"] = message
+                start.update(message)
             elif message["type"] == "http.response.body":
-                parts["body"] = parts.get("body", b"") + message.get("body", b"")
+                body.extend(message.get("body", b""))
                 if not message.get("more_body"):
-                    await self._send(mode, scope, parts["start"], parts["body"], send)
+                    await self._send(mode, scope, start, bytes(body), send)
 
         await self.app(scope, receive, capture)
 
-    async def _send(self, mode, scope, start, body, send) -> None:
+    async def _send(self, mode: str, scope: Scope, start: Message, body: bytes, send: Send) -> None:
         headers = [(k, v) for k, v in start["headers"] if k.lower() not in SIGNATURE_FIELDS]
         if mode in ("unbound", "rebound"):
             # Sign again, against a request other than the one received.

@@ -6,6 +6,7 @@ import hashlib
 import json
 import sqlite3
 from pathlib import Path
+from types import TracebackType
 from typing import TYPE_CHECKING, Any
 
 from iab_agentic_primitives.web_bot_auth import VerifiedDirectory
@@ -256,7 +257,7 @@ class Store:
             ),
         )
 
-    def transaction(self):
+    def transaction(self) -> _Transaction:
         """`with store.transaction():` runs the block as one SQLite transaction."""
         return _Transaction(self.db)
 
@@ -268,5 +269,10 @@ class _Transaction:
     def __enter__(self) -> None:
         self.db.execute("BEGIN IMMEDIATE")
 
-    def __exit__(self, kind, value, traceback) -> None:
+    def __exit__(
+        self,
+        kind: type[BaseException] | None,
+        value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
         self.db.execute("COMMIT" if kind is None else "ROLLBACK")

@@ -1,0 +1,112 @@
+"""Proof that each committed ast-grep rule fires on a planted violation, and only there.
+
+`make guards` runs the rules over the tree. A rule that is misspelled, or whose
+`files:` glob matches nothing, reads exactly like a rule nobody violates, so
+each one is proven here: the committed rule file is copied into a temporary
+tree, a violation is planted at a path the rule covers, and the real ast-grep
+must report it at the planted line. A clean twin of the snippet must report
+nothing, so that no rule can match everything.
+"""
+
+from __future__ import annotations
+
+import json
+import shutil
+from pathlib import Path
+
+import pytest
+
+from tests._tools import run, tool
+
+REPO = Path(__file__).resolve().parent.parent
+RULES = REPO / ".ast-grep" / "rules"
+AST_GREP = tool("ast-grep")
+
+# (rule id, planted path, violation, clean twin). The violation's last line is the
+# one the rule must report.
+CASES = (
+    (
+        "identity-built-only-by-the-boundary",
+        "seller/app.py",
+        "from .identity import Principal\n\n"
+        "p = Principal(id='x', kind='buyer', legal_name='X', domain='x.example')\n",
+        "from .identity import Principal\n\n\ndef name(p: Principal) -> str:\n    return p.id\n",
+    ),
+    (
+        "identity-built-only-by-the-boundary",
+        "tests/test_planted.py",
+        "from seller.identity import ResolvedCaller\n\nc = ResolvedCaller.model_validate({})\n",
+        "from seller.identity import ResolvedCaller\n\n\ndef kind(c: ResolvedCaller) -> str:\n"
+        "    return c.kind\n",
+    ),
+    (
+        "identity-never-amended",
+        "seller/offers.py",
+        "def amend(caller):\n    return caller.model_copy(update={'principal': None})\n",
+        "def keep(caller):\n    return caller.principal.id\n",
+    ),
+    (
+        "boundary-never-downgrades",
+        "seller/identity.py",
+        "async def resolve(verifier):\n    try:\n        await verifier.verify()\n"
+        "    except Exception:\n        return None\n",
+        "async def resolve(verifier):\n    try:\n        await verifier.verify()\n"
+        "    except Exception as e:\n        raise Refused() from e\n",
+    ),
+    (
+        "buyer-verifies-every-answer",
+        "buyer/client.py",
+        "def auth(signer, verifier):\n    return WebBotAuth(signer, verifier)\n",
+        "def auth(signer, verifier, origin):\n"
+        "    return WebBotAuth(signer, verifier, expected_origin=origin)\n",
+    ),
+    (
+        "routes-take-no-request",
+        "seller/app.py",
+        "@api.post('/x')\nasync def x(caller: CallerDep, request: Request) -> None:\n    pass\n",
+        "@api.post('/x')\nasync def x(caller: CallerDep, body: bytes) -> None:\n    pass\n",
+    ),
+    (
+        "credential-read-only-at-the-boundary",
+        "seller/offers.py",
+        "def peek(request):\n    return request.headers\n",
+        "def peek(caller):\n    return caller.principal\n",
+    ),
+    (
+        "credential-read-only-at-the-boundary",
+        "shared/record.py",
+        "FIELD = 'signature-input'\n",
+        "FIELD = 'line_item_ids'\n",
+    ),
+)
+
+
+def _scan(tree: Path, rule: str, path: str, source: str) -> list[int]:
+    """The lines at which `rule` fires on `source` planted at `path` in a tree of its own."""
+    (tree / ".ast-grep" / "rules").mkdir(parents=True, exist_ok=True)
+    shutil.copy(RULES / f"{rule}.yml", tree / ".ast-grep" / "rules")
+    (tree / "sgconfig.yml").write_text("ruleDirs:\n  - .ast-grep/rules\n")
+    planted = tree / path
+    planted.parent.mkdir(parents=True, exist_ok=True)
+    planted.write_text(source)
+    scan = run([str(AST_GREP), "scan", "--config", "sgconfig.yml", "--json=compact"], cwd=tree)
+    # 0 is clean, 1 is violations; anything else means the rule didn't run.
+    assert scan.returncode in (0, 1), scan.stderr
+    return [m["range"]["end"]["line"] + 1 for m in json.loads(scan.stdout or "[]")]
+
+
+@pytest.mark.parametrize(("rule", "path", "bad", "good"), CASES, ids=[c[0] for c in CASES])
+def test_rule_fires_on_the_violation_and_not_on_its_clean_twin(
+    tmp_path: Path, rule: str, path: str, bad: str, good: str
+) -> None:
+    assert _scan(tmp_path / "bad", rule, path, bad) == [bad.count("\n")]
+    assert _scan(tmp_path / "good", rule, path, good) == []
+
+
+def test_every_committed_rule_has_a_proof() -> None:
+    assert {c[0] for c in CASES} == {p.stem for p in RULES.glob("*.yml")}
+
+
+def test_the_tree_holds_no_violation() -> None:
+    scan = run([str(AST_GREP), "scan", "--config", "sgconfig.yml"], cwd=REPO)
+    assert scan.returncode == 0, scan.stdout

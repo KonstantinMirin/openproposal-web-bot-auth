@@ -49,6 +49,8 @@ packages = ["demo_types", "shared", "seller", "buyer", "runner"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# The guard tests import their shared helper as tests._tools.
+pythonpath = ["."]
 
 [tool.ruff]
 line-length = 100
@@ -76,16 +78,14 @@ max-statements = 50
 "demo_types/stack.py" = ["TRY003"]  # Step 1: replaced by the generated SDK
 "shared/record.py" = ["ANN401", "C901", "PLR2004", "TRY003"]  # Step 1: protocol/record.py
 "shared/documents.py" = ["ANN401", "TRY003"]  # Step 1: protocol/documents.py
-"shared/wba.py" = ["ANN003"]  # Step 2: the composition root owns the client
 "buyer/keyring.py" = ["TRY003"]  # Step 3: shared/keyring.py with KeyringState
 "buyer/store.py" = ["ANN201", "PLR0913", "PLR0917"]  # Step 3: buyer/repository.py
-"seller/store.py" = ["ANN001", "ANN201", "PLR0913"]  # Step 3: seller/sqlite_store.py
+"seller/store.py" = ["PLR0913"]  # Step 3: seller/sqlite_store.py
 "seller/identity.py" = ["PLR2004"]  # Step 4: refusal hints come from the library
 "seller/errors.py" = ["ANN204", "PLR0913"]  # Step 5: pure errors, rendering in seller/http.py
 "seller/offers.py" = ["C901", "PLR0912", "PLR0913", "PLR0917"]  # Step 5: seller/offers/
 "buyer/client.py" = ["PLR0913", "TRY003"]  # Step 6: buyer/seller_client.py
 "buyer/flow.py" = ["PLR0913", "PLR2004", "TRY003"]  # Step 6: the buyer mirror
-"seller/faults.py" = ["ANN001", "ANN202", "ANN204"]  # Step 6: the typed fault modes
 "runner/live.py" = ["ANN401", "PLR2004", "TRY003"]  # Step 7: runner/ split
 
 [tool.mypy]
@@ -98,22 +98,36 @@ mypy_path = "../iab-agentic-primitives/src"
 # outside the scope is still analyzed for its callers, but reports nothing
 # (the follow_imports override below). Out of scope today, by the step that
 # brings it in:
-#   Step 0: seller/app, seller/faults, seller/seed, buyer/app, buyer/keyring, shared/wba
 #   Step 1: demo_types (deleted), shared/record, shared/documents
 #   Step 3: seller/store, buyer/store
 #   Step 5: seller/offers, seller/errors
 #   Step 6: buyer/flow
 #   Step 7: runner/live
-#   Step 8: tests/, e2e/
+#   Step 8: the rest of tests/, and e2e/
+# tests/ has no __init__.py, so its modules are named from the repository root.
+explicit_package_bases = true
 files = [
     "seller/__init__.py",
+    "seller/app.py",
+    "seller/faults.py",
     "seller/identity.py",
+    "seller/seed.py",
     "buyer/__init__.py",
+    "buyer/app.py",
     "buyer/client.py",
+    "buyer/keyring.py",
     "shared/__init__.py",
     "shared/attribution.py",
     "shared/evidence.py",
     "shared/operator.py",
+    "shared/wba.py",
+    "tests/_tools.py",
+    "tests/conftest.py",
+    "tests/test_architecture.py",
+    "tests/test_guards_ast_grep.py",
+    "tests/test_guards_import_contracts.py",
+    "tests/test_guards_ruff_bans.py",
+    "tests/test_guards_skips.py",
 ]
 
 # Out-of-scope demo modules: analyzed when an in-scope module imports them,
@@ -132,11 +146,24 @@ follow_imports = "silent"
 # No explicit Any: the tier grows with each step until it covers every module (Step 8).
 [[tool.mypy.overrides]]
 module = [
+    "seller.app",
+    "seller.faults",
     "seller.identity",
+    "seller.seed",
+    "buyer.app",
     "buyer.client",
+    "buyer.keyring",
     "shared.attribution",
     "shared.evidence",
     "shared.operator",
+    "shared.wba",
+    "tests._tools",
+    "tests.conftest",
+    "tests.test_architecture",
+    "tests.test_guards_ast_grep",
+    "tests.test_guards_import_contracts",
+    "tests.test_guards_ruff_bans",
+    "tests.test_guards_skips",
 ]
 disallow_any_explicit = true
 
@@ -145,8 +172,8 @@ source = ["seller", "buyer", "shared", "demo_types", "runner"]
 branch = true
 
 [tool.coverage.report]
-# The branch coverage measured on the tree before Step 0. Each step raises it to
-# its measured total; it is never lowered.
-fail_under = 45.26
+# The branch coverage measured on the tree before Step 0 (45.26), raised to Step
+# 0's measured total. Each step raises it to its measured total; it is never lowered.
+fail_under = 45.28
 precision = 2
 show_missing = false

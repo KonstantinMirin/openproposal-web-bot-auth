@@ -14,14 +14,16 @@ def ca_bundle() -> str | None:
     return os.environ.get("SSL_CERT_FILE")
 
 
-def http_client(**kwargs) -> httpx.AsyncClient:
+def http_client(*, timeout: float = 5.0) -> httpx.AsyncClient:
     """A plain client that trusts `ca_bundle()` and never follows redirects.
 
     A production deployment injects an SSRF-guarded client here. The demo
     doesn't: address policy is outside what it demonstrates.
     """
     context = ssl.create_default_context(cafile=ca_bundle())
-    return httpx.AsyncClient(verify=context, follow_redirects=False, trust_env=False, **kwargs)
+    return httpx.AsyncClient(
+        verify=context, follow_redirects=False, trust_env=False, timeout=timeout
+    )
 
 
 def directory_resolver() -> DirectoryResolver:

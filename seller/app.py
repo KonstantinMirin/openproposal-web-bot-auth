@@ -26,6 +26,7 @@ from iab_agentic_primitives.web_bot_auth import (
 from iab_agentic_primitives.web_bot_auth.asgi import DirectoryMiddleware, ResponseSigningMiddleware
 from openproposal import dump
 from pydantic import BaseModel
+from starlette.types import ASGIApp
 
 from shared.operator import require_operator
 from shared.wba import directory_resolver
@@ -72,6 +73,8 @@ async def get_proposal(proposal_id: str, caller: CallerDep) -> JSONResponse:
     return JSONResponse(offers.full_representation(store, caller, proposal_id))
 
 
+# Allowlisted: the route reads the raw body from Request. Step 4 replaces it with RawBodyDep.
+# ast-grep-ignore: routes-take-no-request
 @api.post("/proposals/{proposal_id}/commit")
 async def commit(proposal_id: str, caller: CallerDep, request: Request) -> JSONResponse:
     # The route takes the body as bytes, so nothing parses it before resolve_caller has
@@ -87,7 +90,7 @@ async def whoami(caller: CallerDep) -> JSONResponse:
 
 
 @api.get("/health")
-async def health() -> dict:
+async def health() -> dict[str, bool]:
     return {"ok": True}
 
 
@@ -99,7 +102,7 @@ operator = APIRouter(prefix="/operator", dependencies=[Depends(require_operator)
 
 
 @operator.post("/issue")
-async def issue_proposal(body: Issue) -> dict:
+async def issue_proposal(body: Issue) -> dict[str, str]:
     """Issues a fresh copy of the seed proposal to a buyer this seller knows (§ 4.3).
 
     The live runner (runner/live.py) commits to a fresh proposal on every run,
@@ -125,7 +128,7 @@ class FaultMode(BaseModel):
 if FAULTS:
 
     @api.put("/test/fault")
-    async def set_fault(body: FaultMode) -> dict:
+    async def set_fault(body: FaultMode) -> dict[str, str]:
         """TEST ONLY: see seller/faults.py."""
         if body.mode not in MODES:
             raise OfferError("validation", f"mode is one of {MODES}", retry="none")
@@ -134,7 +137,7 @@ if FAULTS:
 
 
 signer = ResponseSigner(key, ORIGIN)
-app = ResponseSigningMiddleware(api, signer, base_url=ORIGIN)
+app: ASGIApp = ResponseSigningMiddleware(api, signer, base_url=ORIGIN)
 if FAULTS:
     app = FaultInjection(app, signer, ORIGIN)
 # The signed key directory at the well-known path, for buyers to find the seller's key.

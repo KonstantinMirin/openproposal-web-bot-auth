@@ -61,7 +61,7 @@ operator = APIRouter(prefix="/operator", dependencies=[Depends(require_operator)
 
 
 @api.get("/health")
-async def health() -> dict:
+async def health() -> dict[str, bool]:
     return {"ok": True}
 
 
@@ -89,18 +89,18 @@ async def operator_read(trigger: Trigger) -> Outcome:
 
 
 @operator.get("/keys")
-async def list_keys() -> dict:
+async def list_keys() -> dict[str, str | list[str]]:
     return {"published": [k.kid for k in keyring.published()], "active": keyring.active().kid}
 
 
 @operator.post("/keys")
-async def publish_key() -> dict:
+async def publish_key() -> dict[str, str | list[str]]:
     """Rotation, step 1: publish a new key next to the old one, which keeps signing."""
     return {"published_kid": keyring.publish().kid, **await list_keys()}
 
 
 @operator.post("/keys/{kid}/activate")
-async def activate_key(kid: str) -> dict:
+async def activate_key(kid: str) -> dict[str, str | list[str]]:
     """Rotation, step 2: sign with the new key, once verifiers' caches list it."""
     try:
         keyring.activate(kid)
@@ -110,7 +110,7 @@ async def activate_key(kid: str) -> dict:
 
 
 @operator.delete("/keys/{kid}")
-async def retire_key(kid: str) -> dict:
+async def retire_key(kid: str) -> dict[str, str | list[str]]:
     """Rotation, step 3: take the old key out of the directory, once its signatures expired."""
     try:
         keyring.retire(kid)
@@ -120,7 +120,7 @@ async def retire_key(kid: str) -> dict:
 
 
 @operator.post("/cloudflare-check")
-async def cloudflare_check() -> dict:
+async def cloudflare_check() -> dict[str, object]:
     """Signs a request to cfbot, whose verifier is Cloudflare's library, and returns its verdict."""
     body = json.dumps({"from": ORIGIN, "says": "verify me"}).encode()
     response = await call_signed("POST", f"{CFBOT_ORIGIN}/verify", signer=buyer.signer, body=body)

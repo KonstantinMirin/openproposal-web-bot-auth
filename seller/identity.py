@@ -1,7 +1,7 @@
 """The seller's one identity boundary.
 
-`resolve_caller` is the only code that reads a credential. It treats a Web Bot
-Auth signature and a bearer token the same way:
+`resolve_caller` is the only code that reads a caller's protocol credential. It
+treats a Web Bot Auth signature and a bearer token the same way:
 
 1. Read the credential the caller presented: a `web-bot-auth` signature, an
    `Authorization: Bearer` token, or nothing.

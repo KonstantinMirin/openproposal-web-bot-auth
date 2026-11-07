@@ -1,0 +1,24 @@
+# A route receives `caller` and its parsed inputs, never a Request, which would
+# hand it the credential headers. The one allowlisted route, the commit route in
+# seller/app.py, carries an ast-grep-ignore comment; Step 4 replaces its Request
+# with RawBodyDep and removes the comment.
+id: routes-take-no-request
+language: Python
+severity: error
+message: A route takes `caller` and its parsed inputs, never a Request, which carries the credential headers.
+files: ["seller/app.py"]
+rule:
+  kind: decorated_definition
+  all:
+    - has:
+        kind: decorator
+        regex: '^@(api|operator)\.(get|post|put|patch|delete)\('
+    - has:
+        kind: function_definition
+        has:
+          field: parameters
+          has:
+            kind: typed_parameter
+            has:
+              field: type
+              regex: '^Request$'

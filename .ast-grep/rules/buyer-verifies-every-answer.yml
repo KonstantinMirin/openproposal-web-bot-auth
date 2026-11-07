@@ -1,0 +1,22 @@
+# The buyer verifies every seller answer and its binding: each WebBotAuth it
+# builds names expected_origin. The one sign-only peer is cfbot, through
+# call_signed. Step 6 repoints the exemption to the Cfbot peer.
+id: buyer-verifies-every-answer
+language: Python
+severity: error
+message: Every WebBotAuth the buyer builds verifies the answer against expected_origin; only call_signed (cfbot) signs without verifying.
+files: ["buyer/**/*.py"]
+rule:
+  all:
+    - pattern: WebBotAuth($$$A)
+    - not:
+        has:
+          kind: argument_list
+          has:
+            kind: keyword_argument
+            regex: '^expected_origin='
+    - not:
+        inside:
+          kind: function_definition
+          regex: '^async def call_signed'
+          stopBy: end

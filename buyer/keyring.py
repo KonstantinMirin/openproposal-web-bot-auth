@@ -25,8 +25,21 @@ import json
 import time
 from collections.abc import Callable
 from pathlib import Path
+from typing import TypedDict
 
 from iab_agentic_primitives.web_bot_auth import Ed25519Key
+from pydantic import TypeAdapter
+
+
+class _State(TypedDict):
+    """`state.json`: the active kid, and when each key was published and stopped signing."""
+
+    active: str
+    published: dict[str, float]
+    stopped: dict[str, float]
+
+
+_STATE = TypeAdapter(_State)
 
 
 class RotationError(Exception):
@@ -61,10 +74,10 @@ class Keyring:
         pending.rename(self.directory / f"{key.kid}.jwk")
         return key
 
-    def _state(self) -> dict:
-        return json.loads(self._state_file.read_text())
+    def _state(self) -> _State:
+        return _STATE.validate_json(self._state_file.read_text())
 
-    def _save(self, state: dict) -> None:
+    def _save(self, state: _State) -> None:
         self._state_file.write_text(json.dumps(state))
 
     def _published(self, kid: str) -> Path:

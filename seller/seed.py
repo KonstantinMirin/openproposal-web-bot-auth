@@ -17,6 +17,10 @@ from .store import Store
 TEMPLATE = Path(__file__).parent / "seed" / "proposal.yaml"
 
 
+class NoHostError(ValueError):
+    """The configured buyer origin names no host, so the seller can't record the buyer."""
+
+
 def issue(store: Store, principal_id: str, proposal_id: str, legal_name: str, domain: str) -> None:
     document = copy.deepcopy(load_yaml(TEMPLATE))
     document["proposal_id"] = proposal_id
@@ -32,6 +36,8 @@ def seed(store: Store, *, buyer_origin: str, bearer_token: str | None) -> None:
     with store.transaction():
         # A buyer that signs: the seller's onboarding recorded its origin.
         host = urlsplit(buyer_origin).hostname
+        if host is None:
+            raise NoHostError(buyer_origin)
         store.add_principal("buyer-wba", "Demo Buyer Agency LLC", host)
         store.add_origin_credential("buyer-wba", buyer_origin)
         for n in (1, 2):

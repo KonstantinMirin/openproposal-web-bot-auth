@@ -1,0 +1,25 @@
+# The identity values are built in one place: the boundary that confirmed the
+# credential. A Principal, Credential, ResolvedCaller, or PublicCaller built
+# anywhere else is an identity nobody confirmed. Step 4 repoints the exemption to
+# seller/boundary.py plus a test factory.
+id: identity-built-only-by-the-boundary
+language: Python
+severity: error
+message: Principal, Credential, ResolvedCaller, and PublicCaller are built only by the identity boundary (seller/identity.py).
+files: ["seller/**/*.py", "buyer/**/*.py", "shared/**/*.py", "runner/**/*.py", "tests/**/*.py", "e2e/**/*.py"]
+ignores: ["seller/identity.py"]
+rule:
+  any:
+    - pattern: Principal($$$A)
+    - pattern: Credential($$$A)
+    - pattern: ResolvedCaller($$$A)
+    - pattern: PublicCaller($$$A)
+    - pattern: $M.Principal($$$A)
+    - pattern: $M.ResolvedCaller($$$A)
+    - pattern: $M.PublicCaller($$$A)
+    - pattern: $M.Credential($$$A)
+    - pattern: Principal.model_validate($$$A)
+    - pattern: ResolvedCaller.model_validate($$$A)
+    - pattern: PublicCaller.model_validate($$$A)
+    - pattern: Credential.model_validate($$$A)
+    - pattern: $T.model_construct($$$A)
