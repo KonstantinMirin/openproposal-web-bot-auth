@@ -68,10 +68,19 @@ records, and returns one frozen value:
 | `Authorization: Bearer` | The token's SHA-256 matching a `credentials` row | That row | `ResolvedCaller`, `credential.method: bearer` |
 | Nothing | Nothing | Nothing | `PublicCaller` with no origin |
 
-A signature that fails verification gets the library's status (`400`, `403`, or
-`429`), and a token that matches no row gets `401`. The boundary runs before
-anything reads the body, so a failing credential is refused even when the body
-isn't JSON. Routes ask for the caller with `caller: CallerDep` and never read a
+A refused credential gets one of these answers from the boundary, never an
+`errors[]` object from the offer logic:
+
+| Status | When | The answer also carries |
+| :--- | :--- | :--- |
+| `400` | A signature field doesn't parse, or the request presents both credentials | Nothing more |
+| `401` | A bearer token matches no row, or `Authorization` isn't a Bearer token | `WWW-Authenticate` |
+| `403` | A signature fails verification or a profile rule | `Accept-Signature` |
+| `429` | A signature's nonce was seen before | `Accept-Signature` |
+| `503` | The verifier can't record the nonce now | `Retry-After` |
+
+The boundary runs before anything reads the body, so a failing credential is
+refused even when the body isn't JSON. Routes ask for the caller with `caller: CallerDep` and never read a
 header. Every agent-facing response is
 signed with `ResponseSigner` and bound to the request it answers, refusals
 included.
@@ -150,7 +159,7 @@ fresh stack.
 | 7 | Cloudflare verifies the buyer | cfbot verifies a request the buyer signed, with `web-bot-auth`'s `verify()`, after fetching the buyer's directory and verifying the directory's own signature by that key with `http-message-sig`. |
 | 8 | No credential | A commit with no credential gets `403 not_eligible`. An invalid token gets `401`, never "no credential". A failing credential is refused at the boundary even with a body that isn't JSON. |
 | 9 | Buyer refuses an unverifiable answer | With the seller's test-only fault toggle, the buyer refuses an unsigned answer, an unbound one, and one bound to another request. The seller accepted on the first attempt; each re-sent `Commit` keeps its `idempotency_key`, the seller answers from its stored result and writes no second entry, and the buyer agrees once the answer verifies. |
-| 10 | Key rotation | The standard order. The buyer publishes a new key and keeps signing with the old one, which the seller accepts. Once `max_cache_age` has passed it switches; the seller fetches the directory again and accepts the new key. Once the old key's signatures have expired the buyer removes it, and after the seller's next refresh a request signed with it gets `403 key-not-found`. The stack sets `max_cache_age` to 20 s; production uses the library default, 300 s. |
+| 10 | Key rotation | The standard order. The buyer publishes a new key and keeps signing with the old one, which the seller accepts. Once no verifier can still hold a copy without the new key, it switches; the seller fetches the directory again and accepts the new key. Once the old key's signatures have expired the buyer removes it, and after the seller's next refresh a request signed with it gets `403 key-not-found`. The stack waits 20 s: its seller sets `max_cache_age` to 20 s and its TLS front serves the buyer's directory with `max-age=0`. Production waits 600 s: the library's `Cache-Control: max-age=300` plus its default `max_cache_age` of 300 s. |
 
 ## Where the pieces live
 
