@@ -1,75 +1,102 @@
 # OpenProposal Web Bot Auth demo
 
-This repository shows one idea. A bearer token and a Web Bot Auth (WBA)
-signature are both transport-level credentials. A party checks either one once,
-at one identity boundary. The boundary resolves the confirmed credential to the
-identity stored in that party's own database, and it passes a frozen identity to
-the real logic.
+A buyer agent commits to an OpenProposal offer, and a seller agent accepts it.
+Each agent learns who the other is from a signature it can verify, with no
+shared secret and no key exchanged in advance. The same flow also runs with a
+bearer token, and it reaches the same identity at the same boundary.
 
-Here, the real logic is OpenProposal offer acceptance: a buyer commits to a
-proposal the seller issued to it, and the seller accepts. The signed messages
-that carry each party's `assent[]` entry are kept as evidence.
+The demo runs live at [wba-demo.noetis.dev](https://wba-demo.noetis.dev), which
+explains it with diagrams and shows the latest run's real signed messages. This
+README covers the same ground for readers of the code:
 
-The demo proves the following, end to end, over TLS, between agents that start
-with no knowledge of each other's keys:
+- [Why Web Bot Auth](#why-web-bot-auth)
+- [The identity boundary](#the-identity-boundary)
+- [Bearer and Web Bot Auth interop](#bearer-and-web-bot-auth-interop)
+- [One SDK, two parties](#one-sdk-two-parties)
+- [The offer flow](#the-offer-flow)
+- [Topology](#topology)
+- [Scenarios](#scenarios)
+- [Run it locally](#run-it-locally)
+- [Deploy it](#deploy-it)
+- [Where the pieces live](#where-the-pieces-live)
 
-- The seller learns the buyer's keys only from the buyer's own key directory,
-  and maps the verified origin to the principal in its database.
-- A bearer token and a signature resolve to the same frozen identity type. The
-  offer logic never sees which credential it was: the boundary puts the method,
-  the evidence it kept, and the § 4.1.2 attribution in one `Credential` record,
-  which the offer logic hands to storage with the entry, unread.
-- A credential that fails is refused at the boundary. It's never downgraded to
-  "no credential", and the handler never runs.
-- Both parties compute the same `record_digest`, keep the same agreed record,
-  and keep the counterparty's signed message with the directory it verified
-  against: the exact message bytes, and the exact directory bytes with that
-  fetch's own signatures, from the library's `VerifiedDirectory`.
-- Cloudflare's `web-bot-auth` library accepts the buyer's signatures, and the
-  seller verifies an agent built on that library.
+## Why Web Bot Auth
 
-## The identity boundary
+Agents that trade with each other must know who is calling. A bearer token
+answers that with a shared secret: the seller issues it, the buyer presents it,
+and whoever holds it is the buyer. That needs a setup step per pair of parties,
+and it leaves no proof a third party can check.
+
+[Web Bot Auth](https://datatracker.ietf.org/doc/draft-ietf-webbotauth-httpsig-protocol/)
+signs each HTTP request with
+[HTTP Message Signatures (RFC 9421)](https://www.rfc-editor.org/rfc/rfc9421).
+An agent's identity is its origin, such as `https://buyer.wba-demo.noetis.dev`.
+The agent publishes its public keys in a signed key directory at
+`/.well-known/http-message-signatures-directory` on that origin, and signs
+with its private key. A verifier reads the origin from the `Signature-Agent`
+header, fetches the directory over HTTPS, and checks the signature, so TLS for
+the host ties the keys to the domain. OpenProposal 3.0 § 2.8 profiles these
+rules for agent traffic, and the seller signs its answers the same way.
 
 ```mermaid
 flowchart LR
-    subgraph callers[Callers]
-        B[buyer agent<br/>signs with Web Bot Auth]
-        T[bearer buyer<br/>Authorization: Bearer]
-        C[cfbot<br/>Cloudflare web-bot-auth]
-    end
-    subgraph seller[Seller]
-        R["resolve_caller(request)"]
-        V[RequestVerifier<br/>library]
-        D[(buyer directory<br/>fetched over https)]
-        H[token hash lookup]
-        S[(principals and<br/>credentials)]
-        L[offer logic<br/>GET proposal, commit]
-    end
-    B --> R
-    T --> R
-    C --> R
-    R -- signature --> V
-    V -- key by origin and keyid --> D
-    R -- bearer --> H
-    V -- verified origin --> S
-    H -- token hash --> S
-    S -- ResolvedCaller or PublicCaller, frozen --> L
-    R -. failed credential: 400, 401, 403, 429 .-> X[refused]
+    B[buyer agent<br/>private key] -- "1 signed request<br/>Signature-Agent, Signature-Input, Signature" --> S[seller agent<br/>buyer's origin on file, no key]
+    S -- "2 GET /.well-known/http-message-signatures-directory" --> D[(buyer's key directory<br/>at the buyer's origin)]
+    D -- "3 signed JWK Set, over HTTPS" --> S
+    S -- "4 key by origin and keyid,<br/>signature, Content-Digest, nonce" --> V[verified origin<br/>https://buyer.wba-demo.noetis.dev]
 ```
 
-[`seller/identity.py`](seller/identity.py) holds the boundary. It reads the
-credential the caller presented, confirms it, resolves it in the seller's own
-records, and returns one frozen value:
+## The identity boundary
 
-| Presented | Confirmed by | Resolved by | Result |
-| :--- | :--- | :--- | :--- |
-| A `web-bot-auth` signature | The library's `RequestVerifier`, which fetches the origin's directory and checks `Content-Digest` against the body | The `credentials` row with that origin | `ResolvedCaller`, `credential.method: web_bot_auth` |
-| The same, from an origin with no row | The same | No row | `PublicCaller` with the verified origin: identity established, no principal |
-| `Authorization: Bearer` | The token's SHA-256 matching a `credentials` row | That row | `ResolvedCaller`, `credential.method: bearer` |
-| Nothing | Nothing | Nothing | `PublicCaller` with no origin |
+A bearer token and a Web Bot Auth signature are both transport-level
+credentials. The seller confirms either one once, in
+[`resolve_caller`](seller/identity.py), resolves it to the principal stored in
+its own database, and passes a frozen identity to the offer logic.
 
-A refused credential gets one of these answers from the boundary, never an
-`errors[]` object from the offer logic:
+```mermaid
+flowchart LR
+    W[Web Bot Auth signature] --> R
+    T[Authorization: Bearer] --> R
+    N[no credential] --> R
+    subgraph R["resolve_caller · seller/identity.py"]
+        direction TB
+        R1[1 read the credential] --> R2[2 confirm it<br/>RequestVerifier, or the token's SHA-256]
+        R2 --> R3[3 resolve the stored principal<br/>by verified origin, or by token hash]
+        R3 --> R4[4 freeze the result]
+    end
+    R4 -- "ResolvedCaller or PublicCaller" --> L[offer logic<br/>seller/offers.py]
+    R2 -. "failing credential:<br/>400, 401, 403, 429, 503" .-> X["refused, and the handler never runs"]
+```
+
+The code path, in order:
+
+1. Each route declares `caller: CallerDep`
+   ([`seller/app.py`](seller/app.py)), so FastAPI runs `resolve_caller` before
+   the handler. No route reads a header.
+2. `resolve_caller` ([`seller/identity.py`](seller/identity.py)) reads the
+   presented credential and refuses a request that presents both.
+3. A signature goes to the library's `RequestVerifier.verify`, which fetches
+   the origin's directory through the resolver in
+   [`shared/wba.py`](shared/wba.py) and checks `Content-Digest` against the
+   body. The boundary stores the verified request with the directory it
+   verified against (`Store.record_evidence` in
+   [`seller/store.py`](seller/store.py)), then resolves the origin with
+   `Store.principal_for_origin`.
+4. A token is confirmed and resolved by one lookup, `Store.principal_for_token`,
+   which matches its SHA-256. The seller never stores the token.
+5. The boundary returns a frozen `ResolvedCaller` (a principal and a
+   `Credential`) or a `PublicCaller`. A verified origin with no row is an
+   established identity with no principal: a `PublicCaller` that carries the
+   origin.
+6. The offer logic ([`seller/offers.py`](seller/offers.py)) takes that value.
+   It checks only `isinstance(caller, ResolvedCaller)` and
+   `caller.principal.id`. It hands `caller.credential` to storage with the
+   entry it writes (`_accept`) and never reads it, so no offer decision depends
+   on the credential.
+
+A credential that fails is refused at the boundary, before anything reads the
+body. It's never downgraded to "no credential", and the refusal is a transport
+status with no `errors[]` object:
 
 | Status | When | The answer also carries |
 | :--- | :--- | :--- |
@@ -77,13 +104,92 @@ A refused credential gets one of these answers from the boundary, never an
 | `401` | A bearer token matches no row, or `Authorization` isn't a Bearer token | `WWW-Authenticate` |
 | `403` | A signature fails verification or a profile rule | `Accept-Signature` |
 | `429` | A signature's nonce was seen before | `Accept-Signature` |
-| `503` | The verifier can't record the nonce now | `Retry-After` |
+| `503` | The verifier can't record the nonce | `Retry-After` |
 
-The boundary runs before anything reads the body, so a failing credential is
-refused even when the body isn't JSON. Routes ask for the caller with `caller: CallerDep` and never read a
-header. Every agent-facing response is
-signed with `ResponseSigner` and bound to the request it answers, refusals
-included.
+The seller signs every agent-facing answer with `ResponseSigningMiddleware`,
+refusals included, and binds it to the request it answers.
+
+## Bearer and Web Bot Auth interop
+
+The same flow runs with either credential. The buyer picks one per call
+([`buyer/client.py`](buyer/client.py)): `WebBotAuth(signer, verifier)` signs
+the request, and `WebBotAuth.verify_only(verifier)` sends the token. Either
+way the buyer verifies the seller's signed answer. On the seller, both reach
+the same `ResolvedCaller` type and the same offer code; only
+`credential.method` differs, and the offer logic doesn't read it.
+
+```mermaid
+flowchart LR
+    subgraph buyer[buyer agent]
+        F[buyer/flow.py]
+    end
+    F -- "signed request" --> RC
+    F -- "Authorization: Bearer" --> RC
+    subgraph seller[seller agent]
+        RC[resolve_caller] -- "ResolvedCaller<br/>method: web_bot_auth" --> O[offers.commit]
+        RC -- "ResolvedCaller<br/>method: bearer" --> O
+    end
+    O -- "signed answer, either way" --> F
+```
+
+What Web Bot Auth adds over a bearer token:
+
+| Property | Bearer token | Web Bot Auth signature |
+| :--- | :--- | :--- |
+| Setup before the first call | The seller issues a token and sends it to the buyer | None: the seller records the buyer's origin, and keys come from the buyer's directory |
+| Shared secret | The token; whoever holds it is the buyer | None: the directory holds public keys only |
+| Body covered | No | Yes, through `Content-Digest` |
+| Replay of a captured request | Works until the token is revoked | Refused: each signature has a nonce and lasts at most 300 s |
+| Evidence a third party can check | None: either party could have sent the request | The signed message and the directory bytes it verified against |
+| Key rotation | Both parties coordinate a new token | The signer publishes a key, waits out caches, and switches; the verifier does nothing |
+| Identity the boundary returns | `ResolvedCaller`, `method: bearer` | `ResolvedCaller`, `method: web_bot_auth` |
+
+## One SDK, two parties
+
+The buyer and the seller import the same generated OpenProposal SDK
+(`openproposal`, vendored in [`vendor/openproposal-sdk/`](vendor/openproposal-sdk))
+and the same Web Bot Auth library (`iab_agentic_primitives.web_bot_auth`). Both
+run the § 4.1.1 record rules in [`shared/record.py`](shared/record.py). Their
+business logic differs, and everything they must agree on is the same code.
+
+```mermaid
+flowchart TB
+    subgraph B[buyer]
+        BF[buyer/flow.py<br/>composes the Commit]
+    end
+    subgraph S[seller]
+        SO[seller/offers.py<br/>checks the Commit]
+    end
+    SDK[OpenProposal SDK<br/>generated types]
+    STOP[demo_types/stack.py<br/>stopgap: Commit, CommitResult, AssentEntry]
+    REC[shared/record.py<br/>binding record, RFC 8785, record_digest]
+    WBA[iab_agentic_primitives.web_bot_auth<br/>sign, verify, key directory]
+    BF --> SDK & STOP & REC & WBA
+    SO --> SDK & STOP & REC & WBA
+    REC --> D{{same record_digest<br/>from the same bytes}}
+```
+
+An agreement holds only if both parties compute the same `record_digest`: the
+SHA-256 of the binding record in RFC 8785 canonical form. A party that parses a
+field differently, drops an unknown member, or writes a number another way
+computes a different digest, and the seller answers `record_mismatch`. The same
+holds for signatures: two verifiers that read the profile differently accept
+different messages. A generated SDK removes that risk at the source. Every
+party, in every language, gets types generated from one schema, and the
+library does the same for signing and verification. Parties then agree by
+construction rather than by testing each pair. Scenario 1 and every live run
+check it: both parties hold byte-identical digest input and the same
+`record_digest`.
+
+**`demo_types/stack.py` is a stopgap.** The SDK generator doesn't cover the
+stack's `Commit`, `CommitResult`, and `AssentEntry` yet, so
+[`demo_types/stack.py`](demo_types/stack.py) defines those three by hand on
+the SDK's base class. Generated types replace it: both parties then import
+them from `openproposal`, and the module is deleted.
+
+cfbot ([`cfbot/`](cfbot)) is the counterpoint: an agent on Cloudflare's
+`web-bot-auth` library in Node. It shares no code with the other two, and it
+proves interop with a second implementation of the same profile.
 
 ## The offer flow
 
@@ -91,62 +197,75 @@ included.
 sequenceDiagram
     participant B as buyer.wba-demo.noetis.dev
     participant S as seller.wba-demo.noetis.dev
-    B->>S: GET /proposals/demo-wba-1 (signed)
+    B->>S: GET /proposals/{id} (signed)
     S->>B: GET /.well-known/http-message-signatures-directory
-    S-->>B: issued proposal (signed, bound)
+    B-->>S: signed JWK Set (first contact, kept up to 300 s)
+    Note over S: verify, then resolve_caller finds the stored principal
+    S-->>B: 200 issued proposal (signed, bound to the request)
     B->>S: GET /.well-known/http-message-signatures-directory
-    Note over B: compose writes, compute record_digest,<br/>build the Commit
-    B->>S: POST /proposals/demo-wba-1/commit (signed)
+    S-->>B: signed JWK Set
+    Note over B: verify the answer and its binding,<br/>compose the writes, compute record_digest
+    B->>S: POST /proposals/{id}/commit (signed, Content-Digest)
     Note over S: resolve_caller, recompute record_digest,<br/>§ 5.6.1 checks, write commitment and acceptance
-    S-->>B: CommitResult (signed, bound)
-    Note over B: verify signature and binding, resolve the seller<br/>by origin, check the matching pair, keep evidence
+    S-->>B: 200 CommitResult (signed, bound to the request)
+    Note over B: check the matching pair,<br/>keep the signed answer and the directory
 ```
 
-The seller ([`seller/offers.py`](seller/offers.py)) shows an issued proposal only
-to its buyer, recomputes `record_digest` over the line items plus the commit's
-writes, runs the § 5.6.1 checks, and answers a replay with the same
+The seller ([`seller/offers.py`](seller/offers.py)) shows an issued proposal
+only to its buyer, recomputes `record_digest` over the line items plus the
+commit's writes, runs the § 5.6.1 checks, and answers a replay with the same
 `idempotency_key` from its stored result. The buyer
 ([`buyer/flow.py`](buyer/flow.py)) re-sends a pending `Commit` whole until the
-seller's answer verifies. Both sides share the § 4.1.1 record rules in
-[`shared/record.py`](shared/record.py), which use the `rfc8785` package for the
-canonical form. [`tests/test_record.py`](tests/test_record.py) checks them
-against the `record_digest` values in the specification's examples.
+seller's answer verifies. Both parties keep the counterparty's signed message
+as exact bytes, with the exact directory bytes it verified against, so the
+evidence verifies again offline (§ 4.1.2).
 
-## Run the demo
+## Topology
 
-You need Docker with Compose, and [uv](https://docs.astral.sh/uv/). The
-[`iab-agentic-primitives`](#where-the-pieces-live) checkout must sit next to this
-repository, at `../iab-agentic-primitives`.
+### Local end-to-end test
 
-To build the stack, run every scenario, and tear it down, run the following
-command:
-
-```bash
-make e2e
+```mermaid
+flowchart LR
+    subgraph net[Docker network demo · e2e/docker-compose.yml]
+        F[nginx TLS front<br/>aliases seller., buyer., cfbot.wba-demo.noetis.dev<br/>throwaway CA]
+        S[seller] 
+        B[buyer]
+        C[cfbot]
+        R[runner<br/>pytest e2e/scenarios]
+        F --> S & B & C
+        R -- "https, by public name" --> F
+        R -- "operator controls, http" --> S & B & C
+        R -. "read-only volumes" .-> S & B
+    end
 ```
 
-The script writes a throwaway CA, a wildcard leaf for `*.wba-demo.noetis.dev`,
-and a random bearer token to `e2e/generated/`, which is gitignored.
+Every container trusts the public roots plus the throwaway CA. The seller's
+cache lifetime is 20 s and the buyer serves its directory with `max_age=0`, so
+the rotation scenario stays short.
 
-To run the unit tests, run `make test`.
+### Live deployment
 
-To drive the stack by hand, start it and call the buyer's operator trigger from
-inside the network:
-
-```bash
-cd e2e
-uv run --project .. python gen_demo_tls.py
-docker compose up --detach --wait seller buyer cfbot front
-docker compose run --rm runner python -c "import httpx; print(httpx.post(
-    'http://buyer:8000/operator/commit',
-    json={'proposal_id': 'demo-wba-1', 'line_item_ids': ['business-daily-display']}).text)"
-docker compose --profile test down --volumes
+```mermaid
+flowchart LR
+    DNS[(public DNS<br/>4 A records)] -.-> C
+    U[any client] --> C["host Caddy :443<br/>Let's Encrypt"]
+    C -- "seller. → 127.0.0.1:18081" --> S[seller]
+    C -- "buyer. → 127.0.0.1:18082" --> B[buyer]
+    C -- "cfbot. → 127.0.0.1:18083" --> CF[cfbot]
+    C -- "wba-demo. → files" --> W[site/ and run/]
+    R[runner, every 15 min] -- "operator key" --> S & B
+    R -- "latest-run.json, history.json" --> W
+    S & B & CF -. "call each other by public name" .-> DNS
 ```
+
+The agents trust public roots only, and they reach each other through public
+DNS and Caddy, like any outside party. The runner
+([`runner/live.py`](runner/live.py)) holds no agent's signing key.
 
 ## Scenarios
 
 The runner ([`e2e/scenarios/`](e2e/scenarios)) runs these in order against a
-fresh stack.
+fresh stack:
 
 | # | Scenario | What it proves |
 | :--- | :--- | :--- |
@@ -159,34 +278,88 @@ fresh stack.
 | 7 | Cloudflare verifies the buyer | cfbot verifies a request the buyer signed, with `web-bot-auth`'s `verify()`, after fetching the buyer's directory and verifying the directory's own signature by that key with `http-message-sig`. |
 | 8 | No credential | A commit with no credential gets `403 not_eligible`. An invalid token gets `401`, never "no credential". A failing credential is refused at the boundary even with a body that isn't JSON. |
 | 9 | Buyer refuses an unverifiable answer | With the seller's test-only fault toggle, the buyer refuses an unsigned answer, an unbound one, and one bound to another request. The seller accepted on the first attempt; each re-sent `Commit` keeps its `idempotency_key`, the seller answers from its stored result and writes no second entry, and the buyer agrees once the answer verifies. |
-| 10 | Key rotation | The standard order. The buyer publishes a new key and keeps signing with the old one, which the seller accepts. Once no verifier can still hold a copy without the new key, it switches; the seller fetches the directory again and accepts the new key. Once the old key's signatures have expired the buyer removes it, and after the seller's next refresh a request signed with it gets `403 key-not-found`. The stack waits 20 s: its seller sets `max_cache_age` to 20 s, and the buyer serves its directory with `max_age=0`. Production waits 600 s: the directory's default `Cache-Control: max-age=300` plus the default `max_cache_age` of 300 s. |
+| 10 | Key rotation | The standard order. The buyer publishes a new key and keeps signing with the old one, which the seller accepts. Once no verifier can still hold a copy without the new key, it switches; the seller fetches the directory again and accepts the new key. Once the old key's signatures have expired the buyer removes it, and after the seller's next refresh a request signed with it gets `403 key-not-found`. The stack waits 20 s. Production waits 600 s: the directory's `Cache-Control: max-age=300` plus the verifier's `max_cache_age` of 300 s. |
+| 11 | Operator controls | The front never routes an agent's own controls (`/operator/`, cfbot's `/run/`), and each agent refuses a call without its `OPERATOR_KEY`. The seller issues a fresh proposal on an operator call, which the live runner uses. |
+
+## Run it locally
+
+You need Docker with Compose, and [uv](https://docs.astral.sh/uv/). The
+library checkout must sit next to this repository, at
+`../iab-agentic-primitives`.
+
+To run the unit tests, run `make test`.
+
+To build the stack, run every scenario, and tear it down, run the following
+command:
+
+```bash
+make e2e
+```
+
+The script writes a throwaway CA, a leaf for `*.wba-demo.noetis.dev` and
+`wba-demo.noetis.dev`, a random bearer token, and a random operator key to
+`e2e/generated/`, which is gitignored.
+
+To drive the stack by hand, start it and call the buyer's operator trigger from
+inside the network:
+
+```bash
+cd e2e
+uv run --project .. python gen_demo_tls.py
+docker compose up --detach --wait seller buyer cfbot front
+docker compose run --rm runner python -c "import os, httpx; print(httpx.post(
+    'http://buyer:8000/operator/commit', headers={'X-Operator-Key': os.environ['OPERATOR_KEY']},
+    json={'proposal_id': 'demo-wba-1', 'line_item_ids': ['business-daily-display']}).text)"
+docker compose --profile test down --volumes
+```
+
+To rehearse the live deployment on your machine, run `make live-local`. It
+starts [`deploy/docker-compose.prod.yml`](deploy/docker-compose.prod.yml) with
+a local override that stands in for public DNS and Let's Encrypt, serves the
+production [Caddy snippet](deploy/Caddyfile.snippet) in a container, runs the
+live runner once, and checks that the site serves its report.
+
+## Deploy it
+
+[`deploy/README.md`](deploy/README.md) has the exact steps: copy both
+repositories to the host, write the secrets with `deploy/make-env.sh`, start
+`deploy/docker-compose.prod.yml`, add `deploy/Caddyfile.snippet` to the host's
+Caddy, and create the DNS records. It also covers teardown.
+
+The live deployment differs from the local test only where production needs it:
+
+| Setting | Live | Local end-to-end test |
+| :--- | :--- | :--- |
+| TLS | Let's Encrypt, through the host's Caddy | A throwaway CA, through nginx |
+| Trust store | Public roots only | Public roots plus the throwaway CA |
+| Directory `Cache-Control: max-age` | 300 s | 300 s for the seller, 0 s for the buyer |
+| Verifier `max_cache_age` | 300 s | 20 s |
+| Wait before a published key signs | 600 s | 20 s |
+| Signature lifetime | 300 s | 10 s |
+| Seller fault toggle | Not mounted | Mounted for scenario 9 |
 
 ## Where the pieces live
 
 - **The Web Bot Auth library**: the `iab_agentic_primitives.web_bot_auth`
-  module of [`iab-agentic-primitives`](https://github.com/IABTechLab/iab-agentic-primitives),
-  documented in its `WEB_BOT_AUTH.md`. The module is offered to IAB Tech Lab
-  and isn't merged yet, so this demo depends on a local checkout through a uv
-  path source in [`pyproject.toml`](pyproject.toml). Every signature,
-  verification, directory, and fetch rule comes from it.
-- **The specification**: OpenProposal 3.0, `spec/openproposal-3.0.md` in
-  [IABTechLab/OpenProposal](https://github.com/IABTechLab/OpenProposal), at the
-  tip of the open pull-request stack. The demo follows § 1.2 (identity layers),
-  § 2.8 (the Web Bot Auth profile), § 4.1.1 (binding record), § 4.1.2 (assent
-  and signed-message evidence), § 4.3 (issued proposals), and § 5.6.1 (`Commit`
-  and `CommitResult`). The seller's seed proposal
-  ([`seller/seed/proposal.yaml`](seller/seed/proposal.yaml)) is adapted from
-  `examples/proposal-issued.yaml`.
-- **The OpenProposal types**: the Python SDK from
+  module of [`iab-agentic-primitives`](LIBRARY_URL), documented in its
+  `WEB_BOT_AUTH.md`. This demo depends on a checkout next to this repository
+  through a uv path source in [`pyproject.toml`](pyproject.toml). Every
+  signature, verification, directory, and fetch rule comes from it.
+- **The specification**: [OpenProposal 3.0](SPEC_URL). The demo follows § 1.2
+  (identity layers), § 2.8 (the Web Bot Auth profile), § 4.1.1 (binding
+  record), § 4.1.2 (assent and signed-message evidence), § 4.3 (issued
+  proposals), and § 5.6.1 (`Commit` and `CommitResult`). The seller's seed
+  proposal ([`seller/seed/proposal.yaml`](seller/seed/proposal.yaml)) is
+  adapted from `examples/proposal-issued.yaml`.
+- **The OpenProposal types**: the Python SDK generated by
   [`openproposal-schema`](https://github.com/KonstantinMirin/openproposal-schema/tree/main/sdk/proposed/with-open-prs/python),
   vendored unchanged in [`vendor/openproposal-sdk/`](vendor/openproposal-sdk).
-- **The stack types stopgap**: the SDK doesn't yet generate the stack's
-  `Commit`, `CommitResult`, and `AssentEntry`, so
-  [`demo_types/stack.py`](demo_types/stack.py) defines those three by hand.
-  It's a stopgap. When the schema pipeline generates the stack's types, that
-  module is deleted.
+- **The stack types stopgap**: [`demo_types/stack.py`](demo_types/stack.py),
+  until the generator covers `Commit`, `CommitResult`, and `AssentEntry`.
 - **cfbot**: [`cfbot/`](cfbot), a Node service on `web-bot-auth@0.2.0` and
   `http-message-sig@0.3.0`, pinned in its lockfile.
+- **The explainer site**: [`site/`](site), plain HTML and CSS with inline SVG.
+  [`site/run.js`](site/run.js) renders the runner's `latest-run.json`.
 
 ## What the demo leaves out
 
@@ -198,7 +371,6 @@ fresh stack.
   (§ 3), and it keeps one version per proposal.
 - **Shared state.** The nonce store and the directory cache are in memory, in
   one process.
-- **Distinct parties.** Both parties sit under `noetis.dev` for the demo, so
-  `Party.domain` stores each agent's host. Real parties have distinct
-  registrable domains (§ 2.2), and § 4.1.2 attributes an entry by the party's
-  domain.
+- **Distinct parties.** All agents sit under `noetis.dev`, so `Party.domain`
+  stores each agent's host. Real parties have distinct registrable domains
+  (§ 2.2), and § 4.1.2 attributes an entry by the party's domain.
