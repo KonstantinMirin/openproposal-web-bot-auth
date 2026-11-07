@@ -4,7 +4,8 @@
 |---|---|---|
 | `SELF_ORIGIN` | `https://seller.wba-demo.noetis.dev` | the seller's own origin |
 | `PEER_BUYER_ORIGIN` | `https://buyer.wba-demo.noetis.dev` | the signing buyer it seeds |
-| `DATA_DIR` | `/data` | its key and database |
+| `DATA_DIR` | `/data` | its database, `seller.db` |
+| `KEYS_DIR` | `/keys` | its signing key, `wba-key.jwk`, on a volume no other service mounts |
 | `SSL_CERT_FILE` | the system's roots | the trust store for directory fetches |
 | `OPERATOR_KEY` | none: operator calls are refused | its own controls (shared/operator.py) |
 | `DEMO_BEARER_TOKEN` | none: no bearer buyer | the token it issues the bearer buyer |
@@ -30,6 +31,8 @@ class SellerSettings:
     self_origin: Origin
     peer_buyer_origin: Origin
     data_dir: Path
+    #: Where its signing key lives; None keeps it in `data_dir`, as a test runs one directory.
+    keys_dir: Path | None = None
     ca_bundle: Path | None = None
     operator_key: SecretStr | None = None
     bearer_token: SecretStr | None = None
@@ -37,6 +40,11 @@ class SellerSettings:
     max_cache_age: int | None = None
     #: TEST ONLY: install seller/faults.py.
     faults: bool = False
+
+    @property
+    def key_file(self) -> Path:
+        """The seller's signing key."""
+        return (self.data_dir if self.keys_dir is None else self.keys_dir) / "wba-key.jwk"
 
     @classmethod
     def from_env(cls, env: read.Environment | None = None) -> SellerSettings:
@@ -48,6 +56,7 @@ class SellerSettings:
                 env, "PEER_BUYER_ORIGIN", "https://buyer.wba-demo.noetis.dev"
             ),
             data_dir=read.path(env, "DATA_DIR", "/data"),
+            keys_dir=read.path(env, "KEYS_DIR", "/keys"),
             ca_bundle=read.optional_path(env, "SSL_CERT_FILE"),
             operator_key=read.secret(env, "OPERATOR_KEY"),
             bearer_token=read.secret(env, "DEMO_BEARER_TOKEN"),

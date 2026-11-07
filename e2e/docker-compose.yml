@@ -48,7 +48,8 @@ services:
       DEMO_FAULT_INJECTION: "1"
     volumes:
       - ./generated/bundle.pem:/certs/bundle.pem:ro
-      - seller-data:/data
+      - seller-keys:/keys
+      - seller-db:/data
 
   buyer:
     <<: *python
@@ -63,7 +64,8 @@ services:
       WBA_DIRECTORY_MAX_AGE: "0"
     volumes:
       - ./generated/bundle.pem:/certs/bundle.pem:ro
-      - buyer-data:/data
+      - buyer-keys:/keys
+      - buyer-db:/data
 
   cfbot:
     build: ../cfbot
@@ -103,7 +105,8 @@ services:
       interval: 2s
       retries: 30
 
-  runner:
+  # The e2e scenarios (pytest), not the live runner (runner/, deploy/).
+  scenarios:
     <<: *python
     profiles: [test]
     command: ["pytest", "-v", "-p", "no:cacheprovider", "e2e/scenarios"]
@@ -116,9 +119,11 @@ services:
       PEER_CFBOT_ORIGIN: https://cfbot.wba-demo.noetis.dev
     volumes:
       - ./generated/bundle.pem:/certs/bundle.pem:ro
-      # Read-only: the scenarios inspect what each party stored.
-      - seller-data:/seller-data:ro
-      - buyer-data:/buyer-data:ro
+      # Read-only: the scenarios inspect what each party stored, and sign with
+      # the buyer's keys to send what the buyer never would.
+      - seller-db:/seller-data:ro
+      - buyer-db:/buyer-data:ro
+      - buyer-keys:/buyer-keys:ro
     healthcheck: { disable: true }
     depends_on:
       front: { condition: service_healthy }
@@ -127,6 +132,8 @@ networks:
   demo: {}
 
 volumes:
-  seller-data: {}
-  buyer-data: {}
+  seller-keys: {}
+  seller-db: {}
+  buyer-keys: {}
+  buyer-db: {}
   cfbot-data: {}

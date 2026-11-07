@@ -26,6 +26,7 @@ dependencies = [
 dev = [
     "ast-grep-cli>=0.39",
     "import-linter>=2.1",
+    "jsonschema>=4.23",
     "mypy==2.4.1",
     "pytest>=8",
     "pytest-cov>=6",
@@ -76,9 +77,6 @@ max-statements = 50
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101", "PLR2004", "ANN"]
 "e2e/scenarios/**" = ["S101", "PLR2004", "ANN"]
-# Exemptions for production files. They only shrink: each line lists the exact
-# codes today's tree reports in that file, and the step that removes them.
-"runner/live.py" = ["ANN401", "PLR2004", "TRY003"]  # Step 7: runner/ split
 
 [tool.mypy]
 strict = true
@@ -89,7 +87,6 @@ warn_unused_ignores = true
 # outside the scope is still analyzed for its callers, but reports nothing
 # (the follow_imports override below). Out of scope today, by the step that
 # brings it in:
-#   Step 7: runner/live
 #   Step 8: the rest of tests/, and e2e/
 # tests/ has no __init__.py, so its modules are named from the repository root.
 explicit_package_bases = true
@@ -126,6 +123,7 @@ files = [
     "buyer/settings.py",
     "persistence/__init__.py",
     "persistence/evidence.py",
+    "persistence/observe.py",
     "persistence/sqlite.py",
     "protocol/__init__.py",
     "protocol/attribution.py",
@@ -144,6 +142,10 @@ files = [
     "shared/settings.py",
     "shared/wba.py",
     "runner/__init__.py",
+    "runner/checks.py",
+    "runner/main.py",
+    "runner/observe.py",
+    "runner/report.py",
     "runner/settings.py",
     "tests/_tools.py",
     "tests/conftest.py",
@@ -190,7 +192,7 @@ module = [
     "buyer.*",
     "persistence.*",
     "protocol.*",
-    "runner.settings",
+    "runner.*",
     "shared.auth",
     "shared.control",
     "shared.handlers",
@@ -228,8 +230,8 @@ branch = true
 [tool.coverage.report]
 # The branch coverage measured on the tree before Step 0 (45.26), raised to each
 # step's measured total (Step 1: 50.90; Step 2: 77.57; Step 3: 79.98; Step 4: 84.78;
-# Step 5: 88.07; the refusal body and the library at f1f4092: 88.40; Step 6: 91.58).
+# Step 5: 88.07; the refusal body and the library at f1f4092: 88.40; Step 6: 91.58; Step 7: 96.96).
 # It is never lowered.
-fail_under = 91.58
+fail_under = 96.96
 precision = 2
 show_missing = false

@@ -11,7 +11,7 @@ trap '"${compose[@]}" --profile test down --volumes --remove-orphans >/dev/null 
 "${compose[@]}" --profile test down --volumes --remove-orphans >/dev/null 2>&1
 "${compose[@]}" --profile test build
 "${compose[@]}" up --detach --wait seller buyer cfbot front
-if ! "${compose[@]}" run --rm runner; then
+if ! "${compose[@]}" run --rm scenarios; then
     "${compose[@]}" logs --no-color seller buyer cfbot | tail -n 200
     exit 1
 fi

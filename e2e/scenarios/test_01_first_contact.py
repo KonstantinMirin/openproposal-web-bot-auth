@@ -7,38 +7,24 @@ database. Both sides keep the agreed record and the counterparty's signed
 message, and both compute the same record_digest.
 """
 
+import asyncio
 import hashlib
 import json
 
-from conftest import BUYER, BUYER_OPERATOR, SELLER, stored_keys
-from iab_agentic_primitives.web_bot_auth import (
-    HTTPRequest,
-    HTTPResponse,
-    MemoryNonceStore,
-    Origin,
-    RequestVerifier,
-    ResponseVerifier,
-    ServerIdentity,
-)
-from iab_agentic_primitives.web_bot_auth.sync import SyncRequestVerifier, SyncResponseVerifier
-
-from persistence.evidence import RESPONSE_WITH_REQUEST
+from conftest import BUYER, BUYER_OPERATOR, SELLER
+from iab_agentic_primitives.web_bot_auth import Origin, ServerIdentity
 
 
-def test_first_contact_by_signature(web, seller_db, buyer_db):
+def test_first_contact_by_signature(web, seller_records, buyer_records):
     # Neither side holds a key or a directory of the other yet.
-    assert seller_db.execute("SELECT COUNT(*) FROM directories").fetchone()[0] == 0
-    assert buyer_db.execute("SELECT COUNT(*) FROM directories").fetchone()[0] == 0
-    credential = dict(
-        seller_db.execute("SELECT * FROM credentials WHERE principal_id = 'buyer-wba'").fetchone()
+    assert seller_records.directories() == 0
+    assert buyer_records.directories() == 0
+    (credential,) = seller_records.credentials("buyer-wba")
+    assert (credential.type, credential.origin, credential.token_hash) == (
+        "web_bot_auth",
+        BUYER,
+        None,
     )
-    assert credential == {
-        "id": credential["id"],
-        "principal_id": "buyer-wba",
-        "type": "web_bot_auth",
-        "token_hash": None,
-        "origin": BUYER,
-    }
 
     outcome = web.post(
         f"{BUYER_OPERATOR}/commit",
@@ -55,72 +41,37 @@ def test_first_contact_by_signature(web, seller_db, buyer_db):
     assert (commitment["role"], acceptance["role"]) == ("commitment", "acceptance")
 
     # The seller resolved the signature to its principal and kept the signed request.
-    rows = seller_db.execute(
-        "SELECT * FROM assent WHERE proposal_id = 'demo-wba-1' ORDER BY id"
-    ).fetchall()
-    assert [r["role"] for r in rows] == ["commitment", "acceptance"]
-    entry = rows[0]
-    assert entry["principal_id"] == "buyer-wba"
-    assert entry["authentication_method"] == "web_bot_auth"
-    assert entry["attributed"] == 1
-    bought = buyer_db.execute(
-        "SELECT * FROM commits WHERE id = ?", (outcome["commit_id"],)
-    ).fetchone()
-    assert bought["state"] == "agreed"
-    evidence = seller_db.execute(
-        "SELECT * FROM signed_requests WHERE id = ?", (entry["evidence_id"],)
-    ).fetchone()
-    assert evidence["origin"] == BUYER and evidence["method"] == "POST"
-    assert evidence["body"] == bought["body"]  # the exact bytes the buyer signed and sent
-    directory = seller_db.execute(
-        "SELECT * FROM directories WHERE digest = ?", (evidence["directory_digest"],)
-    ).fetchone()
-    assert directory["url"] == f"{BUYER}/.well-known/http-message-signatures-directory"
+    entries = seller_records.entries("demo-wba-1")
+    assert [e.role for e in entries] == ["commitment", "acceptance"]
+    entry = entries[0]
+    assert entry.principal_id == "buyer-wba"
+    assert entry.authentication_method == "web_bot_auth"
+    assert entry.attributed is True
+    bought = buyer_records.commit(outcome["commit_id"])
+    assert bought.state == "agreed"
+    evidence = seller_records.request(entry.evidence_id)
+    assert evidence.origin == BUYER and evidence.request.method == "POST"
+    assert evidence.request.body == bought.body  # the exact bytes the buyer signed and sent
+    directory = seller_records.directory(evidence.directory_digest)
+    assert directory.url == f"{BUYER}/.well-known/http-message-signatures-directory"
 
     # The seller's evidence verifies again, offline, against the directory bytes it kept.
-    request_headers = [tuple(line) for line in json.loads(evidence["headers"])]
-    verifier = RequestVerifier(
-        stored_keys(seller_db, evidence["directory_digest"], BUYER),
-        identity=ServerIdentity.from_config(SELLER),
-        nonces=MemoryNonceStore(),
-    )
-    with SyncRequestVerifier(verifier) as sync:
-        again = sync.verify(
-            HTTPRequest(evidence["method"], evidence["url"], request_headers, evidence["body"])
-        )
-    assert str(again.origin) == BUYER and again.keyid == evidence["keyid"] and again.body_covered
+    identity = ServerIdentity.from_config(SELLER)
+    again = asyncio.run(seller_records.reverify_request(evidence, identity))
+    assert str(again.origin) == BUYER and again.keyid == evidence.keyid and again.body_covered
 
     # The buyer kept the seller's signed answer as received, bound to its request.
-    answer = buyer_db.execute(RESPONSE_WITH_REQUEST, (outcome["evidence_id"],)).fetchone()
-    assert answer["origin"] == SELLER and answer["status"] == 200
-    assert answer["request_body"] == bought["body"]
-    assert json.loads(answer["body"])["entries"] == outcome["entries"]
-    sent = HTTPRequest(
-        answer["request_method"],
-        answer["request_url"],
-        [tuple(line) for line in json.loads(answer["request_headers"])],
-        answer["request_body"],
-    )
-    with SyncResponseVerifier(
-        ResponseVerifier(stored_keys(buyer_db, answer["directory_digest"], SELLER))
-    ) as sync_response:
-        answered = sync_response.verify(
-            HTTPResponse(
-                answer["status"],
-                [tuple(line) for line in json.loads(answer["headers"])],
-                answer["body"],
-                sent,
-            ),
-            expected_origin=Origin.parse(SELLER),
-        )
-    assert answered.bound and answered.body_covered and answered.keyid == answer["keyid"]
+    answer = buyer_records.response(outcome["evidence_id"])
+    assert answer.origin == SELLER and answer.response.status == 200
+    assert answer.request.request.body == bought.body
+    assert json.loads(answer.response.body)["entries"] == outcome["entries"]
+    answered = asyncio.run(buyer_records.reverify_response(answer))
+    assert answered.bound and answered.body_covered and answered.keyid == answer.keyid
+    assert answered.origin == Origin.parse(SELLER)
 
     # Both parties hold the same digest input, and it hashes to the entries' record_digest.
-    agreed = seller_db.execute(
-        "SELECT * FROM agreed_records WHERE proposal_id = 'demo-wba-1'"
-    ).fetchone()
-    assert agreed["digest_input"] == bought["digest_input"]
-    digest = "sha256:" + hashlib.sha256(bought["digest_input"]).hexdigest()
-    assert (
-        digest == agreed["record_digest"] == commitment["record_digest"] == outcome["record_digest"]
-    )
+    # The hash is computed here with hashlib, independently of protocol/.
+    (agreed,) = seller_records.agreed("demo-wba-1")
+    assert agreed.digest_input == bought.digest_input
+    digest = "sha256:" + hashlib.sha256(bought.digest_input).hexdigest()
+    assert digest == agreed.record_digest == commitment["record_digest"] == outcome["record_digest"]

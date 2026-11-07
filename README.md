@@ -265,11 +265,11 @@ flowchart LR
         S[seller] 
         B[buyer]
         C[cfbot]
-        R[runner<br/>pytest e2e/scenarios]
+        T[scenarios<br/>pytest e2e/scenarios]
         F --> S & B & C
-        R -- "https, by public name" --> F
-        R -- "operator controls, http" --> S & B & C
-        R -. "read-only volumes" .-> S & B
+        T -- "https, by public name" --> F
+        T -- "operator controls, http" --> S & B & C
+        T -. "read-only volumes:<br/>both databases, the buyer's keys" .-> S & B
     end
 ```
 
@@ -293,12 +293,17 @@ flowchart LR
 ```
 
 The agents trust public roots only, and they reach each other through public
-DNS and Caddy, like any outside party. The runner
-([`runner/live.py`](runner/live.py)) holds no agent's signing key.
+DNS and Caddy, like any outside party. Each agent keeps its signing keys and
+its database on separate volumes. The live runner
+([`runner/main.py`](runner/main.py)) mounts only the two database volumes,
+read-only, and reads them through the read models in
+[`persistence/observe.py`](persistence/observe.py), so it holds no agent's
+signing key. The e2e `scenarios` service is the only one that mounts the
+buyer's keys, so that a scenario can sign what the buyer never would.
 
 ## Scenarios
 
-The runner ([`e2e/scenarios/`](e2e/scenarios)) runs these in order against a
+The `scenarios` service ([`e2e/scenarios/`](e2e/scenarios)) runs these in order against a
 fresh stack:
 
 | # | Scenario | What it proves |
@@ -341,7 +346,7 @@ inside the network:
 cd e2e
 uv run --project .. python gen_demo_tls.py
 docker compose up --detach --wait seller buyer cfbot front
-docker compose run --rm runner python -c "import os, httpx; print(httpx.post(
+docker compose run --rm scenarios python -c "import os, httpx; print(httpx.post(
     'http://buyer:8000/operator/commit', headers={'X-Operator-Key': os.environ['OPERATOR_KEY']},
     json={'proposal_id': 'demo-wba-1', 'line_item_ids': ['business-daily-display']}).text)"
 docker compose --profile test down --volumes

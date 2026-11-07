@@ -68,6 +68,12 @@ CASES = (
         "    return WebBotAuth(signer, verifier, expect=origin)\n",
     ),
     (
+        "observers-read-through-the-read-models",
+        "runner/observe.py",
+        "def count(db):\n    return db.execute('SELECT COUNT(*) FROM assent')\n",
+        "def count(records):\n    return len(records.entries('demo-wba-1'))\n",
+    ),
+    (
         "routes-take-no-request",
         "seller/http.py",
         "@api.post('/x')\nasync def x(caller: CallerDep, request: Request) -> None:\n    pass\n",

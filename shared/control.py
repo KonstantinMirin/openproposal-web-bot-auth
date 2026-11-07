@@ -19,6 +19,9 @@ from protocol.values import JsonObject, JsonValue
 
 from .auth import AuthMethod
 
+#: The header every control call carries the operator key in (shared/operator.py).
+OPERATOR_HEADER = "X-Operator-Key"
+
 
 class _Answer(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -103,6 +106,7 @@ class Agreed(_Answer):
     """The seller's signed `CommitResult` verified and matched; the buyer kept it."""
 
     state: Literal["agreed"] = "agreed"
+    proposal_id: str
     seller: SellerView
     authentication_method: AuthMethod
     #: The key that signed the commit, or None for a bearer commit.

@@ -1,4 +1,4 @@
-# One image for the seller, the buyer, the e2e runner, and the live runner.
+# One image for the seller, the buyer, the e2e scenarios, and the live runner.
 #
 # Build it through e2e/docker-compose.yml or deploy/docker-compose.prod.yml.
 # Their additional context `wba-lib` is the iab-agentic-primitives checkout,
@@ -24,4 +24,5 @@ COPY buyer buyer
 COPY runner runner
 COPY e2e/scenarios e2e/scenarios
 
-RUN useradd --uid 10001 app && mkdir /data && chown app /data
+# /data holds an agent's database and /keys its signing keys, each its own volume.
+RUN useradd --uid 10001 app && mkdir /data /keys && chown app /data /keys && chmod 700 /keys

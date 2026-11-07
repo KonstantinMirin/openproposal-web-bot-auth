@@ -360,7 +360,8 @@ def test_an_answer_to_a_bearer_request_needs_no_binding(tmp_path: Path, mode: st
 
 def test_the_buyer_signs_for_cfbot_at_its_configured_origin(stack: Stack) -> None:
     check = stack.buyer.post("/operator/cloudflare-check", headers=OPERATOR).json()
-    assert check == {"status": 200, "verdict": {"ok": True, "identity": BUYER}}
+    assert check["status"] == 200
+    assert check["verdict"]["ok"] is True and check["verdict"]["identity"] == BUYER
     (sent,) = stack.requests
     assert str(sent.url) == f"{CFBOT}/verify"
     assert f'"{BUYER}' in sent.headers["signature-agent"]

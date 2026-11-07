@@ -2,32 +2,26 @@
 
 The stack's addresses, a signer that holds the buyer's key, and each party's records.
 
-The runner reads the buyer's key files and both databases from read-only
-volume mounts. Holding the buyer's key lets a scenario send what the buyer
-never would: a tampered body, a replay, a key the directory doesn't list.
+The scenarios service (e2e/docker-compose.yml) reads the buyer's key volume and
+both parties' database volumes from read-only mounts. Holding the buyer's key
+lets a scenario send what the buyer never would: a tampered body, a replay, a
+key the directory doesn't list. It reads each party's records through their
+read models (persistence/observe.py), never with its own SQL.
 """
 
 from __future__ import annotations
 
 import json
-import sqlite3
 import ssl
 import uuid
 from pathlib import Path
 
 import httpx
 import pytest
-from iab_agentic_primitives.web_bot_auth import (
-    DirectoryResponse,
-    Ed25519Key,
-    HTTPRequest,
-    Origin,
-    RequestSigner,
-    StaticKeyResolver,
-    parse_directory_response,
-)
+from iab_agentic_primitives.web_bot_auth import Ed25519Key, HTTPRequest, RequestSigner
 from settings import BUYER, CFBOT, OPERATOR_KEY, SELLER
 
+from persistence.observe import BuyerRecords, SellerRecords
 from shared.keyring import Keyring
 
 __all__ = ["BUYER", "CFBOT", "SELLER"]  # the stack's addresses, re-exported for the scenarios
@@ -38,7 +32,7 @@ CFBOT_RUN = "http://cfbot:8000/run"
 
 #: The buyer's keyring, read through its own API from a read-only mount. The waits
 #: only govern rotation steps, which the scenarios ask the buyer for, never this copy.
-BUYER_KEYS = Keyring(Path("/buyer-data/keys"), rotation_wait=0, signature_lifetime=0)
+BUYER_KEYS = Keyring(Path("/buyer-keys"), rotation_wait=0, signature_lifetime=0)
 
 
 def buyer_key(kid: str | None = None) -> Ed25519Key:
@@ -96,31 +90,15 @@ def web():
         yield client
 
 
-def stored_keys(db: sqlite3.Connection, digest: str, origin: str) -> StaticKeyResolver:
-    """The keys of a stored directory, after the library verifies the stored bytes again."""
-    row = db.execute("SELECT * FROM directories WHERE digest = ?", (digest,)).fetchone()
-    headers = [tuple(line) for line in json.loads(row["headers"])]
-    fetched_at = int(row["fetched_at"])
-    response = DirectoryResponse(row["url"], row["status"], headers, row["body"], fetched_at)
-    directory = parse_directory_response(response, Origin.parse(origin).host, fetched_at)
-    return StaticKeyResolver({origin: directory.keys})
-
-
-def database(path: str) -> sqlite3.Connection:
-    db = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
-    db.row_factory = sqlite3.Row
-    return db
+@pytest.fixture
+def seller_records():
+    """The seller's records, read-only."""
+    with SellerRecords.open("/seller-data/seller.db") as records:
+        yield records
 
 
 @pytest.fixture
-def seller_db():
-    db = database("/seller-data/seller.db")
-    yield db
-    db.close()
-
-
-@pytest.fixture
-def buyer_db():
-    db = database("/buyer-data/buyer.db")
-    yield db
-    db.close()
+def buyer_records():
+    """The buyer's records, read-only."""
+    with BuyerRecords.open("/buyer-data/buyer.db") as records:
+        yield records

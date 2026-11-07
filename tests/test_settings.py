@@ -43,7 +43,10 @@ def test_the_seller_defaults_to_the_demo_deployment() -> None:
         self_origin=Origin("seller.wba-demo.noetis.dev"),
         peer_buyer_origin=Origin("buyer.wba-demo.noetis.dev"),
         data_dir=Path("/data"),
+        keys_dir=Path("/keys"),
     )
+    # The key lives on its own volume, apart from the database (defect 8).
+    assert settings.key_file == Path("/keys/wba-key.jwk")
 
 
 def test_the_seller_reads_every_variable() -> None:
@@ -52,6 +55,7 @@ def test_the_seller_reads_every_variable() -> None:
             "SELF_ORIGIN": "https://seller.example",
             "PEER_BUYER_ORIGIN": "https://buyer.example",
             "DATA_DIR": "/srv/seller",
+            "KEYS_DIR": "/srv/seller-keys",
             "SSL_CERT_FILE": "/certs/bundle.pem",
             "OPERATOR_KEY": "operator-key",
             "DEMO_BEARER_TOKEN": "bearer-token",
@@ -63,6 +67,7 @@ def test_the_seller_reads_every_variable() -> None:
     assert settings.self_origin == Origin("seller.example")
     assert settings.peer_buyer_origin.host == "buyer.example"
     assert settings.data_dir == Path("/srv/seller")
+    assert settings.key_file == Path("/srv/seller-keys/wba-key.jwk")
     assert settings.ca_bundle == Path("/certs/bundle.pem")
     assert settings.operator_key is not None
     assert settings.operator_key.get_secret_value() == "operator-key"
@@ -84,6 +89,7 @@ def test_the_buyer_reads_every_variable() -> None:
             "PEER_SELLER_ORIGIN": "https://seller.example",
             "PEER_CFBOT_ORIGIN": "https://cfbot.example",
             "DATA_DIR": "/srv/buyer",
+            "KEYS_DIR": "/srv/buyer-keys",
             "WBA_DIRECTORY_MAX_AGE": "0",
             "WBA_ROTATION_WAIT": "20",
             "WBA_SIGNATURE_LIFETIME": "10",
@@ -99,10 +105,15 @@ def test_the_buyer_reads_every_variable() -> None:
     )
     assert settings.operator_key is None and settings.bearer_token is None
     assert settings.max_cache_age is None  # the library's default
+    assert (settings.data_dir, settings.keyring_dir) == (
+        Path("/srv/buyer"),
+        Path("/srv/buyer-keys"),
+    )
 
 
 def test_the_buyer_defaults_to_the_production_rotation() -> None:
     settings = BuyerSettings.from_env({})
+    assert settings.keyring_dir == Path("/keys")  # apart from the database (defect 8)
     assert (settings.rotation_wait, settings.signature_lifetime, settings.directory_max_age) == (
         600.0,
         300,

@@ -12,7 +12,7 @@ from openproposal import AssentEntry, Commit, ErrorObject
 from pydantic import SecretStr
 
 from buyer.repository import BuyerRepository, CommitKey, Counterparty, NotPendingError
-from persistence.evidence import StoredRequest, StoredResponse, load_response
+from persistence.evidence import EvidenceReader, StoredRequest, StoredResponse
 
 SELLER = Counterparty(
     Origin.parse("https://seller.example"), "seller.example", "Demo Seller Inc.", SecretStr("t")
@@ -94,7 +94,7 @@ def test_keep_agreement_writes_the_evidence_and_the_settlement_together(
     entry = AssentEntry.model_validate(ENTRY)
     response_id = repository.keep_agreement(pending.id, KEPT, [entry], attributed=True)
     assert _state(repository, pending.id) == "agreed"
-    assert load_response(repository.db, response_id) == RESPONSE
+    assert EvidenceReader(repository.db).response(response_id).response == RESPONSE
     row = repository.db.execute(
         "SELECT response_id, attributed FROM commits WHERE id = ?", (pending.id,)
     ).fetchone()

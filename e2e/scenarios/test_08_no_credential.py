@@ -8,7 +8,7 @@ failing credential is refused even when the body isn't JSON.
 from conftest import SELLER, commit_body, signed
 
 
-def test_commit_without_a_credential_is_refused(web, seller_db):
+def test_commit_without_a_credential_is_refused(web, seller_records):
     response = web.post(
         f"{SELLER}/proposals/demo-wba-2/commit",
         content=commit_body(160000.0),
@@ -16,12 +16,7 @@ def test_commit_without_a_credential_is_refused(web, seller_db):
     )
     assert response.status_code == 403
     assert response.json()["errors"][0]["code"] == "not_eligible"
-    assert (
-        seller_db.execute(
-            "SELECT COUNT(*) FROM assent WHERE proposal_id = 'demo-wba-2'"
-        ).fetchone()[0]
-        == 0
-    )
+    assert seller_records.entries("demo-wba-2") == []
 
 
 def test_an_invalid_token_is_refused_not_downgraded(web):

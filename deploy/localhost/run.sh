@@ -58,3 +58,10 @@ for path in buyer.wba-demo.noetis.dev/operator/keys seller.wba-demo.noetis.dev/o
     [[ "$status" == 404 ]] || { echo "https://$path answered $status, not 404"; exit 1; }
 done
 echo "operator controls are not routed: pass"
+
+# The runner holds no agent's key: no *.jwk is readable in its container, with its own
+# mounts, after the agents minted theirs (defect 8).
+keys=$("${compose[@]}" run --rm --no-deps -T --entrypoint sh runner -c \
+    'find / -path /proc -prune -o -name "*.jwk" -print 2>/dev/null; true')
+[[ -z "$keys" ]] || { echo "the runner can read agent keys:"; echo "$keys"; exit 1; }
+echo "the runner holds no agent key: pass"

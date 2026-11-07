@@ -25,6 +25,7 @@ from iab_agentic_primitives.web_bot_auth import (
     KeyResolver,
     MemoryNonceStore,
     NonceStore,
+    PublishPolicy,
     RequestVerifier,
     ResponseSigner,
     ServerIdentity,
@@ -89,7 +90,7 @@ operator = APIRouter(prefix="/operator")
 async def issue_proposal(body: IssueRequest, store: OnboardingDep, template: TemplateDep) -> Issued:
     """Issues a fresh copy of the seed proposal to a buyer this seller knows (§ 4.3).
 
-    The live runner (runner/live.py) commits to a fresh proposal on every run,
+    The live runner (runner/main.py) commits to a fresh proposal on every run,
     because an agreed line item can't be committed to again.
     """
     try:
@@ -120,7 +121,7 @@ def create_app(
     every response is signed, a server error's included.
     """
     # The seller mints its key on first boot. No buyer is ever configured with it.
-    key = keyfile.load_or_create(settings.data_dir / "wba-key.jwk")
+    key = keyfile.load_or_create(settings.key_file)
     identity = ServerIdentity.from_config(str(settings.self_origin))
     template = load_template()
 
@@ -159,7 +160,10 @@ def create_app(
     answering = _with_faults(agent, signed, signer, identity) if settings.faults else signed
     # The signed key directory at the well-known path, for buyers to find the seller's key.
     return DirectoryMiddleware(
-        answering, [key], identity=identity, max_age=settings.directory_max_age
+        answering,
+        [key],
+        identity=identity,
+        publish=PublishPolicy(max_age=settings.directory_max_age),
     )
 
 

@@ -39,7 +39,8 @@ services:
       WBA_DIRECTORY_MAX_AGE: "300"
       WBA_MAX_CACHE_AGE: "300"
     volumes:
-      - seller-data:/data
+      - seller-keys:/keys
+      - seller-db:/data
 
   buyer:
     <<: *python
@@ -57,7 +58,8 @@ services:
       WBA_ROTATION_WAIT: "600"
       WBA_SIGNATURE_LIFETIME: "300"
     volumes:
-      - buyer-data:/data
+      - buyer-keys:/keys
+      - buyer-db:/data
 
   cfbot:
     build: ../cfbot
@@ -76,11 +78,11 @@ services:
       interval: 10s
       retries: 30
 
-  # The whole offer flow, live, every 15 minutes (runner/live.py). It writes
+  # The whole offer flow, live, every 15 minutes (runner/main.py). It writes
   # latest-run.json and history.json to the directory Caddy serves.
   runner:
     <<: *python
-    command: ["python", "-m", "runner.live"]
+    command: ["python", "-m", "runner.main"]
     user: app
     environment:
       PEER_SELLER_ORIGIN: https://seller.wba-demo.noetis.dev
@@ -91,9 +93,10 @@ services:
       RUN_INTERVAL: ${RUN_INTERVAL:-900}
       OUT_DIR: /out
     volumes:
-      # Read-only: the runner reports what each party kept.
-      - seller-data:/seller-data:ro
-      - buyer-data:/buyer-data:ro
+      # Read-only, and the database volumes only: the runner reports what each
+      # party kept, and it mounts neither agent's keys volume.
+      - seller-db:/seller-data:ro
+      - buyer-db:/buyer-data:ro
       - ${WBA_RUN_DIR:-../../run}:/out
     healthcheck: { disable: true }
     depends_on:
@@ -104,9 +107,13 @@ services:
 networks:
   live: {}
 
-# Keys and SQLite databases. They survive `down` and rebuilds; `down --volumes`
-# deletes them, and the agents mint new keys on the next start.
+# Each agent's signing keys and its SQLite database, on separate volumes, so
+# that a service can read a party's records without its keys. They survive
+# `down` and rebuilds; `down --volumes` deletes them, and the agents mint new
+# keys on the next start.
 volumes:
-  seller-data: {}
-  buyer-data: {}
+  seller-keys: {}
+  seller-db: {}
+  buyer-keys: {}
+  buyer-db: {}
   cfbot-data: {}

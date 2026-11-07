@@ -8,7 +8,7 @@ never reached and nothing is written.
 from conftest import SELLER, commit_body, signed
 
 
-def test_tampered_body_is_refused_before_the_handler(web, seller_db):
+def test_tampered_body_is_refused_before_the_handler(web, seller_records):
     url = f"{SELLER}/proposals/demo-wba-2/commit"
     body = commit_body(160000.0)
     headers = signed("POST", url, body)
@@ -20,15 +20,5 @@ def test_tampered_body_is_refused_before_the_handler(web, seller_db):
     assert "signature" in response.headers  # refusals are signed too
     assert "accept-signature" in response.headers
 
-    assert (
-        seller_db.execute(
-            "SELECT COUNT(*) FROM assent WHERE proposal_id = 'demo-wba-2'"
-        ).fetchone()[0]
-        == 0
-    )
-    assert (
-        seller_db.execute(
-            "SELECT COUNT(*) FROM signed_requests WHERE body = ?", (tampered,)
-        ).fetchone()[0]
-        == 0
-    )
+    assert seller_records.entries("demo-wba-2") == []
+    assert seller_records.requests_with_body(tampered) == 0

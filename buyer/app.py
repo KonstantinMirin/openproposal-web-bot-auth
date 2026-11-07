@@ -19,7 +19,7 @@ from contextlib import asynccontextmanager
 from typing import TypedDict
 
 from fastapi import APIRouter, Depends, FastAPI
-from iab_agentic_primitives.web_bot_auth import KeyResolver, ServerIdentity
+from iab_agentic_primitives.web_bot_auth import KeyResolver, PublishPolicy, ServerIdentity
 from iab_agentic_primitives.web_bot_auth.asgi import DirectoryMiddleware
 from starlette.types import ASGIApp
 
@@ -136,7 +136,7 @@ def create_app(
     """
     # The buyer mints its first key on first boot; the directory reads the keyring live.
     keyring = Keyring(
-        settings.data_dir / "keys",
+        settings.keyring_dir,
         rotation_wait=settings.rotation_wait,
         signature_lifetime=settings.signature_lifetime,
     )
@@ -160,7 +160,7 @@ def create_app(
         agent,
         keyring.published,
         identity=ServerIdentity.from_config(str(settings.self_origin)),
-        max_age=settings.directory_max_age,
+        publish=PublishPolicy(max_age=settings.directory_max_age),
     )
 
 

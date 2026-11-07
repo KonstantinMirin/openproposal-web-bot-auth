@@ -20,7 +20,9 @@ from fastapi import Header
 from fastapi.responses import JSONResponse
 from pydantic import SecretStr
 
-HEADER = "X-Operator-Key"
+from .control import OPERATOR_HEADER as HEADER
+
+__all__ = ["HEADER", "ControlError", "OperatorKey", "render_control"]
 
 
 class ControlError(Exception):

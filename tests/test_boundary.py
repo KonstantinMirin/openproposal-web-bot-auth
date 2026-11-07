@@ -46,7 +46,7 @@ from openproposal import LineItemWrites, Proposal, dump_json
 from pydantic import SecretStr
 from starlette.types import ASGIApp
 
-from persistence.evidence import load_request
+from persistence.evidence import EvidenceReader
 from protocol.documents import load_yaml
 from protocol.operations import compose_commit
 from protocol.values import JsonObject
@@ -348,17 +348,14 @@ def test_a_signed_commit_keeps_its_request_with_the_entry(
     )
     assert commitment["attributed"] == 1  # the body is covered, and the host is the domain
     assert acceptance["evidence_id"] is None and acceptance["authentication_method"] is None
-    db = sqlite3.connect(f"file:{tmp_path / 'seller.db'}?mode=ro", uri=True)
-    db.row_factory = sqlite3.Row
-    try:
-        kept = load_request(db, commitment["evidence_id"])
-        directory = db.execute("SELECT url FROM directories").fetchall()
-    finally:
-        db.close()
+    with EvidenceReader.open(tmp_path / "seller.db") as reader:
+        kept_request = reader.request(commitment["evidence_id"])
+        directory = reader.directory(kept_request.directory_digest or "")
+    kept = kept_request.request
     assert (kept.method, kept.url, kept.body) == ("POST", f"{SELLER}{path}", body)
     sent = {name.lower(): value for name, value in headers.items()}
     assert {name: value for name, value in kept.headers.items() if name in sent} == sent
-    assert [row["url"] for row in directory] == [f"{BUYER}{DIRECTORY_PATH}"]
+    assert directory.url == f"{BUYER}{DIRECTORY_PATH}"
 
 
 def test_a_rejected_commit_keeps_no_evidence(

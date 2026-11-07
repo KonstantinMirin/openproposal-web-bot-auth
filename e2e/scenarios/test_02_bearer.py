@@ -26,7 +26,7 @@ def test_bearer_token_resolves_the_same_identity_type(web):
     assert by_signature["credential"]["origin"] == BUYER
 
 
-def test_commit_with_a_bearer_token(web, seller_db):
+def test_commit_with_a_bearer_token(web, seller_records):
     outcome = web.post(
         f"{BUYER_OPERATOR}/commit",
         json={
@@ -38,10 +38,8 @@ def test_commit_with_a_bearer_token(web, seller_db):
     assert outcome["state"] == "agreed", outcome
     assert outcome["authentication_method"] == "bearer"
 
-    entry = seller_db.execute(
-        "SELECT * FROM assent WHERE proposal_id = 'demo-bearer-1' AND role = 'commitment'"
-    ).fetchone()
-    assert entry["principal_id"] == "buyer-bearer"
-    assert entry["authentication_method"] == "bearer"
-    assert entry["evidence_id"] is None  # nothing was signed, so there is no signature evidence
-    assert entry["attributed"] == 0
+    (entry,) = [e for e in seller_records.entries("demo-bearer-1") if e.role == "commitment"]
+    assert entry.principal_id == "buyer-bearer"
+    assert entry.authentication_method == "bearer"
+    assert entry.evidence_id is None  # nothing was signed, so there is no signature evidence
+    assert entry.attributed is False

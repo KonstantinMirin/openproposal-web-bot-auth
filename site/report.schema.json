@@ -1,0 +1,698 @@
+{
+  "$defs": {
+    "Agreed": {
+      "additionalProperties": false,
+      "description": "The seller's signed `CommitResult` verified and matched; the buyer kept it.",
+      "properties": {
+        "attributed": {
+          "title": "Attributed",
+          "type": "boolean"
+        },
+        "authentication_method": {
+          "enum": [
+            "web_bot_auth",
+            "bearer"
+          ],
+          "title": "Authentication Method",
+          "type": "string"
+        },
+        "commit_id": {
+          "title": "Commit Id",
+          "type": "integer"
+        },
+        "entries": {
+          "items": {
+            "additionalProperties": {
+              "$ref": "#/$defs/JsonValue"
+            },
+            "type": "object"
+          },
+          "title": "Entries",
+          "type": "array"
+        },
+        "evidence_id": {
+          "title": "Evidence Id",
+          "type": "integer"
+        },
+        "keyid": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Keyid"
+        },
+        "proposal_id": {
+          "title": "Proposal Id",
+          "type": "string"
+        },
+        "record_digest": {
+          "title": "Record Digest",
+          "type": "string"
+        },
+        "seller": {
+          "$ref": "#/$defs/SellerView"
+        },
+        "state": {
+          "const": "agreed",
+          "default": "agreed",
+          "title": "State",
+          "type": "string"
+        }
+      },
+      "required": [
+        "proposal_id",
+        "seller",
+        "authentication_method",
+        "keyid",
+        "record_digest",
+        "entries",
+        "attributed",
+        "commit_id",
+        "evidence_id"
+      ],
+      "title": "Agreed",
+      "type": "object"
+    },
+    "Answer": {
+      "additionalProperties": false,
+      "description": "A response, as the buyer received and kept it.",
+      "properties": {
+        "body": {
+          "$ref": "#/$defs/JsonValue"
+        },
+        "headers": {
+          "$ref": "#/$defs/Headers"
+        },
+        "keyid": {
+          "title": "Keyid",
+          "type": "string"
+        },
+        "status": {
+          "title": "Status",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "status",
+        "keyid",
+        "headers",
+        "body"
+      ],
+      "title": "Answer",
+      "type": "object"
+    },
+    "BuyerSide": {
+      "additionalProperties": false,
+      "description": "The request as the buyer sent it, and the seller's signed answer as it arrived.",
+      "properties": {
+        "directory": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Directory"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "evidence_id": {
+          "title": "Evidence Id",
+          "type": "integer"
+        },
+        "request": {
+          "$ref": "#/$defs/Message"
+        },
+        "response": {
+          "$ref": "#/$defs/Answer"
+        }
+      },
+      "required": [
+        "evidence_id",
+        "request",
+        "response",
+        "directory"
+      ],
+      "title": "BuyerSide",
+      "type": "object"
+    },
+    "CloudflareCheck": {
+      "additionalProperties": false,
+      "description": "cfbot's answer to a request the buyer signed: its status and its verdict.",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "integer"
+        },
+        "verdict": {
+          "$ref": "#/$defs/JsonValue"
+        }
+      },
+      "required": [
+        "status",
+        "verdict"
+      ],
+      "title": "CloudflareCheck",
+      "type": "object"
+    },
+    "Digest": {
+      "additionalProperties": false,
+      "description": "Both parties' digest input, and the record_digest over it.",
+      "properties": {
+        "digest_input_bytes": {
+          "title": "Digest Input Bytes",
+          "type": "integer"
+        },
+        "record_digest": {
+          "title": "Record Digest",
+          "type": "string"
+        }
+      },
+      "required": [
+        "record_digest",
+        "digest_input_bytes"
+      ],
+      "title": "Digest",
+      "type": "object"
+    },
+    "Directory": {
+      "additionalProperties": false,
+      "description": "A key directory response: as a party kept it, or as the runner fetched it.",
+      "properties": {
+        "expires": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Expires"
+        },
+        "fetched_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Fetched At"
+        },
+        "headers": {
+          "$ref": "#/$defs/Headers"
+        },
+        "keys": {
+          "items": {
+            "additionalProperties": {
+              "$ref": "#/$defs/JsonValue"
+            },
+            "type": "object"
+          },
+          "title": "Keys",
+          "type": "array"
+        },
+        "sha256": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sha256"
+        },
+        "status": {
+          "title": "Status",
+          "type": "integer"
+        },
+        "url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Url"
+        }
+      },
+      "required": [
+        "url",
+        "status",
+        "headers",
+        "keys"
+      ],
+      "title": "Directory",
+      "type": "object"
+    },
+    "FlowRun": {
+      "additionalProperties": false,
+      "description": "One credential's run of the flow: signature or bearer.",
+      "properties": {
+        "buyer": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BuyerSide"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "digest": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Digest"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "outcome": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Agreed"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "proposal_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Proposal Id"
+        },
+        "reverify": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Reverified"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "seller": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SellerSide"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "title": "FlowRun",
+      "type": "object"
+    },
+    "Headers": {
+      "additionalProperties": false,
+      "description": "Header lines in order, lowercased, without the withheld fields; and which were withheld.",
+      "properties": {
+        "lines": {
+          "items": {
+            "maxItems": 2,
+            "minItems": 2,
+            "prefixItems": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "type": "array"
+          },
+          "title": "Lines",
+          "type": "array"
+        },
+        "withheld": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Withheld",
+          "type": "array"
+        }
+      },
+      "required": [
+        "lines",
+        "withheld"
+      ],
+      "title": "Headers",
+      "type": "object"
+    },
+    "JsonValue": {},
+    "Message": {
+      "additionalProperties": false,
+      "description": "A request, as a party sent or kept it.",
+      "properties": {
+        "body": {
+          "$ref": "#/$defs/JsonValue"
+        },
+        "headers": {
+          "$ref": "#/$defs/Headers"
+        },
+        "keyid": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Keyid"
+        },
+        "method": {
+          "title": "Method",
+          "type": "string"
+        },
+        "url": {
+          "title": "Url",
+          "type": "string"
+        }
+      },
+      "required": [
+        "method",
+        "url",
+        "keyid",
+        "headers",
+        "body"
+      ],
+      "title": "Message",
+      "type": "object"
+    },
+    "Reverified": {
+      "additionalProperties": false,
+      "description": "Both kept messages, verified again offline from the stored bytes.",
+      "properties": {
+        "request_components": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Request Components",
+          "type": "array"
+        },
+        "response_bound": {
+          "title": "Response Bound",
+          "type": "boolean"
+        },
+        "response_components": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Response Components",
+          "type": "array"
+        }
+      },
+      "required": [
+        "request_components",
+        "response_components",
+        "response_bound"
+      ],
+      "title": "Reverified",
+      "type": "object"
+    },
+    "SellerSide": {
+      "additionalProperties": false,
+      "description": "What the seller's boundary resolved for the commit, and the signed request it kept.",
+      "properties": {
+        "attributed": {
+          "title": "Attributed",
+          "type": "boolean"
+        },
+        "authentication_method": {
+          "title": "Authentication Method",
+          "type": "string"
+        },
+        "directory": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Directory"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "evidence_id": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Evidence Id"
+        },
+        "principal_id": {
+          "title": "Principal Id",
+          "type": "string"
+        },
+        "request": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Message"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "principal_id",
+        "authentication_method",
+        "attributed"
+      ],
+      "title": "SellerSide",
+      "type": "object"
+    },
+    "SellerView": {
+      "additionalProperties": false,
+      "description": "The seller an outcome is about, as the buyer's own records hold it.",
+      "properties": {
+        "domain": {
+          "title": "Domain",
+          "type": "string"
+        },
+        "legal_name": {
+          "title": "Legal Name",
+          "type": "string"
+        },
+        "origin": {
+          "title": "Origin",
+          "type": "string"
+        }
+      },
+      "required": [
+        "origin",
+        "domain",
+        "legal_name"
+      ],
+      "title": "SellerView",
+      "type": "object"
+    },
+    "StepResult": {
+      "additionalProperties": false,
+      "properties": {
+        "detail": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Detail"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "ms": {
+          "title": "Ms",
+          "type": "integer"
+        },
+        "ok": {
+          "title": "Ok",
+          "type": "boolean"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "ok",
+        "ms",
+        "detail"
+      ],
+      "title": "StepResult",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "bearer": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/FlowRun"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "cloudflare": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CloudflareCheck"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "directories": {
+      "additionalProperties": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/Directory"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "title": "Directories",
+      "type": "object"
+    },
+    "duration_ms": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Duration Ms"
+    },
+    "finished_at": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Finished At"
+    },
+    "format": {
+      "const": 2,
+      "default": 2,
+      "title": "Format",
+      "type": "integer"
+    },
+    "line_item_ids": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Line Item Ids",
+      "type": "array"
+    },
+    "ok": {
+      "title": "Ok",
+      "type": "boolean"
+    },
+    "origins": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "title": "Origins",
+      "type": "object"
+    },
+    "signature": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/FlowRun"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "software": {
+      "additionalProperties": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "title": "Software",
+      "type": "object"
+    },
+    "started_at": {
+      "title": "Started At",
+      "type": "string"
+    },
+    "steps": {
+      "items": {
+        "$ref": "#/$defs/StepResult"
+      },
+      "title": "Steps",
+      "type": "array"
+    }
+  },
+  "required": [
+    "started_at",
+    "ok",
+    "steps"
+  ],
+  "title": "Report",
+  "type": "object"
+}

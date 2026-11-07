@@ -42,7 +42,7 @@ CASES = (
         None,
     ),
     ("ruff-buyer.toml", "buyer/flow.py", "import httpx\n", "import json\n"),
-    ("ruff-digest.toml", "runner/live.py", "import hashlib\n", "import json\n"),
+    ("ruff-digest.toml", "runner/observe.py", "import hashlib\n", "import json\n"),
     ("ruff-digest.toml", "seller/offers.py", "from rfc8785 import dumps\n", "import json\n"),
 )
 

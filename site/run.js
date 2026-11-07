@@ -1,8 +1,12 @@
-// Renders /latest-run.json and /history.json, which runner/live.py writes every 15 minutes.
+// Renders /latest-run.json and /history.json, which the live runner (runner/main.py) writes
+// every 15 minutes. latest-run.json is a Report as site/report.schema.json states it
+// (runner/report.py); a report of another format is not rendered.
 // Plain DOM: every value from the report goes in through textContent.
 (function () {
   'use strict';
 
+  // The report format this page reads (runner/report.py FORMAT).
+  const FORMAT = 2;
   const SIGNATURE_FIELDS = new Set(['signature', 'signature-input', 'signature-agent', 'content-digest']);
 
   function el(tag, props, ...children) {
@@ -185,6 +189,13 @@
       const root = document.getElementById('run');
       root.textContent = '';
       root.append(el('p', { class: 'empty', text: `No run report is available yet (${e.message}). The runner writes one every 15 minutes.` }));
+      return;
+    }
+    if (run.format !== FORMAT) {
+      setStatus(null, 'Unsupported run report');
+      const root = document.getElementById('run');
+      root.textContent = '';
+      root.append(el('p', { class: 'empty', text: `The run report has format ${run.format}; this page reads format ${FORMAT}.` }));
       return;
     }
     let history = [];

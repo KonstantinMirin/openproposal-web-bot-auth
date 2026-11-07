@@ -13,8 +13,6 @@ idempotency_key. The seller returns the stored result and writes no second
 entry (§ 5.6.1). Once the answer verifies, the buyer records the agreement.
 """
 
-import json
-
 import pytest
 from conftest import BUYER_OPERATOR, SELLER_FAULTS
 
@@ -49,16 +47,9 @@ def fault(web):
     set_fault("none")
 
 
-def _seller_state(seller_db, proposal_id: str) -> tuple[list[tuple[str, str]], list[str]]:
-    entries = seller_db.execute(
-        "SELECT role, idempotency_key FROM assent WHERE proposal_id = ? ORDER BY id",
-        (proposal_id,),
-    ).fetchall()
-    processed = seller_db.execute(
-        "SELECT idempotency_key FROM commits WHERE proposal_id = ? ORDER BY idempotency_key",
-        (proposal_id,),
-    ).fetchall()
-    return [(e["role"], e["idempotency_key"]) for e in entries], sorted(p[0] for p in processed)
+def _seller_state(seller_records, proposal_id: str) -> tuple[list[tuple[str, str]], list[str]]:
+    entries = [(e.role, e.idempotency_key) for e in seller_records.entries(proposal_id)]
+    return entries, seller_records.processed(proposal_id)
 
 
 @pytest.mark.parametrize("credential", CREDENTIALS)
@@ -75,23 +66,22 @@ def test_buyer_refuses_unverifiable_reads(web, fault, credential):
 
 
 @pytest.mark.parametrize("credential", CREDENTIALS)
-def test_buyer_refuses_unverifiable_commit_answers(web, fault, seller_db, buyer_db, credential):
+def test_buyer_refuses_unverifiable_commit_answers(
+    web, fault, seller_records, buyer_records, credential
+):
     trigger = TRIGGER[credential]
-    proposal_id, items = trigger["proposal_id"], json.dumps(sorted(trigger["line_item_ids"]))
-    before_entries, before_processed = _seller_state(seller_db, proposal_id)
+    proposal_id, items = trigger["proposal_id"], trigger["line_item_ids"]
+    before_entries, before_processed = _seller_state(seller_records, proposal_id)
     accepted = None
     for mode, reason in FAULTS[credential]:
         fault(mode)
         outcome = web.post(f"{BUYER_OPERATOR}/commit", json=trigger).json()
         assert (outcome["state"], outcome["reason"]) == ("refused", reason), (mode, outcome)
 
-        pending = buyer_db.execute(
-            "SELECT * FROM commits WHERE proposal_id = ? AND line_item_ids = ?",
-            (proposal_id, items),
-        ).fetchall()
-        assert [p["state"] for p in pending] == ["pending"]  # one Commit, still unconfirmed
-        key = pending[0]["idempotency_key"]
-        state = _seller_state(seller_db, proposal_id)
+        pending = buyer_records.commits(proposal_id, items)
+        assert [p.state for p in pending] == ["pending"]  # one Commit, still unconfirmed
+        key = pending[0].idempotency_key
+        state = _seller_state(seller_records, proposal_id)
         if accepted is None:
             # The first faulted attempt reached the offer logic: the seller accepted it.
             assert state == (
@@ -107,4 +97,4 @@ def test_buyer_refuses_unverifiable_commit_answers(web, fault, seller_db, buyer_
     outcome = web.post(f"{BUYER_OPERATOR}/commit", json=trigger).json()
     assert outcome["state"] == "agreed", outcome
     assert outcome["authentication_method"] == credential
-    assert _seller_state(seller_db, proposal_id) == accepted
+    assert _seller_state(seller_records, proposal_id) == accepted

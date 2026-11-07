@@ -147,9 +147,41 @@ Repeat step 3, and then rebuild and restart every service on the host:
 docker compose -f deploy/docker-compose.prod.yml up --detach --build --wait
 ```
 
-Keys and databases persist across rebuilds in the `wba-demo-live_*-data`
-volumes. To change only the site, repeat step 3; Caddy serves the files
+Keys and databases persist across rebuilds, each agent's in two volumes:
+`wba-demo-live_seller-keys` and `wba-demo-live_seller-db`, and
+`wba-demo-live_buyer-keys` and `wba-demo-live_buyer-db`. The runner mounts the
+two `-db` volumes read-only and neither `-keys` volume, so it can read no
+agent's key. To change only the site, repeat step 3; Caddy serves the files
 directly.
+
+### Move to the split volumes, once
+
+A deployment from before the split keeps each agent's key and database in one
+volume, `wba-demo-live_seller-data` or `wba-demo-live_buyer-data`, which the
+runner mounted. To keep the keys and the records, move each file into its own
+volume before the first `up` of the new compose file. On the host:
+
+```bash
+cd /srv/wba-demo/openproposal-web-bot-auth
+docker compose -f deploy/docker-compose.prod.yml down
+docker compose -f deploy/docker-compose.prod.yml create   # creates the four new volumes
+docker run --rm -v wba-demo-live_seller-data:/old -v wba-demo-live_seller-keys:/keys \
+    -v wba-demo-live_seller-db:/data alpine sh -c \
+    'mv /old/wba-key.jwk /keys/ && mv /old/seller.db /data/ && chown -R 10001:10001 /keys /data'
+docker run --rm -v wba-demo-live_buyer-data:/old -v wba-demo-live_buyer-keys:/keys \
+    -v wba-demo-live_buyer-db:/data alpine sh -c \
+    'mv /old/keys/* /keys/ && mv /old/buyer.db /data/ && chown -R 10001:10001 /keys /data'
+docker volume rm wba-demo-live_seller-data wba-demo-live_buyer-data
+docker compose -f deploy/docker-compose.prod.yml up --detach --build --wait
+```
+
+Then check that the runner can't read a key, and that its next run passes:
+
+```bash
+docker compose -f deploy/docker-compose.prod.yml run --rm --no-deps --entrypoint sh runner \
+    -c 'find / -path /proc -prune -o -name "*.jwk" -print'   # prints nothing
+docker compose -f deploy/docker-compose.prod.yml logs runner
+```
 
 ## Operate
 
@@ -180,8 +212,8 @@ To run this compose file on a laptop, run `make live-local`. The override in
 container that serves `Caddyfile.snippet` with its upstreams pointed at the
 containers, network aliases for the four names, and the e2e stack's throwaway
 CA. The script runs the runner once and checks that the site serves a passing
-`latest-run.json` and doesn't route the operator controls. With `KEEP=1`, the
-stack stays up.
+`latest-run.json`, doesn't route the operator controls, and that no `*.jwk`
+file is readable in the runner's container. With `KEEP=1`, the stack stays up.
 
 To validate the compose file alone, run `make live-config`.
 

@@ -185,6 +185,7 @@ class Buyer:
             attributed=attributed,
         )
         return Agreed(
+            proposal_id=pending.key.proposal_id,
             seller=call.view,
             authentication_method=call.credential.method,
             keyid=call.credential.keyid,

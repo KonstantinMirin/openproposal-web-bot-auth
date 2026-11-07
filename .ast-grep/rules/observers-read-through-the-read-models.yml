@@ -1,0 +1,14 @@
+# Observers outside a party (the live runner, the e2e scenarios) read its records
+# through the read models in persistence/observe.py and persistence/evidence.py,
+# never with their own SQL against the party's private schema.
+id: observers-read-through-the-read-models
+language: Python
+severity: error
+message: Read a party's records through persistence/observe.py (SellerRecords, BuyerRecords), not with SQL.
+files: ["runner/**/*.py", "e2e/**/*.py"]
+rule:
+  kind: string
+  regex: '^[a-zA-Z]*("|''|"""|'''''')\s*(?i:select)\b'
+  inside:
+    kind: call
+    stopBy: end

@@ -58,3 +58,8 @@ jobs:
       - name: make live-config
         working-directory: openproposal-web-bot-auth
         run: make live-config
+      # The production compose file, rehearsed: one live run, the routing policy, and
+      # no agent key readable in the runner's container.
+      - name: make live-local
+        working-directory: openproposal-web-bot-auth
+        run: make live-local
