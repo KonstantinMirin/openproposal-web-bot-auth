@@ -1,0 +1,24 @@
+# What this buyer writes when it commits to a line item: a `LineItemWrites`
+# (OpenProposal § 3.4) per line_item_id. The business-daily-display writes are
+# the buyer's writes in examples/proposal-issued.yaml, with the flight moved to
+# fit the demo's offer window.
+business-daily-display:
+  formats:              { selected: ["display/300x250", "display/970x250"] }
+  geo:                  { value: { include: ["US"], exclude: ["US-TX"] } }
+  frequency_cap:        { count: { value: 4 } }
+  cancellation_policy:  { selected: ["notice-7d"] }
+  exclusions:           { domains: ["example-gambling.example"] }
+  buyer_requirements:   { seats: { dsp: "dsp-a.example", ids: ["seat-99812", "seat-99813"] } }
+  commitment:
+    pricing_id:  "bd-cpm-usd"
+    basis:       spend
+    amount:      80000.00
+    flight:      { start: "2029-10-12T00:00:00Z", end: "2029-12-21T23:59:59Z" }
+    advertisers: [{ domain: "brand-a.example" }]
+
+weather-app-ctv:
+  commitment:
+    basis:       spend
+    amount:      160000.00
+    flight:      { start: "2029-11-02T00:00:00Z", end: "2029-12-21T23:59:59Z" }
+    advertisers: [{ domain: "brand-a.example" }]
