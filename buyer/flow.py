@@ -23,7 +23,7 @@ from .store import Store
 class Outcome(BaseModel):
     """What the operator trigger reports."""
 
-    state: str  # agreed | rejected | refused | read
+    state: str  # read | agreed | rejected (the seller said no) | refused (the buyer said no)
     detail: str | None = None
     seller: dict[str, Any] | None = None
     authentication_method: Credential | None = None
@@ -78,8 +78,11 @@ class Buyer:
             exchange = await self._call(seller, credential, "GET", f"/proposals/{proposal_id}")
         except Refusal as e:
             return Outcome(state="refused", detail=str(e))
-        return Outcome(state="read", detail=f"status {exchange.status}", seller=_party(seller),
-                       authentication_method=credential, keyid=self.signer.key.kid)
+        # A signed refusal verifies as well as an answer does, so the status decides.
+        state = "read" if exchange.status == 200 else "rejected"
+        return Outcome(state=state, detail=f"status {exchange.status}: {exchange.body.decode()}",
+                       seller=_party(seller), authentication_method=credential,
+                       keyid=self.signer.key.kid)
 
     async def commit(self, seller_origin: str, proposal_id: str, line_item_ids: list[str],
                      credential: Credential) -> Outcome:

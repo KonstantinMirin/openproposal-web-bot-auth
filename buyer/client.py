@@ -38,11 +38,10 @@ class Exchange:
     body: bytes
     verified: VerifiedSignature
 
-    def request_record(self) -> dict:
-        """The request as evidence: what the response is bound to. A bearer token is left out."""
+    def request_record(self) -> tuple[str, str, list[tuple[str, str]], bytes]:
+        """The request as sent, which the response is bound to. A bearer token is left out."""
         headers = [(k, v) for k, v in self.request_headers if k.lower() != "authorization"]
-        return {"method": self.method, "url": self.url, "headers": headers,
-                "body": self.request_body.decode()}
+        return self.method, self.url, headers, self.request_body
 
 
 async def call_seller(

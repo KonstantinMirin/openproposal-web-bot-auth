@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import sqlite3
 from pathlib import Path
 from typing import Any
 
 from iab_agentic_primitives.web_bot_auth import VerifiedDirectory
+
+from shared.evidence import DIRECTORIES_SCHEMA, save_directory
 
 SCHEMA = """
 -- A seller this buyer deals with, by origin. The buyer stores no seller key:
@@ -34,13 +35,6 @@ CREATE TABLE IF NOT EXISTS commits (
     entries          TEXT,
     errors           TEXT
 );
--- A verified key directory, as VerifiedDirectory.evidence() gives it: the URL,
--- status, header lines (its signatures included), body, and fetch time.
-CREATE TABLE IF NOT EXISTS directories (
-    digest    TEXT PRIMARY KEY,
-    url       TEXT NOT NULL,
-    evidence  TEXT NOT NULL
-);
 -- The signed response that carried the seller's entry, as received, with the
 -- request it is bound to (§ 4.1.2, Signed messages).
 CREATE TABLE IF NOT EXISTS evidence (
@@ -49,7 +43,10 @@ CREATE TABLE IF NOT EXISTS evidence (
     origin            TEXT NOT NULL,
     keyid             TEXT NOT NULL,
     attributed        INTEGER NOT NULL,
-    request           TEXT NOT NULL,
+    request_method    TEXT NOT NULL,
+    request_url       TEXT NOT NULL,
+    request_headers   TEXT NOT NULL,
+    request_body      BLOB NOT NULL,
     status            INTEGER NOT NULL,
     headers           TEXT NOT NULL,
     body              BLOB NOT NULL,
@@ -58,15 +55,6 @@ CREATE TABLE IF NOT EXISTS evidence (
 """
 
 
-def _save_directory(db: sqlite3.Connection, directory: VerifiedDirectory | None) -> str | None:
-    """Stores a verified directory's evidence once, keyed by the SHA-256 of its body."""
-    if directory is None:
-        return None
-    digest = hashlib.sha256(directory.body).hexdigest()
-    db.execute("INSERT OR IGNORE INTO directories (digest, url, evidence) VALUES (?, ?, ?)",
-               (digest, directory.url, json.dumps(directory.evidence())))
-    return digest
-
 
 class Store:
     def __init__(self, path: str | Path) -> None:
@@ -74,7 +62,7 @@ class Store:
         self.db = sqlite3.connect(path, check_same_thread=False, isolation_level=None)
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA foreign_keys = ON")
-        self.db.executescript(SCHEMA)
+        self.db.executescript(DIRECTORIES_SCHEMA + SCHEMA)
 
     def add_seller(self, origin: str, domain: str, legal_name: str, bearer_token: str | None) -> None:
         self.db.execute(
@@ -112,13 +100,17 @@ class Store:
         )
 
     def record_evidence(self, *, commit_id: int, origin: str, keyid: str, attributed: bool,
-                        request: dict[str, Any], status: int, headers: list[tuple[str, str]],
-                        body: bytes, directory: VerifiedDirectory | None) -> int:
-        digest = _save_directory(self.db, directory)
+                        request: tuple[str, str, list[tuple[str, str]], bytes], status: int,
+                        headers: list[tuple[str, str]], body: bytes,
+                        directory: VerifiedDirectory | None) -> int:
+        """Stores the seller's signed answer as received, with the request it is bound to."""
+        method, url, request_headers, request_body = request
+        digest = save_directory(self.db, directory)
         cursor = self.db.execute(
-            "INSERT INTO evidence (commit_id, origin, keyid, attributed, request, status, headers,"
-            " body, directory_digest) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (commit_id, origin, keyid, int(attributed), json.dumps(request), status,
-             json.dumps(headers), body, digest),
+            "INSERT INTO evidence (commit_id, origin, keyid, attributed, request_method, request_url,"
+            " request_headers, request_body, status, headers, body, directory_digest)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (commit_id, origin, keyid, int(attributed), method, url, json.dumps(request_headers),
+             request_body, status, json.dumps(headers), body, digest),
         )
         return cursor.lastrowid
