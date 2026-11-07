@@ -82,8 +82,13 @@ async function directory(authority) {
 
 // ── Verifying, with the library's verify() ────────────────────────────────
 
-/** Fetches the caller's directory and returns the verifier for `keyid` once the directory's own signatures check. */
-async function resolveKey(candidate) {
+/**
+ * Fetches the caller's directory, verifies the directory's own signatures with
+ * http-message-sig, and returns the verifier for `keyid`. The directory must be
+ * signed, and signed by that key (Web Bot Auth Appendix B.1). `checked` collects
+ * the directory signatures verified, for the verdict.
+ */
+async function resolveKey(candidate, checked) {
   if (candidate.signatureAgent === undefined) throw new Error('no covered Signature-Agent member');
   const origin = new URL(candidate.signatureAgent.uri).origin;
   const url = `${origin}${HTTP_MESSAGE_SIGNATURES_DIRECTORY}`;
@@ -94,7 +99,10 @@ async function resolveKey(candidate) {
   if (headers['content-digest'] !== digest(body)) throw new Error('directory Content-Digest does not match');
   const keys = (await Promise.all((JSON.parse(body).keys ?? []).map(k => verifierFromJWK(k).catch(() => undefined)))).filter(Boolean);
   const signed = { kind: 'response', status: 200, fields: fieldsOf(headers), request: { kind: 'request', method: 'GET', targetUri: url, fields: [] } };
-  for (const [label, [, params]] of parseDictionary(headers['signature-input'] ?? '')) {
+  const input = parseDictionary(headers['signature-input'] ?? '');
+  if (input.size === 0) throw new Error(`${url} carries no directory signature`);
+  for (const [label, [, params]] of input) {
+    if (params.get('tag') !== 'http-message-signatures-directory') throw new Error(`directory signature ${label} has the wrong tag`);
     const verifier = keys.find(k => k.keyid === params.get('keyid'));
     if (verifier === undefined) throw new Error(`directory signature by unknown key ${params.get('keyid')}`);
     await verifySignature(signed, {
@@ -102,9 +110,11 @@ async function resolveKey(candidate) {
       policy: { algorithms: ['ed25519'], now: now(), requiredComponents: [component('@authority', { req: true }), 'content-digest'], requiredParameters: ['created', 'expires'] },
       resolveVerifier: async () => verifier,
     });
+    checked.push({ label, keyid: verifier.keyid });
   }
   const verifier = keys.find(k => k.keyid === candidate.keyid);
   if (verifier === undefined) throw new Error(`key ${candidate.keyid} is not in ${url}`);
+  if (!checked.some(c => c.keyid === candidate.keyid)) throw new Error(`key ${candidate.keyid} did not sign ${url}`);
   return verifier;
 }
 
@@ -112,8 +122,9 @@ async function verifyRequest(req, body) {
   const fields = [];
   for (let i = 0; i < req.rawHeaders.length; i += 2) fields.push({ name: req.rawHeaders[i].toLowerCase(), value: req.rawHeaders[i + 1] });
   const message = { kind: 'request', method: req.method, targetUri: `${ORIGIN}${req.url}`, fields };
+  const checked = [];
   try {
-    const verified = await verify(message, { resolver: resolveKey });
+    const verified = await verify(message, { resolver: candidate => resolveKey(candidate, checked) });
     const sent = fields.find(f => f.name === 'content-digest')?.value;
     return {
       ok: true,
@@ -121,6 +132,7 @@ async function verifyRequest(req, body) {
       identity: new URL(verified.signatureAgent.uri).origin,
       keyid: verified.keyid,
       nonce: verified.nonce,
+      directory_signatures: checked,
       // web-bot-auth 0.2.0 doesn't compare Content-Digest with the body; cfbot does.
       content_digest_matches: sent !== undefined && sent === digest(body),
     };
