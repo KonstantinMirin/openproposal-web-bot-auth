@@ -23,7 +23,17 @@ def fault(web):
     set_mode("none")
 
 
+def _seller_state(seller_db) -> tuple[list[tuple[str, str]], list[str]]:
+    entries = seller_db.execute(
+        "SELECT role, idempotency_key FROM assent WHERE proposal_id = 'demo-wba-2' ORDER BY id"
+    ).fetchall()
+    processed = seller_db.execute(
+        "SELECT idempotency_key FROM commits WHERE proposal_id = 'demo-wba-2'").fetchall()
+    return [(e["role"], e["idempotency_key"]) for e in entries], [p[0] for p in processed]
+
+
 def test_buyer_refuses_unverifiable_responses(web, fault, seller_db, buyer_db):
+    accepted = None
     for mode, reason in [("strip", "response-unsigned"), ("unbound", "response-not-bound"),
                          ("rebound", "signature-invalid")]:
         fault(mode)
@@ -31,16 +41,20 @@ def test_buyer_refuses_unverifiable_responses(web, fault, seller_db, buyer_db):
         assert outcome["state"] == "refused", (mode, outcome)
         assert reason in outcome["detail"], (mode, outcome)
 
-    pending = buyer_db.execute(
-        "SELECT * FROM commits WHERE proposal_id = 'demo-wba-2'").fetchall()
-    assert [p["state"] for p in pending] == ["pending"]  # one Commit, still unconfirmed
+        pending = buyer_db.execute(
+            "SELECT * FROM commits WHERE proposal_id = 'demo-wba-2'").fetchall()
+        assert [p["state"] for p in pending] == ["pending"]  # one Commit, still unconfirmed
+        key = pending[0]["idempotency_key"]
+        state = _seller_state(seller_db)
+        if accepted is None:
+            # The first faulted attempt reached the offer logic: the seller accepted it.
+            assert state == ([("commitment", key), ("acceptance", None)], [key])
+            accepted = state
+        else:
+            # Each retry is a replay of that commit: the stored result, and no new entry.
+            assert state == accepted
 
     fault("none")
     outcome = web.post(f"{BUYER_OPERATOR}/commit", json=COMMIT).json()
     assert outcome["state"] == "agreed", outcome
-
-    entries = seller_db.execute(
-        "SELECT role, idempotency_key FROM assent WHERE proposal_id = 'demo-wba-2' ORDER BY id"
-    ).fetchall()
-    assert [e["role"] for e in entries] == ["commitment", "acceptance"]
-    assert entries[0]["idempotency_key"] == pending[0]["idempotency_key"]
+    assert _seller_state(seller_db) == accepted

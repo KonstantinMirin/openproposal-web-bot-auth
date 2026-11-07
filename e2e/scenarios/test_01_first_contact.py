@@ -10,7 +10,8 @@ message, and both compute the same record_digest.
 import hashlib
 import json
 
-from conftest import BUYER, BUYER_OPERATOR, SELLER
+from conftest import BUYER, BUYER_OPERATOR, SELLER, stored_keys
+from iab_agentic_primitives.web_bot_auth import HTTPRequest, RequestVerifier, ResponseVerifier
 
 
 def test_first_contact_by_signature(web, seller_db, buyer_db):
@@ -40,30 +41,35 @@ def test_first_contact_by_signature(web, seller_db, buyer_db):
     assert entry["principal_id"] == "buyer-wba"
     assert entry["authentication_method"] == "web_bot_auth"
     assert entry["attributed"] == 1
+    bought = buyer_db.execute("SELECT * FROM commits WHERE id = ?", (outcome["commit_id"],)).fetchone()
+    assert bought["state"] == "agreed"
     evidence = seller_db.execute("SELECT * FROM evidence WHERE id = ?",
                                  (entry["evidence_id"],)).fetchone()
     assert evidence["origin"] == BUYER and evidence["method"] == "POST"
-    assert json.loads(evidence["body"])["entry"] == commitment  # the exact bytes the buyer sent
+    assert evidence["body"] == bought["body"]  # the exact bytes the buyer signed and sent
     directory = seller_db.execute("SELECT * FROM directories WHERE digest = ?",
                                   (evidence["directory_digest"],)).fetchone()
     assert directory["url"] == f"{BUYER}/.well-known/http-message-signatures-directory"
-    fetched = json.loads(directory["evidence"])  # VerifiedDirectory.evidence()
-    assert fetched["status"] == 200
-    assert any(name.lower() == "signature" for name, _ in fetched["headers"])
-    assert evidence["keyid"] in {k["kid"] for k in json.loads(fetched["body"])["keys"]}
 
-    # The buyer kept the seller's signed answer, bound to its request.
-    bought = buyer_db.execute("SELECT * FROM commits WHERE id = ?", (outcome["commit_id"],)).fetchone()
-    assert bought["state"] == "agreed"
+    # The seller's evidence verifies again, offline, against the directory bytes it kept.
+    request_headers = [tuple(line) for line in json.loads(evidence["headers"])]
+    again = RequestVerifier(stored_keys(seller_db, evidence["directory_digest"], BUYER)).verify_sync(
+        evidence["method"], evidence["url"], request_headers, evidence["body"])
+    assert again.origin == BUYER and again.keyid == evidence["keyid"] and again.body_covered
+
+    # The buyer kept the seller's signed answer as received, bound to its request.
     answer = buyer_db.execute("SELECT * FROM evidence WHERE id = ?",
                               (outcome["evidence_id"],)).fetchone()
     assert answer["origin"] == SELLER and answer["status"] == 200
+    assert answer["request_body"] == bought["body"]
     assert json.loads(answer["body"])["entries"] == outcome["entries"]
-    seller_directory = json.loads(buyer_db.execute(
-        "SELECT evidence FROM directories WHERE digest = ?", (answer["directory_digest"],)
-    ).fetchone()["evidence"])
-    assert seller_directory["url"] == f"{SELLER}/.well-known/http-message-signatures-directory"
-    assert answer["keyid"] in {k["kid"] for k in json.loads(seller_directory["body"])["keys"]}
+    sent = HTTPRequest(answer["request_method"], answer["request_url"],
+                       [tuple(line) for line in json.loads(answer["request_headers"])],
+                       answer["request_body"])
+    answered = ResponseVerifier(stored_keys(buyer_db, answer["directory_digest"], SELLER)).verify_sync(
+        answer["status"], [tuple(line) for line in json.loads(answer["headers"])], answer["body"],
+        sent, expected_origin=SELLER)
+    assert answered.bound and answered.body_covered and answered.keyid == answer["keyid"]
 
     # Both parties hold the same digest input, and it hashes to the entries' record_digest.
     agreed = seller_db.execute(

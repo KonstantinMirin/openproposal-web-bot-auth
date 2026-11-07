@@ -7,6 +7,8 @@ uv run --project .. python gen_demo_tls.py
 compose=(docker compose -f docker-compose.yml)
 trap '"${compose[@]}" --profile test down --volumes --remove-orphans >/dev/null 2>&1' EXIT
 
+# Start from clean volumes, so every run is a fresh stack: no keys, no records.
+"${compose[@]}" --profile test down --volumes --remove-orphans >/dev/null 2>&1
 "${compose[@]}" --profile test build
 "${compose[@]}" up --detach --wait seller buyer cfbot front
 if ! "${compose[@]}" run --rm runner; then

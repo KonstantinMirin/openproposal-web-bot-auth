@@ -12,13 +12,14 @@ def test_cfbot_is_identity_established_only(web, seller_db):
     whoami = web.post(f"{CFBOT_RUN}/whoami").json()
     assert whoami["status"] == 200
     assert whoami["body"]["kind"] == "public"
-    assert whoami["body"]["authentication_method"] == "web_bot_auth"
-    assert whoami["body"]["origin"] == CFBOT
-    assert whoami["body"]["body_covered"] is False  # a GET has no body to cover
+    credential = whoami["body"]["credential"]
+    assert credential["method"] == "web_bot_auth"
+    assert credential["origin"] == CFBOT
+    assert credential["body_covered"] is False  # a GET has no body to cover
 
     # The seller kept the verified request, and the directory it verified against.
     evidence = seller_db.execute(
-        "SELECT * FROM evidence WHERE id = ?", (whoami["body"]["evidence_id"],)).fetchone()
+        "SELECT * FROM evidence WHERE id = ?", (credential["evidence_id"],)).fetchone()
     assert evidence["origin"] == CFBOT and evidence["directory_digest"] is not None
 
 

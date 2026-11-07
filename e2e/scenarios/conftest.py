@@ -15,7 +15,12 @@ from pathlib import Path
 
 import httpx
 import pytest
-from iab_agentic_primitives.web_bot_auth import Ed25519Key, RequestSigner
+from iab_agentic_primitives.web_bot_auth import (
+    Ed25519Key,
+    RequestSigner,
+    StaticKeyResolver,
+    parse_directory_response,
+)
 
 SELLER = "https://seller.wba-demo.noetis.dev"
 BUYER = "https://buyer.wba-demo.noetis.dev"
@@ -60,6 +65,15 @@ def web():
     """A client that trusts the public roots plus the demo CA, as every container does."""
     with httpx.Client(verify=ssl.create_default_context(), timeout=30) as client:
         yield client
+
+
+def stored_keys(db: sqlite3.Connection, digest: str, origin: str) -> StaticKeyResolver:
+    """The keys of a stored directory, after the library verifies the stored bytes again."""
+    row = db.execute("SELECT * FROM directories WHERE digest = ?", (digest,)).fetchone()
+    headers = [tuple(line) for line in json.loads(row["headers"])]
+    directory = parse_directory_response(row["status"], headers, row["body"],
+                                         origin.removeprefix("https://"), int(row["fetched_at"]))
+    return StaticKeyResolver({origin: list(directory.values())})
 
 
 def database(path: str) -> sqlite3.Connection:
