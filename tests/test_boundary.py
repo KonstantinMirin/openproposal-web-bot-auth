@@ -51,6 +51,7 @@ from protocol.documents import load_yaml
 from protocol.operations import compose_commit
 from protocol.values import JsonObject
 from seller.app import create_app
+from seller.offers.issuance import load_template
 from seller.seed import seed
 from seller.settings import SellerSettings
 from seller.sqlite_store import SqliteSellerStore
@@ -386,7 +387,9 @@ def _seeded_with_a_token_for_the_signing_buyer(data_dir: Path) -> None:
     data_dir.mkdir()
     store = SqliteSellerStore(data_dir / "seller.db")
     try:
-        seed(store, buyer_origin=Origin.parse(BUYER), bearer_token=SecretStr(TOKEN))
+        seed(
+            store, load_template(), buyer_origin=Origin.parse(BUYER), bearer_token=SecretStr(TOKEN)
+        )
         with store.transaction():
             store.add_token_credential("buyer-wba", "buyer-wba-token")
     finally:

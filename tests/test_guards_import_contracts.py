@@ -38,13 +38,8 @@ CASES = (
     # Through the identity types the offer logic takes: the chain Step 4 removed.
     ({"offers-framework-free"}, "seller/caller.py", "import iab_agentic_primitives\n"),
 )
-#: Modules present in every tree: the offer logic and the identity types it takes, and
-#: seller.errors with the one import the offers contract ignores, so its ignore line matches.
-NAMED = {
-    "seller/offers.py": "from . import caller\n",
-    "seller/caller.py": "",
-    "seller/errors.py": "import fastapi\n",
-}
+#: Modules present in every tree: the offer logic and the identity types it takes.
+NAMED = {"seller/offers.py": "from . import caller\n", "seller/caller.py": ""}
 
 
 def _lint(tree: Path, planted: tuple[str, str] | None) -> str:

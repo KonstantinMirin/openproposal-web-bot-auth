@@ -30,7 +30,7 @@ from protocol.record import (
     record_digest,
 )
 from protocol.values import JsonObject, JsonValue
-from seller.seed import issued_document
+from tests._tools import seed_document
 
 FIXTURES = Path(__file__).parent / "fixtures"
 PLAN = load_yaml(Path(__file__).parent.parent / "buyer" / "plan.yaml")
@@ -41,7 +41,7 @@ NAMED = ["business-daily-display"]
 
 def _base() -> JsonObject:
     """The demo's issued proposal, composed with the buyer's plan, so it has a commitment."""
-    issued = issued_document("demo-wba-1", "Demo Buyer Agency LLC", "buyer.wba-demo.noetis.dev")
+    issued = seed_document()
     return compose(issued, {n: LineItemWrites.model_validate(PLAN[n]) for n in NAMED})
 
 

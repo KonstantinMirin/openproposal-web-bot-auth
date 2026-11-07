@@ -1,4 +1,5 @@
-"""Running this venv's own tools (ast-grep, lint-imports, ruff, pytest) from a guard test."""
+"""Shared test helpers: running this venv's own tools (ast-grep, lint-imports, ruff, pytest)
+from a guard test, and the demo's seed proposal."""
 
 from __future__ import annotations
 
@@ -6,6 +7,10 @@ import subprocess
 import sys
 from collections.abc import Mapping
 from pathlib import Path
+
+from protocol.values import JsonObject
+from seller.offers.issuance import issued, load_template
+from seller.ports import PrincipalRecord
 
 
 def tool(name: str) -> Path:
@@ -21,3 +26,9 @@ def run(
     return subprocess.run(  # noqa: S603
         args, cwd=cwd, env=env, capture_output=True, text=True, check=False
     )
+
+
+def seed_document() -> JsonObject:
+    """The demo's seed proposal as the seller issues it to buyer-wba, as demo-wba-1."""
+    buyer = PrincipalRecord("buyer-wba", "Demo Buyer Agency LLC", "buyer.wba-demo.noetis.dev")
+    return issued(load_template(), buyer, "demo-wba-1").document

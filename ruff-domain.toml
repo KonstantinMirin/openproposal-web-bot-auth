@@ -1,11 +1,11 @@
-# Layer ban: the protocol rules import no HTTP framework, HTTP client, storage
-# engine, or environment read.
+# Layer ban: the protocol rules and the offer logic import no HTTP framework,
+# HTTP client, storage engine, or environment read.
 #
 # Run as its own stage: `uv run ruff check --config ruff-domain.toml` (make lint).
 # A separate config, so that no exemption here leaks into another ban.
 #
-# Scope: the protocol rules both parties share. Step 5 adds seller/offers/**.
-include = ["protocol/**/*.py"]
+# Scope: the protocol rules both parties share, and the seller's offer logic.
+include = ["protocol/**/*.py", "seller/offers/**/*.py"]
 
 [lint]
 select = ["TID251"]

@@ -1,67 +1,54 @@
-"""How the offer logic rejects a request: `OfferError`, with `errors[]` (§ 2.4).
+"""How the seller's logic says no, as values. Nothing here renders; seller/http.py does.
 
-The identity boundary's own refusal, `Refused`, is in seller/boundary.py.
+- `Rejected`: the offer logic's answer when it rejects a request, one
+  `ErrorObject` (§ 2.4). It is returned, never raised.
+- `UnknownPrincipal`: the operator named a principal this seller has no row for.
 """
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass
 
-from fastapi.responses import JSONResponse
-from openproposal import ErrorObject
-
-# The informative HTTP status of each core code (§ 2.4).
-_STATUS = {
-    "validation": 400,
-    "not_offered": 400,
-    "unresolved_reference": 400,
-    "not_eligible": 403,
-    "not_found": 404,
-    "not_committable": 409,
-    "stale_version": 409,
-    "record_mismatch": 409,
-    "expired": 410,
-    "idempotency_conflict": 422,
-}
+from openproposal import ErrorObject, ErrorObjectCode, ErrorObjectRetry
 
 
-class OfferError(Exception):
-    """One `ErrorObject` (§ 2.4)."""
+@dataclass(frozen=True)
+class Rejected:
+    """A rejection (§ 2.4). With `retry` other than `same`, a commit's rejection is a stored
+    result (§ 5.6.1)."""
 
-    def __init__(
-        self,
-        code: str,
-        detail: str,
-        *,
-        retry: Literal["same", "refetch", "none"],
-        version: int | None = None,
-        pointer: str | None = None,
-        headers: dict | None = None,
-    ) -> None:
-        super().__init__(detail)
-        self.error: dict[str, Any] = {"code": code, "detail": detail, "retry": retry}
-        if version is not None:
-            self.error["version"] = version
-        if pointer is not None:
-            self.error["pointer"] = pointer
-        self.headers = headers or {}
-        # § 2.4: an error with retry `same` fits 503.
-        self.status = 503 if retry == "same" else _STATUS[code]
-
-    def error_object(self) -> ErrorObject:
-        """The rejection as the ledger stores it (§ 5.6.1). Its status follows from its code."""
-        return ErrorObject.model_validate(self.error)
+    error: ErrorObject
 
     @classmethod
-    def stored(cls, error: ErrorObject) -> OfferError:
-        """The rejection a replay returns: the stored result (§ 5.6.1)."""
-        return cls(
-            error.code,
-            error.detail,
-            retry=error.retry,
-            version=error.version,
-            pointer=error.pointer,
-        )
+    def of(
+        cls,
+        code: ErrorObjectCode,
+        detail: str,
+        *,
+        retry: ErrorObjectRetry = "none",
+        version: int | None = None,
+    ) -> Rejected:
+        if version is None:  # the requester may not read the proposal (§ 2.4)
+            return cls(ErrorObject(code=code, detail=detail, retry=retry))
+        return cls(ErrorObject(code=code, detail=detail, retry=retry, version=version))
 
-    def response(self) -> JSONResponse:
-        return JSONResponse({"errors": [self.error]}, status_code=self.status, headers=self.headers)
+    @property
+    def stored(self) -> bool:
+        """Whether a commit's ledger keeps it: an error with `retry: same` is not a stored
+        result (§ 2.4)."""
+        return self.error.retry != "same"
+
+
+class UnknownPrincipal(LookupError):
+    """No principal has this id in the seller's records."""
+
+
+def validation_detail(errors: Iterable[Mapping[str, object]]) -> str:
+    """One line from pydantic's error list: `loc: msg` for each error, joined by `; `."""
+    parts = []
+    for error in errors:
+        loc = error.get("loc", ())
+        path = "/".join(map(str, loc)) if isinstance(loc, tuple | list) else str(loc)
+        parts.append(f"{path}: {error.get('msg', '')}")
+    return "; ".join(parts)

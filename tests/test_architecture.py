@@ -4,6 +4,7 @@
 - Only the boundary module and the test factory build them.
 - No route declares a `Request`.
 - The offer logic reads no attribute of the caller's credential.
+- No test imports a `_`-private name from the seller.
 
 Each check is a function over source text, so the tests below also run it on a
 planted violation and expect it to fire. The last tests hold the types to what
@@ -161,7 +162,32 @@ def test_no_route_declares_request() -> None:
 
 
 def test_the_offer_logic_reads_no_credential_attribute() -> None:
-    assert credential_reads(_source("seller/offers.py")) == []
+    offers = sorted((REPO / "seller" / "offers").glob("*.py"))
+    assert offers
+    assert {p.name: credential_reads(p.read_text()) for p in offers} == {p.name: [] for p in offers}
+
+
+def private_imports(source: str) -> list[str]:
+    """`_`-private names `source` imports from the seller."""
+    return [
+        alias.name
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.ImportFrom) and (node.module or "").startswith("seller")
+        for alias in node.names
+        if alias.name.startswith("_")
+    ]
+
+
+def test_no_test_imports_a_private_seller_name() -> None:
+    tests = {
+        str(p.relative_to(REPO)): private_imports(p.read_text())
+        for p in (REPO / "tests").glob("*.py")
+    }
+    assert {path: names for path, names in tests.items() if names} == {}
+
+
+def test_a_planted_private_import_fires() -> None:
+    assert private_imports("from seller.offers.checks import _live_names\n") == ["_live_names"]
 
 
 # ── Each check fires on a planted violation ────────────────────────────────

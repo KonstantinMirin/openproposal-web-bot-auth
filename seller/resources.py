@@ -16,6 +16,7 @@ from typing import Annotated
 import httpx
 from fastapi import Depends, Request
 
+from protocol.values import JsonObject
 from shared.lifespan import state_of
 
 from .boundary import IdentityBoundary
@@ -30,6 +31,8 @@ class SellerResources:
     client: httpx.AsyncClient
     #: The identity boundary, over the store's principals and the request verifier.
     boundary: IdentityBoundary
+    #: The proposal every buyer is issued, loaded once at startup.
+    template: JsonObject
 
 
 def resources(request: Request) -> SellerResources:
@@ -52,6 +55,11 @@ def boundary(resources: ResourcesDep) -> IdentityBoundary:
     return resources.boundary
 
 
+def template(resources: ResourcesDep) -> JsonObject:
+    return resources.template
+
+
 OfferStoreDep = Annotated[OfferStore, Depends(offer_store)]
 OnboardingDep = Annotated[Onboarding, Depends(onboarding)]
 BoundaryDep = Annotated[IdentityBoundary, Depends(boundary)]
+TemplateDep = Annotated[JsonObject, Depends(template)]

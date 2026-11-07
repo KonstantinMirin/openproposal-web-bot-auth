@@ -19,7 +19,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import TypedDict
 
-from fastapi import APIRouter, Depends, FastAPI, HTTPException
+from fastapi import APIRouter, Depends, FastAPI
 from iab_agentic_primitives.web_bot_auth import KeyResolver, ServerIdentity
 from iab_agentic_primitives.web_bot_auth.asgi import DirectoryMiddleware
 from openproposal import LineItemWrites
@@ -28,12 +28,13 @@ from starlette.types import ASGIApp
 
 from protocol.documents import load_yaml
 from shared.auth import AuthMethod
-from shared.keyring import Keyring, RotationError
-from shared.operator import OperatorKey
+from shared.keyring import Keyring
+from shared.operator import ControlError, OperatorKey
 from shared.wba import Transport, directory_resolver, http_client, tls_context
 
 from .client import HTTPClient, call_signed
 from .flow import Buyer, Outcome
+from .http import install_handlers
 from .repository import BuyerRepository, Counterparty
 from .resources import BuyerResources, FlowDep, KeyringDep, ResourcesDep, SettingsDep
 from .settings import BuyerSettings
@@ -71,7 +72,7 @@ def _seller(trigger: Trigger, settings: BuyerSettings) -> str:
 async def operator_commit(trigger: Trigger, flow: FlowDep, settings: SettingsDep) -> Outcome:
     """Runs the whole flow: read, commit, verify the signed answer, keep the evidence."""
     if not trigger.line_item_ids:
-        raise HTTPException(400, "name the line items to commit")
+        raise ControlError(400, "no-line-items", "name the line items to commit")
     return await flow.commit(
         _seller(trigger, settings), trigger.proposal_id, trigger.line_item_ids, trigger.credential
     )
@@ -100,20 +101,14 @@ async def publish_key(keyring: KeyringDep) -> dict[str, str | list[str]]:
 @operator.post("/keys/{kid}/activate")
 async def activate_key(kid: str, keyring: KeyringDep) -> dict[str, str | list[str]]:
     """Rotation, step 2: sign with the new key, once verifiers' caches list it."""
-    try:
-        keyring.activate(kid)
-    except RotationError as e:
-        raise HTTPException(409, str(e)) from e
+    keyring.activate(kid)
     return await list_keys(keyring)
 
 
 @operator.delete("/keys/{kid}")
 async def retire_key(kid: str, keyring: KeyringDep) -> dict[str, str | list[str]]:
     """Rotation, step 3: take the old key out of the directory, once its signatures expired."""
-    try:
-        keyring.retire(kid)
-    except RotationError as e:
-        raise HTTPException(409, str(e)) from e
+    keyring.retire(kid)
     return await list_keys(keyring)
 
 
@@ -169,6 +164,7 @@ def create_app(
             store.close()
 
     agent = FastAPI(title="Demo buyer", lifespan=lifespan)
+    install_handlers(agent)
     agent.include_router(api)
     agent.include_router(operator, dependencies=[Depends(OperatorKey(settings.operator_key))])
     # A live key source: the middleware reads the keyring on every directory fetch.

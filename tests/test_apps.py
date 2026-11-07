@@ -196,12 +196,13 @@ def test_the_fault_mode_belongs_to_one_app(tmp_path: Path) -> None:
         assert _commit_signed(one)
 
 
-def test_a_bad_fault_mode_gets_fastapis_422_not_an_offer_error(tmp_path: Path) -> None:
+def test_a_bad_fault_mode_is_a_control_error_not_an_offer_error(tmp_path: Path) -> None:
     with TestClient(seller_app(tmp_path, faults=True), base_url=SELLER) as client:
         response = client.put("/test/fault", json={"mode": "bogus"})
     assert response.status_code == 422
-    assert "errors" not in response.json()
-    assert response.json()["detail"][0]["loc"] == ["body", "mode"]
+    body = response.json()
+    assert body.keys() == {"error", "detail"} and body["error"] == "validation"
+    assert body["detail"].startswith("body/mode: ")
 
 
 def test_the_fault_switch_is_absent_unless_the_settings_turn_it_on(seller: TestClient) -> None:

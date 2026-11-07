@@ -20,7 +20,7 @@ from openproposal import LineItem, LineItemWrites, Proposal
 from protocol.documents import load_yaml
 from protocol.operations import acceptance_for, compose_commit
 from protocol.record import compose, line_items_of
-from seller.seed import issued_document
+from tests._tools import seed_document
 
 REPO = Path(__file__).resolve().parent.parent
 RECORDED = tomllib.loads((REPO / "vendor" / "openproposal-sdk" / "pyproject.toml").read_text())
@@ -40,7 +40,7 @@ def test_the_vendored_sdk_is_the_recorded_one() -> None:
 
 
 def test_the_issued_seed_proposal_validates_strictly() -> None:
-    issued = issued_document("demo-wba-1", "Demo Buyer Agency LLC", "buyer.wba-demo.noetis.dev")
+    issued = seed_document()
     Proposal.model_validate(issued)
     for item in line_items_of(issued):
         LineItem.model_validate(item)
@@ -52,7 +52,7 @@ def test_each_plan_entry_validates_strictly(name: str) -> None:
 
 
 def test_the_composed_and_agreed_documents_validate_strictly() -> None:
-    issued = issued_document("demo-wba-1", "Demo Buyer Agency LLC", "buyer.wba-demo.noetis.dev")
+    issued = seed_document()
     writes = {n: LineItemWrites.model_validate(PLAN[n]) for n in NAMED}
     composed = compose(issued, writes)
     Proposal.model_validate(composed)

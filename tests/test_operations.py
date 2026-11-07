@@ -34,14 +34,14 @@ from protocol.operations import (
     result_for,
 )
 from protocol.values import JsonObject, commitment_key, instant
-from seller.seed import issued_document
+from tests._tools import seed_document
 
 PLAN = load_yaml(Path(__file__).resolve().parent.parent / "buyer" / "plan.yaml")
 NOW = datetime(2027, 1, 1, 12, 30, 15, 999, tzinfo=UTC)
 
 
 def _raw() -> JsonObject:
-    return issued_document("demo-wba-1", "Demo Buyer Agency LLC", "buyer.wba-demo.noetis.dev")
+    return seed_document()
 
 
 def _writes(*names: str) -> dict[str, LineItemWrites]:

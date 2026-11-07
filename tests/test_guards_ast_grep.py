@@ -48,7 +48,7 @@ CASES = (
     ),
     (
         "identity-never-amended",
-        "seller/offers.py",
+        "seller/offers/acceptance.py",
         "def amend(caller):\n    return caller.model_copy(update={'principal': None})\n",
         "def keep(caller):\n    return caller.principal.id\n",
     ),
@@ -72,6 +72,18 @@ CASES = (
         "seller/http.py",
         "@api.post('/x')\nasync def x(caller: CallerDep, request: Request) -> None:\n    pass\n",
         "@api.post('/x')\nasync def x(caller: CallerDep, body: bytes) -> None:\n    pass\n",
+    ),
+    (
+        "offers-are-credential-blind",
+        "seller/offers/acceptance.py",
+        "def gate(caller):\n    return caller.credential.method == 'bearer'\n",
+        "def gate(caller):\n    return caller.principal.id == 'buyer-wba'\n",
+    ),
+    (
+        "offers-are-credential-blind",
+        "seller/offers/checks.py",
+        "def peek(ctx):\n    return ctx.request.headers\n",
+        "def peek(ctx):\n    return ctx.request.entry\n",
     ),
     (
         "credential-read-only-at-the-boundary",

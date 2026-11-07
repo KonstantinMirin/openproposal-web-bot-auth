@@ -78,8 +78,6 @@ max-statements = 50
 "e2e/scenarios/**" = ["S101", "PLR2004", "ANN"]
 # Exemptions for production files. They only shrink: each line lists the exact
 # codes today's tree reports in that file, and the step that removes them.
-"seller/errors.py" = ["PLR0913"]  # Step 5: pure errors, rendering in seller/http.py
-"seller/offers.py" = ["C901", "PLR0912", "PLR0913", "PLR0917"]  # Step 5: seller/offers/
 "buyer/client.py" = ["PLR0913", "TRY003"]  # Step 6: buyer/seller_client.py
 "buyer/flow.py" = ["PLR0913", "PLR2004", "TRY003"]  # Step 6: the buyer mirror
 "runner/live.py" = ["ANN401", "PLR2004", "TRY003"]  # Step 7: runner/ split
@@ -93,7 +91,6 @@ warn_unused_ignores = true
 # outside the scope is still analyzed for its callers, but reports nothing
 # (the follow_imports override below). Out of scope today, by the step that
 # brings it in:
-#   Step 5: seller/offers, seller/errors
 #   Step 6: buyer/flow
 #   Step 7: runner/live
 #   Step 8: the rest of tests/, and e2e/
@@ -104,8 +101,15 @@ files = [
     "seller/app.py",
     "seller/boundary.py",
     "seller/caller.py",
+    "seller/errors.py",
     "seller/faults.py",
     "seller/http.py",
+    "seller/offers/__init__.py",
+    "seller/offers/acceptance.py",
+    "seller/offers/checks.py",
+    "seller/offers/issuance.py",
+    "seller/offers/ledger.py",
+    "seller/offers/reading.py",
     "seller/ports.py",
     "seller/resources.py",
     "seller/seed.py",
@@ -114,6 +118,7 @@ files = [
     "buyer/__init__.py",
     "buyer/app.py",
     "buyer/client.py",
+    "buyer/http.py",
     "buyer/repository.py",
     "buyer/resources.py",
     "buyer/settings.py",
@@ -125,9 +130,11 @@ files = [
     "protocol/documents.py",
     "protocol/operations.py",
     "protocol/record.py",
+    "protocol/status.py",
     "protocol/values.py",
     "shared/__init__.py",
     "shared/auth.py",
+    "shared/handlers.py",
     "shared/keyring.py",
     "shared/lifespan.py",
     "shared/operator.py",
@@ -146,6 +153,8 @@ files = [
     "tests/test_guards_import_contracts.py",
     "tests/test_guards_ruff_bans.py",
     "tests/test_guards_skips.py",
+    "tests/test_http.py",
+    "tests/test_offers.py",
     "tests/test_operations.py",
     "tests/test_record_rules.py",
     "tests/test_sdk.py",
@@ -166,8 +175,10 @@ module = [
     "seller.app",
     "seller.boundary",
     "seller.caller",
+    "seller.errors",
     "seller.faults",
     "seller.http",
+    "seller.offers.*",
     "seller.ports",
     "seller.resources",
     "seller.seed",
@@ -175,6 +186,7 @@ module = [
     "seller.sqlite_store",
     "buyer.app",
     "buyer.client",
+    "buyer.http",
     "buyer.repository",
     "buyer.resources",
     "buyer.settings",
@@ -182,6 +194,7 @@ module = [
     "protocol.*",
     "runner.settings",
     "shared.auth",
+    "shared.handlers",
     "shared.keyring",
     "shared.lifespan",
     "shared.operator",
@@ -198,6 +211,8 @@ module = [
     "tests.test_guards_import_contracts",
     "tests.test_guards_ruff_bans",
     "tests.test_guards_skips",
+    "tests.test_http",
+    "tests.test_offers",
     "tests.test_operations",
     "tests.test_record_rules",
     "tests.test_sdk",
@@ -213,8 +228,8 @@ branch = true
 
 [tool.coverage.report]
 # The branch coverage measured on the tree before Step 0 (45.26), raised to each
-# step's measured total (Step 1: 50.90; Step 2: 77.57; Step 3: 79.98; Step 4: 84.78). It is
-# never lowered.
-fail_under = 84.78
+# step's measured total (Step 1: 50.90; Step 2: 77.57; Step 3: 79.98; Step 4: 84.78;
+# Step 5: 88.07). It is never lowered.
+fail_under = 88.07
 precision = 2
 show_missing = false

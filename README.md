@@ -64,7 +64,7 @@ flowchart LR
         R2 --> R3[3 resolve the stored principal<br/>by verified origin, or by token hash]
         R3 --> R4[4 freeze the result]
     end
-    R4 -- "ResolvedCaller or PublicCaller" --> L[offer logic<br/>seller/offers.py]
+    R4 -- "ResolvedCaller or PublicCaller" --> L[offer logic<br/>seller/offers/]
     R2 -. "failing credential:<br/>400, 401, 403, 429, 503" .-> X["refused, and the handler never runs"]
 ```
 
@@ -91,10 +91,10 @@ The code path, in order:
    `PublicCaller` that carries the signature. The types
    ([`seller/caller.py`](seller/caller.py)) are strict, frozen, and
    discriminated, and refuse an amended copy.
-6. The offer logic ([`seller/offers.py`](seller/offers.py)) takes that value.
+6. The offer logic ([`seller/offers/`](seller/offers)) takes that value.
    It checks only `isinstance(caller, ResolvedCaller)` and
    `caller.principal.id`. It hands the caller to storage with the entry it
-   writes (`_accept`), and storage keeps how it authenticated and, for a
+   writes (`answer_commit`), and storage keeps how it authenticated and, for a
    signature, the signed request with the directory it verified against,
    through the one evidence schema in
    [`persistence/evidence.py`](persistence/evidence.py), in the same
@@ -134,7 +134,7 @@ flowchart LR
     F -- "signed request" --> RC
     F -- "Authorization: Bearer" --> RC
     subgraph seller[seller agent]
-        RC[IdentityBoundary] -- "ResolvedCaller<br/>method: web_bot_auth" --> O[offers.commit]
+        RC[IdentityBoundary] -- "ResolvedCaller<br/>method: web_bot_auth" --> O[answer_commit]
         RC -- "ResolvedCaller<br/>method: bearer" --> O
     end
     O -- "signed answer, either way" --> F
@@ -168,7 +168,7 @@ flowchart TB
         BF[buyer/flow.py<br/>composes the Commit, checks the answer]
     end
     subgraph S[seller]
-        SO[seller/offers.py<br/>checks the Commit, answers it]
+        SO[seller/offers/<br/>checks the Commit, answers it]
     end
     SDK[openproposal<br/>generated types]
     PROTO[protocol/<br/>stopgap: binding record, record_digest,<br/>§ 5.6.1 commit rules]
@@ -224,10 +224,16 @@ sequenceDiagram
     Note over B: check the matching pair,<br/>keep the signed answer and the directory
 ```
 
-The seller ([`seller/offers.py`](seller/offers.py)) shows an issued proposal
-only to its buyer, recomputes `record_digest` over the line items plus the
-commit's writes, runs the § 5.6.1 checks, and answers a replay with the same
-`idempotency_key` from its stored result. The buyer
+The seller ([`seller/offers/`](seller/offers)) shows an issued proposal only
+to its buyer, recomputes `record_digest` over the line items plus the commit's
+writes, runs the § 5.6.1 checks in order (`checks.py`: one named step each,
+the first that rejects decides), and answers a replay with the same
+`idempotency_key` from its stored result (`ledger.py`). `answer_commit`
+(`acceptance.py`) decides and stores in one transaction and returns its
+answer, a `CommitResult` or a rejection, which
+[`seller/http.py`](seller/http.py) renders as `{"errors": [...]}` with the
+§ 2.4 status. A control-plane failure (the operator key, a control route's bad
+input, a route the seller doesn't have) is `{"error": ..., "detail": ...}`. The buyer
 ([`buyer/flow.py`](buyer/flow.py)) re-sends a pending `Commit` whole until the
 seller's answer verifies. Both parties keep the counterparty's signed message
 as exact bytes, with the exact directory bytes it verified against, so the
