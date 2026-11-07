@@ -8,7 +8,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-from shared.wba import DirectoryBytes
+from iab_agentic_primitives.web_bot_auth import VerifiedDirectory
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS principals (
@@ -35,11 +35,12 @@ CREATE TABLE IF NOT EXISTS proposals (
     buyer_principal_id  TEXT NOT NULL REFERENCES principals (id),
     document            TEXT NOT NULL
 );
+-- A verified key directory, as VerifiedDirectory.evidence() gives it: the URL,
+-- status, header lines (its signatures included), body, and fetch time.
 CREATE TABLE IF NOT EXISTS directories (
-    digest   TEXT PRIMARY KEY,
-    url      TEXT NOT NULL,
-    headers  TEXT NOT NULL,
-    body     BLOB NOT NULL
+    digest    TEXT PRIMARY KEY,
+    url       TEXT NOT NULL,
+    evidence  TEXT NOT NULL
 );
 -- A confirmed signed request, as received (§ 4.1.2, Signed messages).
 CREATE TABLE IF NOT EXISTS evidence (
@@ -84,6 +85,16 @@ CREATE TABLE IF NOT EXISTS agreed_records (
     entries        TEXT NOT NULL
 );
 """
+
+
+def _save_directory(db: sqlite3.Connection, directory: VerifiedDirectory | None) -> str | None:
+    """Stores a verified directory's evidence once, keyed by the SHA-256 of its body."""
+    if directory is None:
+        return None
+    digest = hashlib.sha256(directory.body).hexdigest()
+    db.execute("INSERT OR IGNORE INTO directories (digest, url, evidence) VALUES (?, ?, ?)",
+               (digest, directory.url, json.dumps(directory.evidence())))
+    return digest
 
 
 def token_hash(token: str) -> str:
@@ -146,15 +157,9 @@ class Store:
         url: str,
         headers: list[tuple[str, str]],
         body: bytes,
-        directory: DirectoryBytes | None,
+        directory: VerifiedDirectory | None,
     ) -> int:
-        digest = None
-        if directory is not None:
-            digest = hashlib.sha256(directory.body).hexdigest()
-            self.db.execute(
-                "INSERT OR IGNORE INTO directories (digest, url, headers, body) VALUES (?, ?, ?, ?)",
-                (digest, directory.url, json.dumps(directory.headers), directory.body),
-            )
+        digest = _save_directory(self.db, directory)
         cursor = self.db.execute(
             "INSERT INTO evidence (origin, keyid, method, url, headers, body, directory_digest)"
             " VALUES (?, ?, ?, ?, ?, ?, ?)",

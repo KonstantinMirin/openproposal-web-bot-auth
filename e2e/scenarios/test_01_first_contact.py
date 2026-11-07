@@ -47,7 +47,10 @@ def test_first_contact_by_signature(web, seller_db, buyer_db):
     directory = seller_db.execute("SELECT * FROM directories WHERE digest = ?",
                                   (evidence["directory_digest"],)).fetchone()
     assert directory["url"] == f"{BUYER}/.well-known/http-message-signatures-directory"
-    assert evidence["keyid"] in {k["kid"] for k in json.loads(directory["body"])["keys"]}
+    fetched = json.loads(directory["evidence"])  # VerifiedDirectory.evidence()
+    assert fetched["status"] == 200
+    assert any(name.lower() == "signature" for name, _ in fetched["headers"])
+    assert evidence["keyid"] in {k["kid"] for k in json.loads(fetched["body"])["keys"]}
 
     # The buyer kept the seller's signed answer, bound to its request.
     bought = buyer_db.execute("SELECT * FROM commits WHERE id = ?", (outcome["commit_id"],)).fetchone()
@@ -56,8 +59,10 @@ def test_first_contact_by_signature(web, seller_db, buyer_db):
                               (outcome["evidence_id"],)).fetchone()
     assert answer["origin"] == SELLER and answer["status"] == 200
     assert json.loads(answer["body"])["entries"] == outcome["entries"]
-    seller_directory = buyer_db.execute("SELECT body FROM directories WHERE digest = ?",
-                                        (answer["directory_digest"],)).fetchone()
+    seller_directory = json.loads(buyer_db.execute(
+        "SELECT evidence FROM directories WHERE digest = ?", (answer["directory_digest"],)
+    ).fetchone()["evidence"])
+    assert seller_directory["url"] == f"{SELLER}/.well-known/http-message-signatures-directory"
     assert answer["keyid"] in {k["kid"] for k in json.loads(seller_directory["body"])["keys"]}
 
     # Both parties hold the same digest input, and it hashes to the entries' record_digest.

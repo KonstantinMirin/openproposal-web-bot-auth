@@ -13,15 +13,14 @@ from typing import Literal
 
 import httpx
 from iab_agentic_primitives.web_bot_auth import (
-    HTTPRequest,
+    DirectoryResolver,
     RequestSigner,
     ResponseVerifier,
     VerifiedSignature,
-    WebBotAuthError,
 )
 from iab_agentic_primitives.web_bot_auth.httpx import WebBotAuth
 
-from shared.wba import EvidenceResolver, http_client
+from shared.wba import http_client
 
 Credential = Literal["web_bot_auth", "bearer"]
 
@@ -52,7 +51,7 @@ async def call_seller(
     *,
     seller_origin: str,
     credential: Credential,
-    resolver: EvidenceResolver,
+    resolver: DirectoryResolver,
     signer: RequestSigner,
     token: str | None = None,
     body: bytes = b"",
@@ -60,24 +59,18 @@ async def call_seller(
     """Sends one request to the seller and verifies the signed response; raises `WebBotAuthError`."""
     headers = {"Content-Type": "application/json"} if body else {}
     verifier = ResponseVerifier(resolver)
+    if credential == "web_bot_auth":
+        # Signs the request, then verifies the response and its binding to it.
+        auth = WebBotAuth(signer, verifier, expected_origin=seller_origin)
+    else:
+        if token is None:
+            raise ValueError(f"no bearer token is configured for {seller_origin}")
+        headers["Authorization"] = f"Bearer {token}"
+        # Sends the request unsigned, and still verifies the seller's signed answer.
+        auth = WebBotAuth.verify_only(verifier, expected_origin=seller_origin)
     async with http_client() as client:
-        if credential == "web_bot_auth":
-            # Signs the request, then verifies the response and its binding to it.
-            auth = WebBotAuth(signer, verifier)
-            response = await client.request(method, url, content=body, headers=headers, auth=auth)
-            verified = response.extensions["web_bot_auth"]
-        else:
-            if token is None:
-                raise ValueError(f"no bearer token is configured for {seller_origin}")
-            headers |= {"Authorization": f"Bearer {token}", "Accept-Encoding": "identity"}
-            response = await client.request(method, url, content=body, headers=headers)
-            if "signature" not in response.headers:
-                raise WebBotAuthError(403, "response-unsigned", "the response carries no signature")
-            sent = HTTPRequest(method, url, response.request.headers.multi_items(), body)
-            verified = await verifier.verify(
-                response.status_code, response.headers.multi_items(), response.content, sent,
-                expected_origin=seller_origin,
-            )
+        response = await client.request(method, url, content=body, headers=headers, auth=auth)
+    verified = response.extensions["web_bot_auth"]
     return Exchange(
         method=method, url=url, request_headers=response.request.headers.multi_items(),
         request_body=body, status=response.status_code, headers=response.headers.multi_items(),

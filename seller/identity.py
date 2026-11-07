@@ -82,10 +82,9 @@ def _bearer(value: str | None) -> str | None:
 
 async def resolve_caller(request: Request) -> ResolvedCaller | PublicCaller:
     """Confirms the presented credential and resolves it to this seller's principal."""
-    store, verifier, resolver, origin = (
+    store, verifier, origin = (
         request.app.state.store,
         request.app.state.verifier,
-        request.app.state.resolver,
         request.app.state.origin,
     )
     headers = [(k.decode("latin-1"), v.decode("latin-1")) for k, v in request.headers.raw]
@@ -107,7 +106,7 @@ async def resolve_caller(request: Request) -> ResolvedCaller | PublicCaller:
             raise Refused(e.status, e.reason, str(e), headers=hint) from e
         evidence_id = store.record_evidence(
             origin=verified.origin, keyid=verified.keyid, method=request.method, url=url,
-            headers=headers, body=body, directory=resolver.verified.get(verified.origin),
+            headers=headers, body=body, directory=verified.directory,
         )
         identity = {
             "authentication_method": "web_bot_auth",

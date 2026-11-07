@@ -8,25 +8,23 @@ binds it to the request it answers.
 from __future__ import annotations
 
 import os
-import time
 from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse
 from iab_agentic_primitives.web_bot_auth import (
-    DIRECTORY_PATH,
     Ed25519Key,
     MemoryNonceStore,
     RequestVerifier,
     ResponseSigner,
 )
-from iab_agentic_primitives.web_bot_auth.asgi import ResponseSigningMiddleware, directory_response
+from iab_agentic_primitives.web_bot_auth.asgi import DirectoryMiddleware, ResponseSigningMiddleware
 from openproposal import dump
 from pydantic import BaseModel
 
 from demo_types.stack import Commit
-from shared.wba import EvidenceResolver
+from shared.wba import directory_resolver
 
 from . import offers
 from .errors import OfferError, Refused
@@ -48,8 +46,7 @@ seed(store, buyer_origin=os.environ.get("DEMO_BUYER_ORIGIN", "https://buyer.wba-
 api = FastAPI(title="Demo seller")
 api.state.store = store
 api.state.origin = ORIGIN
-api.state.resolver = EvidenceResolver()
-api.state.verifier = RequestVerifier(api.state.resolver, nonces=MemoryNonceStore())
+api.state.verifier = RequestVerifier(directory_resolver(), nonces=MemoryNonceStore())
 
 api.add_exception_handler(Refused, lambda request, e: e.response())
 api.add_exception_handler(OfferError, lambda request, e: e.response())
@@ -78,12 +75,6 @@ async def whoami(caller: CallerDep) -> JSONResponse:
     return JSONResponse(caller.model_dump())
 
 
-@api.get(DIRECTORY_PATH)
-async def directory() -> Response:
-    status, headers, body = directory_response([key], ORIGIN.removeprefix("https://"), int(time.time()))
-    return Response(body, status_code=status, headers=headers)
-
-
 @api.get("/health")
 async def health() -> dict:
     return {"ok": True}
@@ -107,3 +98,5 @@ signer = ResponseSigner(key, ORIGIN)
 app = ResponseSigningMiddleware(api, signer, base_url=ORIGIN)
 if FAULTS:
     app = FaultInjection(app, signer, ORIGIN)
+# The signed key directory at the well-known path, for buyers to find the seller's key.
+app = DirectoryMiddleware(app, [key], base_url=ORIGIN)

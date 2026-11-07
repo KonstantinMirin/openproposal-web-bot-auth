@@ -7,14 +7,13 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from iab_agentic_primitives.web_bot_auth import RequestSigner, WebBotAuthError
+from iab_agentic_primitives.web_bot_auth import DirectoryResolver, RequestSigner, WebBotAuthError
 from openproposal import dump_json
 from pydantic import BaseModel
 
 from demo_types.stack import AssentEntry, Commit, CommitResult
 from shared.attribution import attributes
 from shared.record import compose, digest_input, digest_of
-from shared.wba import EvidenceResolver
 
 from .client import Credential, Exchange, call_seller
 from .keyring import Keyring
@@ -42,7 +41,7 @@ class Refusal(Exception):
 
 
 class Buyer:
-    def __init__(self, store: Store, resolver: EvidenceResolver, keyring: Keyring, origin: str,
+    def __init__(self, store: Store, resolver: DirectoryResolver, keyring: Keyring, origin: str,
                  plan: dict[str, dict[str, Any]]) -> None:
         self.store, self.resolver, self.keyring, self.origin = store, resolver, keyring, origin
         self.plan = plan
@@ -147,7 +146,7 @@ class Buyer:
             commit_id=row["id"], origin=verified.origin, keyid=verified.keyid,
             attributed=attributed, request=answer.request_record(), status=answer.status,
             headers=answer.headers, body=answer.body,
-            directory=self.resolver.verified.get(verified.origin),
+            directory=verified.directory,
         )
         self.store.settle_commit(row["id"], "agreed", entries=entries)
         return Outcome(
