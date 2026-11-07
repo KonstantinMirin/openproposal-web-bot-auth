@@ -1,0 +1,110 @@
+# The demo stack. Run it with ./e2e/run-e2e.sh (or `make e2e`), which first
+# writes e2e/generated/ with gen_demo_tls.py.
+#
+# Every agent is reached at https://<name>.wba-demo.noetis.dev through the TLS
+# front, whose network aliases are those three names. Every container trusts
+# the public roots plus the demo CA. No agent is configured with another's key.
+name: wba-demo
+
+x-python: &python
+  image: wba-demo-python:local
+  build:
+    context: ..
+    additional_contexts:
+      wba-lib: ../../iab-agentic-primitives
+  env_file: generated/demo.env
+  networks: [demo]
+  healthcheck:
+    test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+    interval: 2s
+    retries: 30
+
+services:
+  seller:
+    <<: *python
+    command: ["uvicorn", "seller.app:app", "--host", "0.0.0.0", "--port", "8000"]
+    user: app
+    environment:
+      SSL_CERT_FILE: /certs/bundle.pem
+      SELLER_ORIGIN: https://seller.wba-demo.noetis.dev
+      DEMO_BUYER_ORIGIN: https://buyer.wba-demo.noetis.dev
+      # TEST ONLY: mounts PUT /test/fault (seller/faults.py).
+      DEMO_FAULT_INJECTION: "1"
+    volumes:
+      - ./generated/bundle.pem:/certs/bundle.pem:ro
+      - seller-data:/data
+
+  buyer:
+    <<: *python
+    command: ["uvicorn", "buyer.app:app", "--host", "0.0.0.0", "--port", "8000"]
+    user: app
+    environment:
+      SSL_CERT_FILE: /certs/bundle.pem
+      BUYER_ORIGIN: https://buyer.wba-demo.noetis.dev
+      DEMO_SELLER_ORIGIN: https://seller.wba-demo.noetis.dev
+      CFBOT_ORIGIN: https://cfbot.wba-demo.noetis.dev
+      # Short, so the key rotation scenario sees the seller's cache expire.
+      WBA_DIRECTORY_LIFETIME: "20"
+    volumes:
+      - ./generated/bundle.pem:/certs/bundle.pem:ro
+      - buyer-data:/data
+
+  cfbot:
+    build: ../cfbot
+    image: wba-demo-cfbot:local
+    environment:
+      NODE_EXTRA_CA_CERTS: /certs/ca.pem
+      CFBOT_ORIGIN: https://cfbot.wba-demo.noetis.dev
+      SELLER_ORIGIN: https://seller.wba-demo.noetis.dev
+    volumes:
+      - ./generated/ca.pem:/certs/ca.pem:ro
+      - cfbot-data:/data
+    networks: [demo]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8000/health"]
+      interval: 2s
+      retries: 30
+
+  front:
+    image: nginx:1.27-alpine
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./generated/front.pem:/certs/front.pem:ro
+      - ./generated/front.key:/certs/front.key:ro
+    networks:
+      demo:
+        aliases:
+          - seller.wba-demo.noetis.dev
+          - buyer.wba-demo.noetis.dev
+          - cfbot.wba-demo.noetis.dev
+    depends_on:
+      seller: { condition: service_healthy }
+      buyer: { condition: service_healthy }
+      cfbot: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "--no-check-certificate", "https://127.0.0.1/health"]
+      interval: 2s
+      retries: 30
+
+  runner:
+    <<: *python
+    profiles: [test]
+    command: ["pytest", "-v", "-p", "no:cacheprovider", "e2e/scenarios"]
+    environment:
+      SSL_CERT_FILE: /certs/bundle.pem
+    volumes:
+      - ./generated/bundle.pem:/certs/bundle.pem:ro
+      # Read-only: the scenarios inspect what each party stored.
+      - seller-data:/seller-data:ro
+      - buyer-data:/buyer-data:ro
+    healthcheck: { disable: true }
+    depends_on:
+      front: { condition: service_healthy }
+
+networks:
+  demo: {}
+
+volumes:
+  seller-data: {}
+  buyer-data: {}
+  cfbot-data: {}
