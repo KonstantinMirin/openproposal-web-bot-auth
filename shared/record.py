@@ -124,7 +124,7 @@ def record_digest(doc: dict[str, Any], line_item_ids: list[str]) -> str:
 def committed_entry(item: dict[str, Any]) -> dict[str, Any] | None:
     """The `pricing[]` entry the commitment is under (§ 5.6)."""
     commitment, entries = item.get("commitment"), item.get("pricing") or []
-    if not commitment:
+    if not isinstance(commitment, dict) or not commitment:
         return None
     named = commitment.get("pricing_id")
     if named is None:

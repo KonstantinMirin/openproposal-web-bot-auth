@@ -82,6 +82,11 @@ class Commit(Closed):
             raise ValueError("a Commit carries a commitment entry (§ 5.6.1)")
         if set(self.writes) != set(self.entry.line_item_ids):
             raise ValueError("writes are keyed by exactly the line items the entry names (§ 5.6.1)")
+        for name, writes in self.writes.items():
+            if not isinstance(writes.get("commitment"), dict):
+                # ValueError, not TypeError: pydantic turns only ValueError into a validation error.
+                raise ValueError(  # noqa: TRY004
+                    f"writes for {name} carry a commitment object (§ 3.4 LineItemWrites)")
         return self
 
 

@@ -1,5 +1,6 @@
 """The seller's commit checks return the code § 5.6.1 names first."""
 
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -7,7 +8,7 @@ import pytest
 
 from demo_types.stack import Commit
 from seller.errors import OfferError
-from seller.offers import _checks
+from seller.offers import _checks, parse_commit
 from shared.documents import load_yaml
 
 SEED = load_yaml(Path(__file__).parent.parent / "seller" / "seed" / "proposal.yaml")
@@ -48,3 +49,12 @@ def test_stale_version_comes_before_anything_the_new_version_lacks():
 
 def test_otherwise_record_mismatch():
     assert _code(_commit("weather-app-ctv"), datetime(2027, 1, 1, tzinfo=UTC)) == "record_mismatch"
+
+
+@pytest.mark.parametrize("commitment", ["x", ["a"], 3, None])
+def test_a_commitment_that_is_not_an_object_is_a_validation_error(commitment):
+    body = _commit("weather-app-ctv").model_dump(exclude_none=True)
+    body["writes"]["weather-app-ctv"]["commitment"] = commitment
+    with pytest.raises(OfferError) as e:
+        parse_commit(json.dumps(body).encode())
+    assert e.value.error["code"] == "validation" and e.value.status == 400
