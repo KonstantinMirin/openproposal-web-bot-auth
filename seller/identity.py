@@ -82,6 +82,15 @@ class PublicCaller(Frozen):
 Caller = ResolvedCaller | PublicCaller
 
 
+def _hint(status: int, has_body: bool) -> dict[str, str]:
+    """What a refusal tells the caller to do next, as the library's own middleware does."""
+    if status in (403, 429):  # sign again, under the profile
+        return {"Accept-Signature": accept_signature(has_body=has_body)}
+    if status == 503:  # the verifier can't record the nonce now; back off, don't re-sign
+        return {"Retry-After": "1"}
+    return {}
+
+
 def _bearer(value: str | None) -> str | None:
     if value is None:
         return None
@@ -114,8 +123,7 @@ async def resolve_caller(request: Request) -> ResolvedCaller | PublicCaller:
         try:
             verified = await verifier.verify(request.method, url, headers, body)
         except WebBotAuthError as e:
-            hint = {} if e.status == 400 else {"Accept-Signature": accept_signature(has_body=bool(body))}
-            raise Refused(e.status, e.reason, str(e), headers=hint) from e
+            raise Refused(e.status, e.reason, str(e), headers=_hint(e.status, bool(body))) from e
         evidence_id = store.record_evidence(
             origin=verified.origin, keyid=verified.keyid, method=request.method, url=url,
             headers=headers, body=body, directory=verified.directory,
