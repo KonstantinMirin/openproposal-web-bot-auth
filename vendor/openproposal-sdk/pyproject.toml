@@ -1,0 +1,20 @@
+# The OpenProposal Python SDK, vendored unchanged.
+#
+# Source: github.com/KonstantinMirin/openproposal-schema, directory
+# sdk/proposed/with-open-prs/python, commit cd6c19979377a6546d0fbfb289ec7759359c6bc9.
+# The SDK ships no build file, so this one exists only to install the package.
+# To update: copy that directory's openproposal/ package over this one.
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "openproposal-sdk"
+version = "0.0.0+cd6c199"
+description = "OpenProposal types (with-open-prs lock), vendored"
+requires-python = ">=3.11"
+dependencies = ["pydantic>=2.11,<3", "typing-extensions>=4.12"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["openproposal"]
