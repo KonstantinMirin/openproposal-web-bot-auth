@@ -6,9 +6,14 @@ import hashlib
 import json
 import sqlite3
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from iab_agentic_primitives.web_bot_auth import VerifiedDirectory
+
+from shared.evidence import DIRECTORIES_SCHEMA, save_directory
+
+if TYPE_CHECKING:
+    from .identity import Credential
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS principals (
@@ -34,13 +39,6 @@ CREATE TABLE IF NOT EXISTS proposals (
     proposal_id         TEXT PRIMARY KEY,
     buyer_principal_id  TEXT NOT NULL REFERENCES principals (id),
     document            TEXT NOT NULL
-);
--- A verified key directory, as VerifiedDirectory.evidence() gives it: the URL,
--- status, header lines (its signatures included), body, and fetch time.
-CREATE TABLE IF NOT EXISTS directories (
-    digest    TEXT PRIMARY KEY,
-    url       TEXT NOT NULL,
-    evidence  TEXT NOT NULL
 );
 -- A confirmed signed request, as received (§ 4.1.2, Signed messages).
 CREATE TABLE IF NOT EXISTS evidence (
@@ -87,15 +85,6 @@ CREATE TABLE IF NOT EXISTS agreed_records (
 """
 
 
-def _save_directory(db: sqlite3.Connection, directory: VerifiedDirectory | None) -> str | None:
-    """Stores a verified directory's evidence once, keyed by the SHA-256 of its body."""
-    if directory is None:
-        return None
-    digest = hashlib.sha256(directory.body).hexdigest()
-    db.execute("INSERT OR IGNORE INTO directories (digest, url, evidence) VALUES (?, ?, ?)",
-               (digest, directory.url, json.dumps(directory.evidence())))
-    return digest
-
 
 def token_hash(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
@@ -107,7 +96,7 @@ class Store:
         self.db = sqlite3.connect(path, check_same_thread=False, isolation_level=None)
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA foreign_keys = ON")
-        self.db.executescript(SCHEMA)
+        self.db.executescript(DIRECTORIES_SCHEMA + SCHEMA)
 
     # Principals and credentials
 
@@ -159,7 +148,7 @@ class Store:
         body: bytes,
         directory: VerifiedDirectory | None,
     ) -> int:
-        digest = _save_directory(self.db, directory)
+        digest = save_directory(self.db, directory)
         cursor = self.db.execute(
             "INSERT INTO evidence (origin, keyid, method, url, headers, body, directory_digest)"
             " VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -200,10 +189,9 @@ class Store:
         entry: dict[str, Any],
         *,
         principal_id: str | None = None,
-        authentication_method: str | None = None,
-        evidence_id: int | None = None,
-        attributed: bool = False,
+        credential: Credential | None = None,
     ) -> None:
+        """Appends an entry, linked to the credential and evidence that carried it."""
         self.db.execute(
             "INSERT INTO assent (proposal_id, role, entry, idempotency_key, principal_id,"
             " authentication_method, evidence_id, attributed) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -213,9 +201,9 @@ class Store:
                 json.dumps(entry),
                 entry.get("idempotency_key"),
                 principal_id,
-                authentication_method,
-                evidence_id,
-                int(attributed),
+                credential.method if credential else None,
+                credential.evidence_id if credential else None,
+                int(credential.attributes_entries) if credential else 0,
             ),
         )
 

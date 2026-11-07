@@ -12,9 +12,9 @@ from typing import Any
 
 import rfc8785
 from openproposal import LineItemStatuses, ProposalStatuses, dump
+from pydantic import ValidationError
 
 from demo_types.stack import AssentEntry, Commit, CommitResult
-from shared.attribution import attributes
 from shared.record import (
     WriteError,
     committed_entry,
@@ -35,6 +35,15 @@ COMMITTABLE = {LineItemStatuses.PUBLISHED, LineItemStatuses.UNDER_REVIEW}
 def instant(moment: datetime) -> str:
     """A § 2.2 `Instant`."""
     return moment.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def parse_commit(body: bytes) -> Commit:
+    """The request body as a `Commit` (§ 5.6.1), or a `validation` error (§ 2.4)."""
+    try:
+        return Commit.model_validate_json(body)
+    except ValidationError as e:
+        detail = "; ".join(f"{'/'.join(map(str, err['loc']))}: {err['msg']}" for err in e.errors())
+        raise OfferError("validation", detail or "the body is not a Commit", retry="none") from e
 
 
 def _issued_to(store: Store, caller: Caller, proposal_id: str) -> dict[str, Any]:
@@ -98,33 +107,51 @@ def _live_names(assent: list[AssentEntry]) -> set[str]:
 
 def _checks(document: dict[str, Any], assent: list[AssentEntry], commit: Commit,
             now: datetime) -> tuple[dict[str, Any], bytes]:
-    """The § 5.6.1 checks of a new `commit`. Returns the composed record and the digest input."""
+    """The § 5.6.1 checks of a new `commit`. Returns the composed record and the digest input.
+
+    The order follows § 5.6.1: "The rejection MUST carry `expired` when
+    `offer_window.end` or `price_valid_until` has passed, `stale_version` when the
+    `commit` is stale, `not_committable` when a ground of that code applies (§ 2.4),
+    and otherwise `record_mismatch`, so the buyer can fetch it again."
+    A commit that names no such line item, or writes outside § 3.4, fits none of
+    those codes; it is checked after staleness, so a stale commit always gets
+    `stale_version` and is told to fetch again.
+    """
     entry, version = commit.entry, document["version"]
     items = {i["line_item_id"]: i for i in line_items_of(document)}
+    stamp = instant(now)
+    window = document.get("offer_window") or {}
+
+    # 1. expired: offer_window.end, then each committed entry's price_valid_until.
+    if "end" in window and stamp > window["end"]:
+        raise OfferError("expired", "offer_window.end has passed", retry="none", version=version)
+    for name in entry.line_item_ids:
+        if name in items:
+            priced = committed_entry({**items[name], "commitment": commit.writes[name].get("commitment")})
+            if priced is not None and stamp > priced.get("price_valid_until", stamp):
+                raise OfferError("expired", f"{name}: price_valid_until has passed",
+                                 retry="none", version=version)
+
+    # 2. stale_version. The seller keeps one version per proposal, so another is stale (§ 4.1.3).
+    if entry.version != version:
+        raise OfferError("stale_version", f"the commit names version {entry.version}",
+                         retry="refetch", version=version)
+
+    # The commit names line items of this version and writes only § 3.4 paths.
     for name in entry.line_item_ids:
         if name not in items:
             raise OfferError("not_found", f"no line item {name}", retry="none", version=version)
-    stamp = instant(now)
-    window = document.get("offer_window") or {}
-    if "end" in window and stamp > window["end"]:
-        raise OfferError("expired", "offer_window.end has passed", retry="none", version=version)
     try:
         composed = compose(document, commit.writes)
     except WriteError as e:
         raise OfferError("validation", str(e), retry="none", version=version) from e
     composed_items = {i["line_item_id"]: i for i in line_items_of(composed)}
     for name in entry.line_item_ids:
-        priced = committed_entry(composed_items[name])
-        if priced is None:
+        if committed_entry(composed_items[name]) is None:
             raise OfferError("validation", f"{name}: the commitment names no pricing[] entry",
                              retry="none", version=version)
-        if "price_valid_until" in priced and stamp > priced["price_valid_until"]:
-            raise OfferError("expired", f"{name}: price_valid_until has passed",
-                             retry="none", version=version)
-    # The seller keeps one version per proposal, so another version is stale (§ 4.1.3).
-    if entry.version != version:
-        raise OfferError("stale_version", f"the commit names version {entry.version}",
-                         retry="refetch", version=version)
+
+    # 3. not_committable.
     for name in entry.line_item_ids:
         if items[name]["status"] not in COMMITTABLE:
             raise OfferError("not_committable", f"{name} is {items[name]['status']}",
@@ -135,6 +162,8 @@ def _checks(document: dict[str, Any], assent: list[AssentEntry], commit: Commit,
     if _live_names(assent) & set(entry.line_item_ids):
         raise OfferError("not_committable", "a live commitment already names a line item",
                          retry="same", version=version)
+
+    # 4. Otherwise record_mismatch.
     data = digest_input(composed, entry.line_item_ids)
     if digest_of(data) != entry.record_digest:
         raise OfferError("record_mismatch", "record_digest differs from the seller's",
@@ -182,14 +211,9 @@ def commit(store: Store, caller: Caller, proposal_id: str, commit: Commit,
 def _accept(store: Store, caller: ResolvedCaller, document: dict[str, Any],
             composed: dict[str, Any], data: bytes, commit: Commit, now: datetime) -> None:
     """Writes the buyer's entry and the seller's matching `acceptance` (§ 4.1.2)."""
-    attributed = caller.authentication_method == "web_bot_auth" and attributes(
-        caller.host, document["buyer"]["domain"], body_covered=caller.body_covered
-    )
-    store.append_assent(
-        document["proposal_id"], commit.entry.wire(), principal_id=caller.principal.id,
-        authentication_method=caller.authentication_method, evidence_id=caller.evidence_id,
-        attributed=attributed,
-    )
+    # The boundary's credential record goes to storage with the entry, unread here.
+    store.append_assent(document["proposal_id"], commit.entry.wire(),
+                        principal_id=caller.principal.id, credential=caller.credential)
     acceptance = AssentEntry(
         role="acceptance", version=commit.entry.version, record_digest=commit.entry.record_digest,
         line_item_ids=list(commit.entry.line_item_ids), at=instant(now),

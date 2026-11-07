@@ -23,7 +23,6 @@ from iab_agentic_primitives.web_bot_auth.asgi import DirectoryMiddleware, Respon
 from openproposal import dump
 from pydantic import BaseModel
 
-from demo_types.stack import Commit
 from shared.wba import directory_resolver
 
 from . import offers
@@ -64,8 +63,10 @@ async def get_proposal(proposal_id: str, caller: CallerDep) -> JSONResponse:
 
 
 @api.post("/proposals/{proposal_id}/commit")
-async def commit(proposal_id: str, body: Commit,
-                 caller: CallerDep) -> JSONResponse:
+async def commit(proposal_id: str, caller: CallerDep, request: Request) -> JSONResponse:
+    # The route takes the body as bytes, so nothing parses it before resolve_caller has
+    # confirmed the credential: a failing credential is refused even when the JSON is broken.
+    body = offers.parse_commit(await request.body())
     return JSONResponse(dump(offers.commit(store, caller, proposal_id, body)))
 
 

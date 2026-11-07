@@ -14,6 +14,11 @@ Auth signature and a bearer token the same way:
    established identity with no principal.
 4. Return one frozen value. Handlers receive it and never read a header, and
    nothing amends it afterwards.
+
+How the caller authenticated travels in `Credential`, which the boundary also
+fills with the evidence it kept and the § 4.1.2 attribution. The offer logic
+hands that record to storage with the entry it writes and never reads it, so no
+offer decision depends on which credential the caller used.
 """
 
 from __future__ import annotations
@@ -24,6 +29,8 @@ from fastapi import Depends, Request
 from iab_agentic_primitives.web_bot_auth import WebBotAuthError, accept_signature
 from iab_agentic_primitives.web_bot_auth.asgi import request_url
 from pydantic import BaseModel, ConfigDict
+
+from shared.attribution import attributes
 
 from .errors import Refused
 
@@ -41,12 +48,10 @@ class Principal(Frozen):
     domain: str
 
 
-class ResolvedCaller(Frozen):
-    """A confirmed credential that names a principal in this seller's records."""
+class Credential(Frozen):
+    """The confirmed credential: how the caller authenticated, and what the boundary kept."""
 
-    kind: Literal["resolved"] = "resolved"
-    principal: Principal
-    authentication_method: Literal["web_bot_auth", "bearer"]
+    method: Literal["web_bot_auth", "bearer"]
     #: The verified origin and its host, for a signed request.
     origin: str | None = None
     host: str | None = None
@@ -54,17 +59,24 @@ class ResolvedCaller(Frozen):
     body_covered: bool = False
     #: The stored signed request, for a signed request.
     evidence_id: int | None = None
+    #: § 4.1.2: the signature attributes the body's entries to the principal: it covers the
+    #: body, and the signing host is the principal's domain or a subdomain of it.
+    attributes_entries: bool = False
+
+
+class ResolvedCaller(Frozen):
+    """A confirmed credential that names a principal in this seller's records."""
+
+    kind: Literal["resolved"] = "resolved"
+    principal: Principal
+    credential: Credential
 
 
 class PublicCaller(Frozen):
     """No principal: either no credential, or a verified origin this seller has no row for."""
 
     kind: Literal["public"] = "public"
-    authentication_method: Literal["web_bot_auth"] | None = None
-    origin: str | None = None
-    host: str | None = None
-    body_covered: bool = False
-    evidence_id: int | None = None
+    credential: Credential | None = None
 
 
 Caller = ResolvedCaller | PublicCaller
@@ -108,18 +120,16 @@ async def resolve_caller(request: Request) -> ResolvedCaller | PublicCaller:
             origin=verified.origin, keyid=verified.keyid, method=request.method, url=url,
             headers=headers, body=body, directory=verified.directory,
         )
-        identity = {
-            "authentication_method": "web_bot_auth",
-            "origin": verified.origin,
-            "host": verified.host,
-            "body_covered": verified.body_covered,
-            "evidence_id": evidence_id,
-        }
+        signed_by = {"method": "web_bot_auth", "origin": verified.origin, "host": verified.host,
+                     "body_covered": verified.body_covered, "evidence_id": evidence_id}
         # 3. Resolve it in this seller's own records.
         principal = store.principal_for_origin(verified.origin)
         if principal is None:
-            return PublicCaller(**identity)
-        return ResolvedCaller(principal=Principal(**principal), **identity)
+            return PublicCaller(credential=Credential(**signed_by))
+        attributes_entries = attributes(verified.host, principal["domain"],
+                                        body_covered=verified.body_covered)
+        return ResolvedCaller(principal=Principal(**principal),
+                              credential=Credential(**signed_by, attributes_entries=attributes_entries))
 
     if token is not None:
         # 2 and 3. A token is confirmed and resolved by the same lookup.
@@ -127,7 +137,7 @@ async def resolve_caller(request: Request) -> ResolvedCaller | PublicCaller:
         if principal is None:
             raise Refused(401, "invalid-token", "the bearer token is not valid",
                           headers={"WWW-Authenticate": 'Bearer error="invalid_token"'})
-        return ResolvedCaller(principal=Principal(**principal), authentication_method="bearer")
+        return ResolvedCaller(principal=Principal(**principal), credential=Credential(method="bearer"))
 
     return PublicCaller()
 
