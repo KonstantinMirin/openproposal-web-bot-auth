@@ -4,16 +4,24 @@ from __future__ import annotations
 
 import json
 import uuid
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any
 
 from iab_agentic_primitives.web_bot_auth import DirectoryResolver, RequestSigner, WebBotAuthError
-from openproposal import dump_json
+from openproposal import LineItemWrites, Proposal, dump, dump_json
 from pydantic import BaseModel
 
-from demo_types.stack import AssentEntry, Commit, CommitResult
-from shared.attribution import attributes
-from shared.record import compose, digest_input, digest_of
+from protocol.attribution import attributes
+from protocol.operations import (
+    RECEIVE,
+    ProtocolViolation,
+    check_result,
+    compose_commit,
+    parse_commit,
+    parse_result,
+)
+from protocol.values import JsonObject, commitment_key
 
 from .client import Credential, Exchange, call_seller
 from .keyring import Keyring
@@ -47,7 +55,7 @@ class Buyer:
         resolver: DirectoryResolver,
         keyring: Keyring,
         origin: str,
-        plan: dict[str, dict[str, Any]],
+        plan: Mapping[str, LineItemWrites],
         *,
         signature_lifetime: int = 300,
     ) -> None:
@@ -75,7 +83,7 @@ class Buyer:
         except WebBotAuthError as e:
             raise Refusal(f"the seller's response is refused: {e.reason}: {e}") from e
         # The seller is whoever the verified origin is in this buyer's own records.
-        if self.store.seller(exchange.verified.origin) is None:
+        if self.store.seller(str(exchange.verified.origin)) is None:
             raise Refusal(f"{exchange.verified.origin} is not a seller this buyer deals with")
         return exchange
 
@@ -118,28 +126,31 @@ class Buyer:
         read = await self._call(seller, credential, "GET", f"/proposals/{proposal_id}")
         if read.status != 200:
             raise Refusal(f"reading {proposal_id} returned {read.status}: {read.body.decode()}")
-        proposal = json.loads(read.body)
-        if proposal["seller"]["domain"] != seller["domain"]:
-            raise Refusal(f"{proposal_id} names seller {proposal['seller']['domain']}")
+        # The typed value decides; the raw JSON, unknown members and all, is the digest input.
+        proposal = Proposal.model_validate_json(read.body, context=RECEIVE)
+        raw: JsonObject = json.loads(read.body)
+        if proposal.seller.domain != seller["domain"]:
+            raise Refusal(f"{proposal_id} names seller {proposal.seller.domain}")
 
         # 2. Compose the Commit, or re-send the pending one whole (§ 4.1.2, § 5.6.1).
         row = self.store.pending_commit(seller_origin, proposal_id, line_item_ids)
         if row is None:
-            writes = {name: self.plan[name] for name in line_item_ids}
-            data = digest_input(compose(proposal, writes), line_item_ids)
-            entry = AssentEntry(
-                role="commitment",
-                version=proposal["version"],
-                record_digest=digest_of(data),
-                line_item_ids=line_item_ids,
-                at=datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
-                idempotency_key=str(uuid.uuid4()),
+            composed = compose_commit(
+                proposal,
+                raw,
+                {name: self.plan[name] for name in line_item_ids},
+                at=datetime.now(UTC),
+                key=str(uuid.uuid4()),
             )
-            body = dump_json(Commit(entry=entry, writes=writes)).encode()
             row = self.store.add_commit(
-                seller_origin, proposal_id, line_item_ids, entry.idempotency_key, body, data
+                seller_origin,
+                proposal_id,
+                line_item_ids,
+                commitment_key(composed.commit.entry),
+                dump_json(composed.commit).encode(),
+                composed.digest_input,
             )
-        commit = Commit.model_validate_json(row["body"])
+        commit = parse_commit(row["body"])
 
         # 3. Send it, signed or with the bearer token.
         answer = await self._call(
@@ -159,27 +170,21 @@ class Buyer:
             )
 
         # 4. Check the matching pair from the agreed record (§ 4.1.2).
-        result = CommitResult.model_validate_json(answer.body)
-        if result.entries[0].wire() != commit.entry.wire():
-            raise Refusal("the CommitResult doesn't start with this buyer's entry")
-        acceptance = next(
-            (e for e in result.entries[1:] if e.role == "acceptance" and e.matches(commit.entry)),
-            None,
-        )
-        if acceptance is None:
-            raise Refusal(f"no matching acceptance: {[e.role for e in result.entries]}")
-        if digest_of(row["digest_input"]) != acceptance.record_digest:
-            raise Refusal("record_digest doesn't recompute from the agreed record")
+        try:
+            result = parse_result(answer.body)
+            acceptance = check_result(commit, result, row["digest_input"])
+        except ProtocolViolation as e:
+            raise Refusal(f"the seller's CommitResult is refused: {e}") from e
 
         # 5. Keep the agreed record and the signed answer as evidence.
         verified = answer.verified
         attributed = attributes(
-            verified.host, proposal["seller"]["domain"], body_covered=verified.body_covered
+            verified.origin.host, proposal.seller.domain, body_covered=verified.body_covered
         )
-        entries = [e.wire() for e in result.entries]
+        entries = [dump(e) for e in result.entries]
         evidence_id = self.store.record_evidence(
             commit_id=row["id"],
-            origin=verified.origin,
+            origin=str(verified.origin),
             keyid=verified.keyid,
             attributed=attributed,
             request=answer.request_record(),

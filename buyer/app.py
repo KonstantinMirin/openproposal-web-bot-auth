@@ -15,10 +15,12 @@ from pathlib import Path
 from typing import Literal
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException
+from iab_agentic_primitives.web_bot_auth import ServerIdentity
 from iab_agentic_primitives.web_bot_auth.asgi import DirectoryMiddleware
-from pydantic import BaseModel
+from openproposal import LineItemWrites
+from pydantic import BaseModel, TypeAdapter
 
-from shared.documents import load_yaml
+from protocol.documents import load_yaml
 from shared.operator import require_operator
 from shared.wba import directory_resolver
 
@@ -38,6 +40,9 @@ DIRECTORY_MAX_AGE = int(os.environ.get("WBA_DIRECTORY_MAX_AGE", "300"))
 ROTATION_WAIT = float(os.environ.get("WBA_ROTATION_WAIT", "600"))
 SIGNATURE_LIFETIME = int(os.environ.get("WBA_SIGNATURE_LIFETIME", "300"))
 
+#: The buyer's plan: a § 3.4 `LineItemWrites` per line item, checked strictly.
+_PLAN = TypeAdapter(dict[str, LineItemWrites])
+
 keyring = Keyring(DATA / "keys", rotation_wait=ROTATION_WAIT, signature_lifetime=SIGNATURE_LIFETIME)
 store = Store(DATA / "buyer.db")
 # The buyer knows the seller by its origin only. The token is the bearer flow's credential.
@@ -52,7 +57,7 @@ buyer = Buyer(
     directory_resolver(),
     keyring,
     ORIGIN,
-    load_yaml(Path(__file__).parent / "plan.yaml"),
+    _PLAN.validate_python(load_yaml(Path(__file__).parent / "plan.yaml")),
     signature_lifetime=SIGNATURE_LIFETIME,
 )
 
@@ -130,4 +135,6 @@ async def cloudflare_check() -> dict[str, object]:
 api.include_router(operator)
 
 # A live key source: the middleware reads the keyring on every directory fetch.
-app = DirectoryMiddleware(api, keyring.published, base_url=ORIGIN, max_age=DIRECTORY_MAX_AGE)
+app = DirectoryMiddleware(
+    api, keyring.published, identity=ServerIdentity.from_config(ORIGIN), max_age=DIRECTORY_MAX_AGE
+)

@@ -6,11 +6,12 @@ the bearer buyer only by its token's hash.
 
 from __future__ import annotations
 
-import copy
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from shared.documents import load_yaml
+from protocol.documents import load_yaml
+from protocol.record import line_items_of
+from protocol.values import JsonObject
 
 from .store import Store
 
@@ -21,13 +22,18 @@ class NoHostError(ValueError):
     """The configured buyer origin names no host, so the seller can't record the buyer."""
 
 
-def issue(store: Store, principal_id: str, proposal_id: str, legal_name: str, domain: str) -> None:
-    document = copy.deepcopy(load_yaml(TEMPLATE))
+def issued_document(proposal_id: str, legal_name: str, domain: str) -> JsonObject:
+    """The template, issued to the buyer at `domain` as `proposal_id` (§ 4.3)."""
+    document = load_yaml(TEMPLATE)  # a fresh copy on every read
     document["proposal_id"] = proposal_id
     document["buyer"] = {"domain": domain, "legal_name": legal_name}
-    for item in document["line_items"]:
+    for item in line_items_of(document):
         item["eligible_buyers"] = [domain]
-    store.add_proposal(principal_id, document)
+    return document
+
+
+def issue(store: Store, principal_id: str, proposal_id: str, legal_name: str, domain: str) -> None:
+    store.add_proposal(principal_id, issued_document(proposal_id, legal_name, domain))
 
 
 def seed(store: Store, *, buyer_origin: str, bearer_token: str | None) -> None:

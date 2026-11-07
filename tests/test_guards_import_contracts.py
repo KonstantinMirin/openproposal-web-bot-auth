@@ -33,7 +33,7 @@ CASES = (
     ({"parties-independent", "layers"}, "seller/planted.py", "import buyer.planted\n"),
     ({"parties-independent", "layers"}, "runner/planted.py", "from seller import planted\n"),
     ({"layers"}, "shared/planted.py", "import seller.planted\n"),
-    ({"layers"}, "demo_types/planted.py", "import shared.planted\n"),
+    ({"layers"}, "protocol/planted.py", "import shared.planted\n"),
 )
 
 

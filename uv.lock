@@ -1076,7 +1076,7 @@ wheels = [
 
 [[package]]
 name = "openproposal-sdk"
-version = "0.0.0+cd6c199"
+version = "0.0.0+20441a9"
 source = { editable = "vendor/openproposal-sdk" }
 dependencies = [
     { name = "pydantic" },
@@ -1085,7 +1085,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "pydantic", specifier = ">=2.11,<3" },
+    { name = "pydantic", specifier = ">=2.13.4,<3" },
     { name = "typing-extensions", specifier = ">=4.12" },
 ]
 

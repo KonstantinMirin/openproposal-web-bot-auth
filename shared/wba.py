@@ -35,5 +35,5 @@ def directory_resolver() -> DirectoryResolver:
     default, 300 s.
     """
     age = os.environ.get("WBA_MAX_CACHE_AGE")
-    policy = FetchPolicy(max_cache_age=float(age)) if age else FetchPolicy()
+    policy = FetchPolicy(max_cache_age=int(age)) if age else FetchPolicy()
     return DirectoryResolver(policy, client=http_client())

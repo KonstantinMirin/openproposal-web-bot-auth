@@ -2,16 +2,15 @@
 
 import json
 from datetime import UTC, datetime
-from pathlib import Path
 
 import pytest
+from openproposal import Commit, dump
 
-from demo_types.stack import Commit
 from seller.errors import OfferError
 from seller.offers import _checks, parse_commit
-from shared.documents import load_yaml
+from seller.seed import issued_document
 
-SEED = load_yaml(Path(__file__).parent.parent / "seller" / "seed" / "proposal.yaml")
+SEED = issued_document("demo-wba-1", "Demo Buyer Agency LLC", "buyer.wba-demo.noetis.dev")
 
 
 def _commit(line_item: str, *, version: int = 1, pricing_id: str | None = None) -> Commit:
@@ -68,7 +67,7 @@ def test_otherwise_record_mismatch():
 
 @pytest.mark.parametrize("commitment", ["x", ["a"], 3, None])
 def test_a_commitment_that_is_not_an_object_is_a_validation_error(commitment):
-    body = _commit("weather-app-ctv").model_dump(exclude_none=True)
+    body = dump(_commit("weather-app-ctv"))
     body["writes"]["weather-app-ctv"]["commitment"] = commitment
     with pytest.raises(OfferError) as e:
         parse_commit(json.dumps(body).encode())

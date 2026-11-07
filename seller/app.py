@@ -22,12 +22,14 @@ from iab_agentic_primitives.web_bot_auth import (
     MemoryNonceStore,
     RequestVerifier,
     ResponseSigner,
+    ServerIdentity,
 )
 from iab_agentic_primitives.web_bot_auth.asgi import DirectoryMiddleware, ResponseSigningMiddleware
 from openproposal import dump
 from pydantic import BaseModel
 from starlette.types import ASGIApp
 
+from protocol.values import instant
 from shared.operator import require_operator
 from shared.wba import directory_resolver
 
@@ -55,7 +57,9 @@ seed(
 
 api = FastAPI(title="Demo seller")
 api.state.store = store
-api.state.origin = ORIGIN
+#: The seller's own base URL, as the library's ASGI helpers and the boundary read it.
+IDENTITY = ServerIdentity.from_config(ORIGIN)
+api.state.identity = IDENTITY
 api.state.verifier = RequestVerifier(directory_resolver(), nonces=MemoryNonceStore())
 
 api.add_exception_handler(Refused, lambda _request, e: e.response())
@@ -111,7 +115,7 @@ async def issue_proposal(body: Issue) -> dict[str, str]:
     principal = store.principal(body.principal_id)
     if principal is None:
         raise HTTPException(404, f"no principal {body.principal_id}")
-    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    stamp = instant(datetime.now(UTC)).replace("-", "").replace(":", "")
     proposal_id = f"live-{body.principal_id}-{stamp}-{secrets.token_hex(2)}"
     with store.transaction():
         issue(store, principal["id"], proposal_id, principal["legal_name"], principal["domain"])
@@ -137,8 +141,8 @@ if FAULTS:
 
 
 signer = ResponseSigner(key, ORIGIN)
-app: ASGIApp = ResponseSigningMiddleware(api, signer, base_url=ORIGIN)
+app: ASGIApp = ResponseSigningMiddleware(api, signer, identity=IDENTITY)
 if FAULTS:
-    app = FaultInjection(app, signer, ORIGIN)
+    app = FaultInjection(app, signer, IDENTITY)
 # The signed key directory at the well-known path, for buyers to find the seller's key.
-app = DirectoryMiddleware(app, [key], base_url=ORIGIN, max_age=DIRECTORY_MAX_AGE)
+app = DirectoryMiddleware(app, [key], identity=IDENTITY, max_age=DIRECTORY_MAX_AGE)

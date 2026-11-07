@@ -2,7 +2,7 @@
 
 import pytest
 
-from shared.documents import InvalidDocument, loads_yaml
+from protocol.documents import InvalidDocument, loads_yaml
 
 
 def test_core_schema_values():
@@ -28,6 +28,11 @@ def test_core_schema_values():
         "a: 1\n---\nb: 2\n",
         "a: &x [*x]\n",
         "a: 0.1000000000000000055511151231257827\n",  # RFC 8785 does not reproduce it
+        "a: [",  # not YAML
+        'a: "x',
+        "3",  # YAML, but not a mapping
+        "- a",
+        "",
     ],
 )
 def test_documents_with_no_json_form_are_invalid(text):

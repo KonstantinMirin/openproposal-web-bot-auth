@@ -18,7 +18,7 @@ dependencies = [
     # The Public Suffix List, read offline, for the attribution rule (§ 4.1.2).
     "tldextract>=5.1",
     "idna>=3.7,<4",
-    # The YAML parser; shared/documents.py applies the YAML 1.2 core schema § 4.1.1 names.
+    # The YAML parser; protocol/documents.py applies the YAML 1.2 core schema § 4.1.1 names.
     "pyyaml>=6.0.2",
 ]
 
@@ -45,7 +45,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["demo_types", "shared", "seller", "buyer", "runner"]
+packages = ["protocol", "shared", "seller", "buyer", "runner"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -63,6 +63,9 @@ select = [
     "ARG", "ANN", "S", "TID", "RUF100",
 ]
 
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"openproposal._runtime".msg = "Import the SDK's public names from openproposal."
+
 [tool.ruff.lint.mccabe]
 max-complexity = 10
 
@@ -75,9 +78,6 @@ max-statements = 50
 "e2e/scenarios/**" = ["S101", "PLR2004", "ANN"]
 # Exemptions for production files. They only shrink: each line lists the exact
 # codes today's tree reports in that file, and the step that removes them.
-"demo_types/stack.py" = ["TRY003"]  # Step 1: replaced by the generated SDK
-"shared/record.py" = ["ANN401", "C901", "PLR2004", "TRY003"]  # Step 1: protocol/record.py
-"shared/documents.py" = ["ANN401", "TRY003"]  # Step 1: protocol/documents.py
 "buyer/keyring.py" = ["TRY003"]  # Step 3: shared/keyring.py with KeyringState
 "buyer/store.py" = ["ANN201", "PLR0913", "PLR0917"]  # Step 3: buyer/repository.py
 "seller/store.py" = ["PLR0913"]  # Step 3: seller/sqlite_store.py
@@ -92,13 +92,11 @@ max-statements = 50
 strict = true
 plugins = ["pydantic.mypy"]
 warn_unused_ignores = true
-mypy_path = "../iab-agentic-primitives/src"
 # The scope: the modules that pass strict today. Each step adds the modules it
 # makes clean; Step 8 ends with every package, tests/, and e2e/. A module
 # outside the scope is still analyzed for its callers, but reports nothing
 # (the follow_imports override below). Out of scope today, by the step that
 # brings it in:
-#   Step 1: demo_types (deleted), shared/record, shared/documents
 #   Step 3: seller/store, buyer/store
 #   Step 5: seller/offers, seller/errors
 #   Step 6: buyer/flow
@@ -116,8 +114,13 @@ files = [
     "buyer/app.py",
     "buyer/client.py",
     "buyer/keyring.py",
+    "protocol/__init__.py",
+    "protocol/attribution.py",
+    "protocol/documents.py",
+    "protocol/operations.py",
+    "protocol/record.py",
+    "protocol/values.py",
     "shared/__init__.py",
-    "shared/attribution.py",
     "shared/evidence.py",
     "shared/operator.py",
     "shared/wba.py",
@@ -128,19 +131,15 @@ files = [
     "tests/test_guards_import_contracts.py",
     "tests/test_guards_ruff_bans.py",
     "tests/test_guards_skips.py",
+    "tests/test_operations.py",
+    "tests/test_record_rules.py",
+    "tests/test_sdk.py",
 ]
 
 # Out-of-scope demo modules: analyzed when an in-scope module imports them,
 # silent otherwise. The entry goes when the scope covers every package (Step 8).
 [[tool.mypy.overrides]]
-module = ["seller.*", "buyer.*", "shared.*", "demo_types.*", "runner.*"]
-follow_imports = "silent"
-
-# The library ships no py.typed yet, so mypy reads its source from the sibling
-# checkout. Delete this override and mypy_path when py.typed lands (library epic
-# wbalib-r1g, step 0).
-[[tool.mypy.overrides]]
-module = ["iab_agentic_primitives.*"]
+module = ["seller.*", "buyer.*", "shared.*", "runner.*"]
 follow_imports = "silent"
 
 # No explicit Any: the tier grows with each step until it covers every module (Step 8).
@@ -153,7 +152,7 @@ module = [
     "buyer.app",
     "buyer.client",
     "buyer.keyring",
-    "shared.attribution",
+    "protocol.*",
     "shared.evidence",
     "shared.operator",
     "shared.wba",
@@ -164,16 +163,19 @@ module = [
     "tests.test_guards_import_contracts",
     "tests.test_guards_ruff_bans",
     "tests.test_guards_skips",
+    "tests.test_operations",
+    "tests.test_record_rules",
+    "tests.test_sdk",
 ]
 disallow_any_explicit = true
 
 [tool.coverage.run]
-source = ["seller", "buyer", "shared", "demo_types", "runner"]
+source = ["protocol", "seller", "buyer", "shared", "runner"]
 branch = true
 
 [tool.coverage.report]
 # The branch coverage measured on the tree before Step 0 (45.26), raised to Step
 # 0's measured total. Each step raises it to its measured total; it is never lowered.
-fail_under = 45.28
+fail_under = 50.90
 precision = 2
 show_missing = false

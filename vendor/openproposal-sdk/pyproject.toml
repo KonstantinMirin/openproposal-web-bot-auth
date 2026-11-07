@@ -1,9 +1,16 @@
 # The OpenProposal Python SDK, vendored unchanged.
 #
-# Source: github.com/KonstantinMirin/openproposal-schema, directory
-# sdk/proposed/with-open-prs/python, commit cd6c19979377a6546d0fbfb289ec7759359c6bc9.
-# The SDK ships no build file, so this one exists only to install the package.
-# To update: copy that directory's openproposal/ package over this one.
+# Source: the openproposal-schema-stack repository, branch feat/with-our-stack,
+# commit 20441a94fba778ad871bfdaf46fda25049c266b6, directory
+# sdk/with-our-stack/python/openproposal: the with-our-stack lock, as-written
+# variant. The same tree is public at github.com/KonstantinMirin/openproposal-schema,
+# commit 18d0e8ec23e790e8ad5e066f2b8bc2fe2b1dc9c2, same directory (checked with
+# diff -r). The SDK ships no build file, so this one exists only to install the
+# package; tests/test_sdk.py checks the provenance constants against it.
+#
+# To update: copy that directory's openproposal/ package over this one, update
+# the commits and the version here and in tests/test_sdk.py, and re-run the
+# variant check (tests/test_sdk.py validates every demo document strictly).
 
 [build-system]
 requires = ["hatchling"]
@@ -11,10 +18,21 @@ build-backend = "hatchling.build"
 
 [project]
 name = "openproposal-sdk"
-version = "0.0.0+cd6c199"
-description = "OpenProposal types (with-open-prs lock), vendored"
+version = "0.0.0+20441a9"
+description = "OpenProposal types (with-our-stack lock, as-written variant), vendored"
 requires-python = ">=3.11"
-dependencies = ["pydantic>=2.11,<3", "typing-extensions>=4.12"]
+dependencies = ["pydantic>=2.13.4,<3", "typing-extensions>=4.12"]
+
+[tool.openproposal-sdk]
+repository = "openproposal-schema-stack"
+branch = "feat/with-our-stack"
+commit = "20441a94fba778ad871bfdaf46fda25049c266b6"
+public-repository = "github.com/KonstantinMirin/openproposal-schema"
+public-commit = "18d0e8ec23e790e8ad5e066f2b8bc2fe2b1dc9c2"
+path = "sdk/with-our-stack/python/openproposal"
+lock = "with-our-stack"
+variant = "as-written"
+schema-release = "fbab39049a573adb36643a6f5e0f2f821cdd91b94ed12ed82eaf6887d30611ff"
 
 [tool.hatch.build.targets.wheel]
 packages = ["openproposal"]

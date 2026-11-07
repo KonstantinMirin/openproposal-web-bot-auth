@@ -17,7 +17,12 @@ from __future__ import annotations
 
 import base64
 
-from iab_agentic_primitives.web_bot_auth import HTTPRequest, ResponseSigner
+from iab_agentic_primitives.web_bot_auth import (
+    HTTPRequest,
+    HTTPResponse,
+    ResponseSigner,
+    ServerIdentity,
+)
 from iab_agentic_primitives.web_bot_auth.asgi import request_url
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
@@ -29,8 +34,8 @@ _OTHER_SIGNATURE = "sig1=:" + base64.b64encode(bytes(64)).decode() + ":"
 class FaultInjection:
     mode = "none"
 
-    def __init__(self, app: ASGIApp, signer: ResponseSigner, base_url: str) -> None:
-        self.app, self.signer, self.base_url = app, signer, base_url
+    def __init__(self, app: ASGIApp, signer: ResponseSigner, identity: ServerIdentity) -> None:
+        self.app, self.signer, self.identity = app, signer, identity
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http" or self.mode == "none" or not scope["path"].endswith("/commit"):
@@ -60,11 +65,11 @@ class FaultInjection:
             else:
                 fields = [(k, v) for k, v in fields if k.lower() != "signature"]
                 fields.append(("signature", _OTHER_SIGNATURE))
-            request = HTTPRequest(scope["method"], request_url(scope, self.base_url), fields)
+            request = HTTPRequest(scope["method"], request_url(scope, self.identity), fields)
             text = [(k.decode("latin-1"), v.decode("latin-1")) for k, v in headers]
-            added = self.signer.sign(start["status"], text, body, request)
-            headers += [
-                (k.lower().encode("latin-1"), v.encode("latin-1")) for k, v in added.items()
-            ]
+            signed = self.signer.sign(HTTPResponse(start["status"], text, body, request))
+            # The lines signing added follow the response's own.
+            added = signed.headers.items()[len(text) :]
+            headers += [(k.lower().encode("latin-1"), v.encode("latin-1")) for k, v in added]
         await send({**start, "headers": headers})
         await send({"type": "http.response.body", "body": body})

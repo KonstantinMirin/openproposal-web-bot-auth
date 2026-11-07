@@ -25,7 +25,6 @@ parties' databases from read-only mounts. It holds no agent's signing key.
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
 import os
 import sqlite3
@@ -42,12 +41,16 @@ from urllib.parse import urlsplit
 import httpx
 from iab_agentic_primitives.web_bot_auth import (
     HTTPRequest,
+    HTTPResponse,
+    Origin,
     RequestVerifier,
     ResponseVerifier,
     StaticKeyResolver,
     parse_directory_response,
 )
 
+from protocol.record import digest_of, sha256_hex
+from protocol.values import instant
 from shared.operator import HEADER as OPERATOR_HEADER
 from shared.wba import http_client
 
@@ -150,7 +153,7 @@ def _directory_view(row: sqlite3.Row | None) -> dict[str, Any] | None:
         "fetched_at": _instant(row["fetched_at"]) if row["fetched_at"] else None,
         "headers": public_headers(json.loads(row["headers"])),
         "keys": [_public_key(k) for k in body.get("keys", [])] if isinstance(body, dict) else [],
-        "sha256": hashlib.sha256(row["body"]).hexdigest(),
+        "sha256": sha256_hex(row["body"]),
     }
 
 
@@ -159,7 +162,7 @@ def _public_key(jwk: dict[str, Any]) -> dict[str, Any]:
 
 
 def _instant(seconds: float) -> str:
-    return datetime.fromtimestamp(seconds, UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return instant(datetime.fromtimestamp(seconds, UTC))
 
 
 # ── Steps ─────────────────────────────────────────────────────────────────
@@ -401,7 +404,7 @@ class Flow:
             bytes(agreed["digest_input"]) == bytes(bought["digest_input"]),
             "the parties' digest inputs differ",
         )
-        digest = "sha256:" + hashlib.sha256(bought["digest_input"]).hexdigest()
+        digest = digest_of(bought["digest_input"])
         expect(
             digest == agreed["record_digest"] == outcome["record_digest"],
             "record_digest doesn't recompute from the digest input",
@@ -421,13 +424,15 @@ class Flow:
             again = RequestVerifier(
                 _stored_keys(db, row["directory_digest"], self.config.buyer)
             ).verify_sync(
-                row["method"],
-                row["url"],
-                [tuple(x) for x in json.loads(row["headers"])],
-                row["body"],
+                HTTPRequest(
+                    row["method"],
+                    row["url"],
+                    [tuple(x) for x in json.loads(row["headers"])],
+                    row["body"],
+                )
             )
         expect(
-            again.origin == self.config.buyer and again.body_covered,
+            str(again.origin) == self.config.buyer and again.body_covered,
             "the seller's evidence doesn't verify again",
         )
         with _database(self.config.buyer_db) as db:
@@ -443,11 +448,10 @@ class Flow:
             answered = ResponseVerifier(
                 _stored_keys(db, row["directory_digest"], self.config.seller)
             ).verify_sync(
-                row["status"],
-                [tuple(x) for x in json.loads(row["headers"])],
-                row["body"],
-                sent,
-                expected_origin=self.config.seller,
+                HTTPResponse(
+                    row["status"], [tuple(x) for x in json.loads(row["headers"])], row["body"], sent
+                ),
+                expected_origin=Origin.parse(self.config.seller),
             )
         expect(
             answered.bound and answered.body_covered, "the buyer's evidence doesn't verify again"

@@ -26,8 +26,8 @@ RUFF = tool("ruff")
 
 # (table, planted path, violation, clean twin)
 CASES = (
-    ("ruff-domain.toml", "shared/record.py", "import sqlite3\n", "import json\n"),
-    ("ruff-domain.toml", "demo_types/stack.py", "from fastapi import Request\n", "import re\n"),
+    ("ruff-domain.toml", "protocol/record.py", "import sqlite3\n", "import json\n"),
+    ("ruff-domain.toml", "protocol/values.py", "from fastapi import Request\n", "import re\n"),
     (
         "ruff-environment.toml",
         "seller/offers.py",
@@ -42,6 +42,8 @@ CASES = (
         None,
     ),
     ("ruff-buyer.toml", "buyer/flow.py", "import httpx\n", "import json\n"),
+    ("ruff-digest.toml", "runner/live.py", "import hashlib\n", "import json\n"),
+    ("ruff-digest.toml", "seller/offers.py", "from rfc8785 import dumps\n", "import json\n"),
 )
 
 
@@ -91,7 +93,7 @@ def test_every_table_has_a_proof() -> None:
 # ── Exemptions only shrink ─────────────────────────────────────────────────
 
 #: Per-file ignores that are policy, not exemptions.
-POLICY = {"tests/**", "e2e/scenarios/**", "*/settings.py"}
+POLICY = {"tests/**", "e2e/scenarios/**", "*/settings.py", "protocol/**"}
 
 
 def _fired(*config: str) -> set[tuple[str, str]]:

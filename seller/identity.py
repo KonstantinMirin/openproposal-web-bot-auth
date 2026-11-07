@@ -26,11 +26,11 @@ from __future__ import annotations
 from typing import Annotated, Literal
 
 from fastapi import Depends, Request
-from iab_agentic_primitives.web_bot_auth import WebBotAuthError, accept_signature
+from iab_agentic_primitives.web_bot_auth import HTTPRequest, WebBotAuthError, accept_signature
 from iab_agentic_primitives.web_bot_auth.asgi import request_url
 from pydantic import BaseModel, ConfigDict
 
-from shared.attribution import attributes
+from protocol.attribution import attributes
 
 from .errors import Refused
 
@@ -107,10 +107,10 @@ def _bearer(value: str | None) -> str | None:
 
 async def resolve_caller(request: Request) -> ResolvedCaller | PublicCaller:
     """Confirms the presented credential and resolves it to this seller's principal."""
-    store, verifier, origin = (
+    store, verifier, identity = (
         request.app.state.store,
         request.app.state.verifier,
-        request.app.state.origin,
+        request.app.state.identity,
     )
     headers = [(k.decode("latin-1"), v.decode("latin-1")) for k, v in request.headers.raw]
     body = await request.body()
@@ -123,13 +123,14 @@ async def resolve_caller(request: Request) -> ResolvedCaller | PublicCaller:
 
     if signed:
         # 2. Confirm the signature. The library fetches the origin's directory as needed.
-        url = request_url(request.scope, origin)
+        url = request_url(request.scope, identity)
         try:
-            verified = await verifier.verify(request.method, url, headers, body)
+            verified = await verifier.verify(HTTPRequest(request.method, url, headers, body))
         except WebBotAuthError as e:
             raise Refused(e.status, e.reason, str(e), headers=_hint(e.status, bool(body))) from e
+        origin = str(verified.origin)
         evidence_id = store.record_evidence(
-            origin=verified.origin,
+            origin=origin,
             keyid=verified.keyid,
             method=request.method,
             url=url,
@@ -139,17 +140,17 @@ async def resolve_caller(request: Request) -> ResolvedCaller | PublicCaller:
         )
         signed_by = {
             "method": "web_bot_auth",
-            "origin": verified.origin,
-            "host": verified.host,
+            "origin": origin,
+            "host": verified.origin.host,
             "body_covered": verified.body_covered,
             "evidence_id": evidence_id,
         }
         # 3. Resolve it in this seller's own records.
-        principal = store.principal_for_origin(verified.origin)
+        principal = store.principal_for_origin(origin)
         if principal is None:
             return PublicCaller(credential=Credential(**signed_by))
         attributes_entries = attributes(
-            verified.host, principal["domain"], body_covered=verified.body_covered
+            verified.origin.host, principal["domain"], body_covered=verified.body_covered
         )
         return ResolvedCaller(
             principal=Principal(**principal),

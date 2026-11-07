@@ -16,7 +16,7 @@ COPY pyproject.toml uv.lock ./
 COPY vendor vendor
 RUN uv sync --no-install-project
 
-COPY demo_types demo_types
+COPY protocol protocol
 COPY shared shared
 COPY seller seller
 COPY buyer buyer

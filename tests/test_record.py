@@ -7,11 +7,11 @@ examples/proposal-agreed.yaml from the OpenProposal 3.0 text.
 from pathlib import Path
 
 import pytest
+from openproposal import AssentEntry, LineItemWrites
 
-from demo_types.stack import AssentEntry
-from shared.attribution import attributes
-from shared.documents import load_yaml
-from shared.record import WriteError, apply_writes, compose, record_digest
+from protocol.attribution import attributes
+from protocol.documents import load_yaml
+from protocol.record import WriteError, apply_writes, compose, record_digest
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -46,13 +46,26 @@ def test_an_empty_buyer_supplied_moves_no_digest():
     assert record_digest(doc, ids) == before
 
 
+COMMITMENT = {
+    "basis": "spend",
+    "amount": 1000.0,
+    "advertisers": [{"domain": "brand-a.example"}],
+    "flight": {"start": "2026-11-02T00:00:00Z", "end": "2026-12-21T23:59:59Z"},
+}
+
+
 def test_writes_set_only_the_keys_they_name():
     item = load_yaml(FIXTURES / "proposal-issued.yaml")["line_items"][1]
-    written = apply_writes(item, {"properties": {"selected": ["weather-app"]}})
+    writes = {"commitment": COMMITMENT, "properties": {"selected": ["weather-app"]}}
+    written = apply_writes(item, LineItemWrites.model_validate(writes))
     assert written["properties"]["selected"] == ["weather-app"]
     assert written["properties"]["available"] == item["properties"]["available"]
     with pytest.raises(WriteError):
-        apply_writes(item, {"pricing": [{"list_rate": 1}]})
+        # The line item has no `daypart`, so there is nothing settable to write.
+        daypart = {
+            "value": {"include": [{"days": ["monday"], "start": "06:00", "before": "22:00"}]}
+        }
+        apply_writes(item, LineItemWrites.model_validate({**writes, "daypart": daypart}))
 
 
 @pytest.mark.parametrize(

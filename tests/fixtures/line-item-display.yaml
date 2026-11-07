@@ -1,0 +1,252 @@
+# OpenProposal 3.0 — Example: Display line item, fully worked (spec § 6.2)
+# Shows selectable audiences with per-option pricing, pricing alternatives in two
+# currencies, cancellation options, and settable bounds.
+line_item_id:   "business-daily-display"
+status:         published
+channel:        display
+
+properties:
+  available:
+    - id: "business-daily"
+      domains: ["business-daily.example"]
+      child_audience: general
+      seller_relationship: owner
+      seller_accounts: [{ asi: "ssp-a.example", sid: "pub-1001" }]
+    - id: "markets-weekly"
+      domains: ["markets-weekly.example"]
+      child_audience: general
+      seller_relationship: owner
+      seller_accounts: [{ asi: "ssp-a.example", sid: "pub-1001" }]
+  included:     ["business-daily"]
+  deltas:       { markets-weekly: { delta_cpm: 2.00 } }
+  max_select:   2
+
+environments:
+  available:    ["web_desktop", "web_mobile"]
+  included:     ["web_desktop", "web_mobile"]
+
+audiences:
+  available:
+    - id: "smb-decision-makers"
+      name: "SMB decision makers"
+      taxonomy: 4
+      sensitive_categories: []
+      data_label:
+        provider_name: "Business Daily Media"
+        provider_domain: "business-daily.example"
+        provider_email: "data@business-daily.example"
+        audience_name: "SMB decision makers"
+        audience_id: 10451
+        taxonomy_id_list: "26"             # Director/Managerial
+        audience_criteria: "Registered readers who declared a managerial role at a small or mid-sized business at sign-up"
+        audience_precision_levels: ["Individual"]
+        audience_scope: "Single domain / App"
+        originating_domain: "business-daily.example"
+        audience_size: 2600000
+        id_types: ["Platform ID"]
+        geocode_list: "USA"
+        privacy_compliance_mechanisms: ["USPrivacy", "GPC"]
+        privacy_policy_url: "https://business-daily.example/privacy"
+        iab_techlab_compliant: "No"
+        data_sources: ["Web Usage"]
+        audience_inclusion_methodology: ["Declared"]
+        audience_expansion: "No"
+        device_expansion: "No"
+        audience_refresh: "Daily"
+        lookback_window: "Monthly"
+        onboarder_match_keys: ["N/A"]
+        onboarder_audience_expansion: "N/A"
+        onboarder_device_expansion: "N/A"
+        onboarder_audience_precision_level: ["N/A"]
+    - id: "hnw-investors"
+      name: "High-net-worth investors"
+      taxonomy: 4
+      sensitive_categories: []
+      data_label:
+        provider_name: "Business Daily Media"
+        provider_domain: "business-daily.example"
+        provider_email: "data@business-daily.example"
+        audience_name: "High-net-worth investors"
+        audience_id: 10452
+        taxonomy_id_list: "190"            # Demographic | Personal Finance | $1,000,000+
+        audience_criteria: "Readers of markets coverage, modeled from subscribers who declared personal affluence over $1,000,000"
+        audience_precision_levels: ["Browser"]
+        audience_scope: "Cross-domain within O&O"
+        originating_domain: "N/A (Cross-domain, Offline)"
+        audience_size: 1100000
+        id_types: ["Cookie ID"]
+        geocode_list: "USA"
+        privacy_compliance_mechanisms: ["USPrivacy", "GPC"]
+        privacy_policy_url: "https://business-daily.example/privacy"
+        iab_techlab_compliant: "No"
+        data_sources: ["Web Usage", "Online Survey"]
+        audience_inclusion_methodology: ["Modeled"]
+        audience_expansion: "Yes"
+        device_expansion: "No"
+        audience_refresh: "Weekly"
+        lookback_window: "Quarterly"
+        onboarder_match_keys: ["N/A"]
+        onboarder_audience_expansion: "N/A"
+        onboarder_device_expansion: "N/A"
+        onboarder_audience_precision_level: ["N/A"]
+    - id: "cfo-finance-leaders"
+      name: "CFOs and finance leaders"
+      taxonomy: 4
+      excludable: true
+      sensitive_categories: []
+      data_label:
+        provider_name: "Business Daily Media"
+        provider_domain: "business-daily.example"
+        provider_email: "data@business-daily.example"
+        audience_name: "CFOs and finance leaders"
+        audience_id: 10453
+        taxonomy_id_list: "26,270"         # Director/Managerial; Business Accounting & Finance
+        audience_criteria: "Registered readers who declared a finance director or CFO role at sign-up"
+        audience_precision_levels: ["Individual"]
+        audience_scope: "Single domain / App"
+        originating_domain: "business-daily.example"
+        audience_size: 480000
+        id_types: ["Platform ID"]
+        geocode_list: "USA"
+        privacy_compliance_mechanisms: ["USPrivacy", "GPC"]
+        privacy_policy_url: "https://business-daily.example/privacy"
+        iab_techlab_compliant: "No"
+        data_sources: ["Web Usage"]
+        audience_inclusion_methodology: ["Declared"]
+        audience_expansion: "No"
+        device_expansion: "No"
+        audience_refresh: "Daily"
+        lookback_window: "Monthly"
+        onboarder_match_keys: ["N/A"]
+        onboarder_audience_expansion: "N/A"
+        onboarder_device_expansion: "N/A"
+        onboarder_audience_precision_level: ["N/A"]
+  included:     ["smb-decision-makers"]
+  deltas:       { "hnw-investors":       { delta_cpm: 4.00 },
+                  "cfo-finance-leaders": { delta_cpm: 6.50 } }
+  max_select:   2
+  combine:      { available: [any, all], included: [any], max_select: 1 }   # the buyer's selected[] can change it
+
+addressable_scale:                    # asserted; recomputed on selection
+  quantity: 3200000
+  unit:     device
+  window:   { start: "2026-10-05T00:00:00Z", end: "2026-12-31T23:59:59Z" }
+
+activation_route:
+  available:    ["seller_side", "clean_room"]
+  included:     ["seller_side"]
+  deltas:       { clean_room: { delta_cpm: 1.50 } }
+
+buyer_supplied:
+  segments_allowed:    true
+  suppression_allowed: true
+  expected_match_rate: 0.65
+
+formats:
+  available:    ["display/300x250", "display/728x90", "display/970x250"]
+  included:     ["display/300x250"]
+  deltas:       { "display/970x250": { delta_cpm: 3.00 } }
+
+format_specs:                           # copied from version 1; values illustrative
+  "display/300x250":
+    spec_ref: "registry.example/display/300x250@1"
+    spec:         { w: 300, h: 250 }
+  "display/728x90":
+    spec_ref: "registry.example/display/728x90@1"
+    spec:         { w: 728, h: 90 }
+  "display/970x250":
+    spec_ref: "registry.example/display/970x250@1"
+    spec:         { w: 970, h: 250 }
+
+creative_delivery: { method: buyer_hosted, other_protocols: [javascript_tag], secure_required: true }
+materials_due:     { before_start: "P1D" }
+
+geo:
+  allowed:      ["US-NY", "US-CA", "US-IL", "US-TX"]
+  default:      { include: ["US-NY", "US-CA", "US-IL", "US-TX"] }
+device:         { allowed: [1, 2, 4, 5], default: { include: [1, 2] } }   # AdCOM 1.0 Device Types; 1 covers 4 and 5
+daypart:
+  allowed:      [{ days: [monday, tuesday, wednesday, thursday, friday], start: "06:00", before: "22:00" }]
+  default:      { include: [{ days: [monday, tuesday, wednesday, thursday, friday], start: "06:00", before: "22:00" }] }
+frequency_cap:  { count: { min: 1, max: 5, default: 3 }, period: day, per: device }
+time_zone:      "America/New_York"
+
+accepted_exclusions:                   # what this seller can enforce (§ 5.5)
+  types:
+    domains:    { enforcement: pre_serve, max_entries: 5000 }
+    categories: { enforcement: pre_serve }
+    keywords:   { enforcement: best_effort, max_entries: 500 }
+
+pricing:
+  - pricing_id:        "bd-cpm-usd"
+    cost_method:       CPM
+    list_rate:         24.00
+    min_rate:          21.00
+    price_valid_until: "2026-11-15T23:59:59Z"
+    currency:          USD
+    price_type:        3              # Fixed Price
+  - pricing_id:        "bd-cpm-eur"
+    cost_method:       CPM
+    list_rate:         22.00
+    price_valid_until: "2026-11-15T23:59:59Z"
+    currency:          EUR
+    price_type:        3              # Fixed Price
+
+cancellation_policy:
+  available:
+    - { id: "notice-14d", notice_duration: "P14D", max_share: 1, fees: [{ calculation: none }] }
+    - { id: "notice-7d", notice_duration: "P7D", max_share: 1, fees: [{ calculation: none }] }
+  included:     ["notice-14d"]
+  deltas:       { "notice-7d": { delta_fraction: 0.02 } }
+  max_select:   1
+
+commitment_bounds: { spend: { min: 10000.00, max: 500000.00 },
+                     earliest_start: "2026-10-05T00:00:00Z", latest_end: "2026-12-31T23:59:59Z" }
+
+hold_terms:     { available: true, duration: "P7D" }
+
+committed_metrics:
+  - { metric: viewable_rate, level: 0.70, direction: at_least }
+  - { metric: ivt_rate,      level: 0.05, direction: at_most }
+measurement_source:
+  available:    [{ id: ias, measured_by: "integralads.com" },
+                 { id: dv, measured_by: "doubleverify.com" }]
+  included:     ["ias"]
+  max_select:   1
+controlling_measurement:              # whose count is invoiced
+  available:
+    - { id: seller-count, counted_by: seller,
+        discrepancy_threshold: 0.10, final_after: "P10D" }
+    - { id: buyer-3pas, counted_by: buyer, qualifier: "Buyer ad server A",
+        discrepancy_threshold: 0.10, final_after: "P15D" }
+  included:     ["seller-count"]
+  max_select:   1
+shortfall_remedy: { available: ["makegood", "credit"], included: ["makegood"] }
+reporting:
+  available:    [{ id: daily-aggregate, report_type: aggregate, cadence: day, delivery_method: api },
+                 { id: daily-log-level, report_type: log_level, cadence: day, delivery_method: s3 }]
+  included:     ["daily-aggregate"]
+  deltas:       { daily-log-level: { delta_flat: 2500.00 } }
+
+visibility:            registry_gated
+required_credentials:  [{ credential_type: iab_registry, issuer: "registry.iabtechlab.ai" }]
+terms_refs:
+  - { url: "https://examplepub.example/legal/io-terms-2026.pdf",
+      digest: "sha256:83e44f6fa723c35fef1b3528b16cc13a8a19ee34a32b658f6d3cc243ce12592e", version: "2026.1" }
+
+transaction_mechanism:
+  available:
+    - { id: programmatic_guaranteed, delivery_type: guaranteed }
+    - { id: preferred_deal, delivery_type: non_guaranteed }
+  included:   ["programmatic_guaranteed"]
+  max_select: 1
+deal_origin:            "adserver.example"
+buyer_requirements:     { seats_expected: true,
+                          allowed_dsps: ["dsp-a.example", "dsp-b.example"] }
+billing:                { invoicing_party: { domain: "examplepub-billing.example",
+                                             legal_name: "Example Publisher Billing LLC" },
+                          payment_terms: "net 30", invoice_period: month,
+                          time_zone: "America/New_York" }
+
+ext:
+  examplepub.example: { placement_code: "BD-ROS-300x250-Q4" }

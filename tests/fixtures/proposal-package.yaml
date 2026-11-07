@@ -1,0 +1,260 @@
+# OpenProposal 3.0 — Example: Package with an add-on (spec § 6.5)
+# Illustrative only. Seller names and rates are fictional. The CTV and audio line items
+# of proposal.yaml, sold only together, with a CTV bonus as an add-on (§ 4.1.4).
+proposal_id:       "examplepub-us-q4-2026-weather-audio"
+version:           1
+spec_version:      "3.0"
+seller:            { domain: "examplepub.example", legal_name: "Example Publisher US" }
+type:              standard
+status:            published
+offer_window:      { start: "2026-10-01T00:00:00Z", end: "2026-12-31T23:59:59Z" }
+
+negotiation_history:
+  - { version: 1, actor: seller, action: published, paths: [],
+      at: "2026-10-03T14:30:00Z" }
+
+description: >
+  Weather-app CTV and a music-stream audio buy, sold together, with a CTV bonus
+  for buyers who commit at least 50,000 to the CTV line item.
+
+packages:
+  - package_id: "weather-audio"
+    line_items:
+      # OpenProposal 3.0 — Example: Audio line item (spec § 6.4)
+      - line_item_id:   "streaming-audio"
+        status:         published
+        channel:        audio
+        properties:     { available: [{ id: "tune-stream", name: "Tune Stream",
+                                        domains: ["tune-stream.example"],
+                                        apps: [{ store: apple_app_store, bundle: "000003",
+                                                 developer_domain: "tune-stream.example" }],
+                                        child_audience: general, seller_relationship: owner,
+                                        seller_accounts: [{ asi: "ssp-a.example", sid: "pub-5001" }] }],
+                          included: ["tune-stream"] }
+        placement:      { feed: 1 }                 # Music streaming service (1) (§ 5.2.2)
+        environments:   { available: ["web_mobile", "app_mobile"],
+                          included:  ["web_mobile", "app_mobile"] }
+        formats:        { available: ["audio/host-read-30s", "audio/produced-30s"],
+                          included: ["audio/produced-30s"],
+                          deltas: { "audio/host-read-30s": { delta_cpm: 9.00 } } }
+        format_specs:                           # seller-defined: no spec_ref; values illustrative
+          "audio/host-read-30s":
+            spec:
+              asset:           script           # the buyer supplies a script, not an audio file
+              read_length_s:   30
+              language:        en
+              delivery:        pre_recorded
+              script_approval: { rounds: 2, lead_time: "P5D" }
+              voice:           human_only
+              pronunciation_guide: accepted
+          "audio/produced-30s":
+            spec:
+              asset:           audio_file
+              duration:        { nominal_s: 30, tolerance_ms: 500 }
+
+        production:
+          available:    [{ id: "seller_built", built_by: seller, lead_time: "P14D" },
+                         { id: "buyer_supplied", built_by: buyer, lead_time: "P0D" }]
+          included:     ["buyer_supplied"]
+          deltas:       { seller_built: { delta_flat: 12000.00 } }
+
+        markets:                               # priced by market (§ 5.5)
+          available:    ["US", "CA", "GB"]
+          included:     ["US"]
+          deltas:       { "CA": { delta_cpm: 1.50 }, "GB": { delta_cpm: 3.00 } }
+          max_select:   3
+
+        frequency_cap:  { count: { min: 1, max: 6, default: 3 }, period: day, per: listener }
+        time_zone:      viewer_local
+
+        pricing:
+          - { pricing_id: "audio-cpm-usd", cost_method: CPM, list_rate: 18.00, min_rate: 15.84,
+              price_valid_until: "2026-12-15T23:59:59Z", currency: USD,
+              price_type: 3 }                  # Fixed Price
+
+        commitment_bounds: { spend: { min: 5000.00 } }
+
+        cancellation_policy:
+          available:
+            - id: "stepped-fee"
+              notice_duration: "P0D"
+              max_share: 1
+              fees:
+                - { before_reference: "P60D", calculation: none }
+                - { before_reference: "P30D", calculation: cancelled, share: 0.25 }
+                - { before_reference: "P7D",  calculation: cancelled, share: 0.50 }
+                - { before_reference: "P0D",  calculation: cancelled, share: 1.00 }
+          included:     ["stepped-fee"]
+          max_select:   1
+
+        exclusivity:
+          available:
+            - id: "auto-pod"
+              scope: category
+              categories: { taxonomy: 8, ids: ["1551"] }   # Ad Product Taxonomy 2.0: Vehicles
+              competitors: ["competitor-auto.example"]
+              separation: pod
+            - { id: "sole-stream", scope: sole, separation: inventory }
+          included:     []                                 # no exclusivity in the base rate
+          deltas:       { "auto-pod": { delta_cpm: 4.00 }, "sole-stream": { delta_flat: 25000.00 } }
+          max_select:   1
+
+        committed_metrics: [{ metric: completion_rate, level: 0.92, direction: at_least }]
+        measurement_source:
+          available:    [{ id: seller-measured, measured_by: seller }]
+          included:     ["seller-measured"]
+        controlling_measurement:
+          available:    [{ id: seller-count, counted_by: seller,
+                           discrepancy_threshold: 0.10, final_after: "P30D" }]
+          included:     ["seller-count"]
+          max_select:   1
+        visibility:        public
+        transaction_mechanism:
+          available:  [{ id: preferred_deal, delivery_type: non_guaranteed }]
+          included:   ["preferred_deal"]
+          max_select: 1
+        serving_mode:      dai
+        deal_origin:       "ssp-a.example"
+
+      # OpenProposal 3.0 — Example: CTV line item (spec § 6.3)
+      - line_item_id:   "weather-app-ctv"
+        status:         published
+        channel:        ctv
+        properties:
+          available:
+            - id: "weather-app"
+              child_audience: general
+              apps:
+                - { store: roku_channel_store, bundle: "000000",
+                    store_url: "https://channelstore.roku.com/details/000000/weather-app",
+                    developer_domain: "weather-app.example" }
+              seller_relationship: owner
+              seller_accounts: [{ asi: "ssp-a.example", sid: "pub-1001" }]
+          included: ["weather-app"]
+        environments:   { available: ["ctv"], included: ["ctv"] }
+        placement:      { plcmt: 1, ssai: 3 }      # Instream (1); all server-side (3) (§ 5.2.2)
+        break_position:                                # where in the stream, priced (§ 5.2.3)
+          available:
+            - { id: "midroll-any",  delay: -1, slotinpod: 0, maxseq: 4 }   # Generic Mid-Roll (-1), Any ad in the pod (0)
+            - { id: "preroll",      delay: 0,  slotinpod: 0 }              # Pre-Roll (0), Any ad in the pod (0)
+            - { id: "first-in-pod", delay: -1, slotinpod: 1, maxseq: 4 }   # Generic Mid-Roll (-1), First ad in the pod (1)
+          included:     ["midroll-any"]
+          deltas:       { "preroll": { delta_cpm: 4.00 }, "first-in-pod": { delta_cpm: 9.00 } }
+          max_select:   1
+        formats:        { available: ["ctv/instream-15s", "ctv/instream-30s", "ctv/instream-6s"],
+                          included: ["ctv/instream-15s"],
+                          deltas: { "ctv/instream-30s": { delta_cpm: 8.00 } } }
+        format_specs:
+          "ctv/instream-15s":
+            spec_ref: "registry.example/ctv/instream-15s@1"
+            spec:                                   # copied from version 1; values illustrative
+              duration:    { nominal_s: 15, tolerance_ms: 500 }
+              source:      vast_mezzanine
+              mezzanine:   { required_for: [ssai], min_resolution: "1920x1080" }
+              loudness:    { standard: atsc_a85, target: -24, tolerance_db: 2 }
+              creative_id: { universal_ad_id: required }
+          "ctv/instream-30s":
+            spec_ref: "registry.example/ctv/instream-30s@1"
+            spec:        { duration: { nominal_s: 30, tolerance_ms: 500 } }
+          "ctv/instream-6s":                        # seller-defined: no spec_ref
+            spec:        { asset: video_file, duration: { nominal_s: 6, tolerance_ms: 250 } }
+        creative_delivery: { method: seller_hosted, protocols: [13], secure_required: true }   # VAST 4.2 (13)
+
+        frequency_cap:  { count: { min: 1, max: 4, default: 3 }, period: day, per: household }
+        time_zone:      viewer_local
+        accepted_exclusions:                   # what this seller can enforce (§ 5.5)
+          types:
+            domains:  { enforcement: pre_serve, max_entries: 5000 }
+            keywords: { enforcement: best_effort, max_entries: 500 }
+
+        pricing:
+          - { pricing_id: "ctv-pa-cpm-usd", cost_method: CPM, list_rate: 45.00, min_rate: 39.60,
+              price_valid_until: "2026-12-01T23:59:59Z", currency: USD,
+              price_type: 1 }                  # First Price
+
+        commitment_bounds: { spend: { min: 25000.00 } }
+
+        cancellation_policy:
+          available:
+            - { id: "notice-30d", notice_duration: "P30D", max_share: 1, fees: [{ calculation: none }] }
+            - { id: "notice-14d", notice_duration: "P14D", max_share: 1, fees: [{ calculation: none }] }
+            - { id: "notice-48h", notice_duration: "PT48H", max_share: 1,
+                fees: [{ calculation: cancelled, share: 0.10 }] }
+          included:     ["notice-30d"]
+          deltas:       { "notice-14d": { delta_fraction: 0.03 }, "notice-48h": { delta_fraction: 0.06 } }
+          max_select:   1
+
+        hold_terms:     { available: false }   # private_auction: no inventory reserved
+
+        committed_metrics: [{ metric: completion_rate, level: 0.95, direction: at_least }]
+        measurement_source:
+          available:    [{ id: seller-measured, measured_by: seller }]
+          included:     ["seller-measured"]
+        controlling_measurement:
+          available:    [{ id: seller-count, counted_by: seller,
+                           discrepancy_threshold: 0.10, final_after: "P30D" }]
+          included:     ["seller-count"]
+          max_select:   1
+        visibility:        public
+        transaction_mechanism:
+          available:  [{ id: private_auction, delivery_type: non_guaranteed }]
+          included:   ["private_auction"]
+          max_select: 1
+        serving_mode:      dai
+        deal_origin:       "ssp-a.example"
+
+        # Inspecting this line item's VAST creative is subject to § 5.4.1.
+
+    add_ons:
+      # The add-on, as in line-item-ctv-bonus.yaml (spec § 6.5): a CTV bonus a buyer may
+      # commit only with the whole package and at least 50,000 of spend on the CTV line
+      # item. Its price is its own: it names no other line item and inherits nothing.
+      - line_item_id:   "weather-app-ctv-bonus"
+        status:         published
+        channel:        ctv
+        properties:
+          available:
+            - id: "weather-app"
+              apps:
+                - { store: roku_channel_store, bundle: "000000",
+                    store_url: "https://channelstore.roku.com/details/000000/weather-app",
+                    developer_domain: "weather-app.example" }
+              child_audience: general
+              seller_relationship: owner
+              seller_accounts: [{ asi: "ssp-a.example", sid: "pub-1001" }]
+          included: ["weather-app"]
+        environments:   { available: ["ctv"], included: ["ctv"] }
+        placement:      { plcmt: 1, ssai: 3 }      # Instream (1); all server-side (3) (§ 5.2.2)
+        formats:        { available: ["ctv/instream-15s"], included: ["ctv/instream-15s"] }
+        format_specs:
+          "ctv/instream-15s":
+            spec_ref: "registry.example/ctv/instream-15s@1"
+            spec:                                   # copied from version 1; values illustrative
+              duration:    { nominal_s: 15, tolerance_ms: 500 }
+              source:      vast_mezzanine
+              mezzanine:   { required_for: [ssai], min_resolution: "1920x1080" }
+              loudness:    { standard: atsc_a85, target: -24, tolerance_db: 2 }
+              creative_id: { universal_ad_id: required }
+        creative_delivery: { method: seller_hosted, protocols: [13], secure_required: true }   # VAST 4.2 (13)
+
+        frequency_cap:  { count: { min: 1, max: 2, default: 1 }, period: day, per: household }
+        time_zone:      viewer_local
+
+        pricing:
+          - { pricing_id: "ctv-bonus-flat-usd", cost_method: FLAT, list_rate: 0.00,
+              price_valid_until: "2026-12-01T23:59:59Z", currency: USD }
+
+        cancellation_policy:
+          available:
+            - { id: "notice-14d", notice_duration: "P14D", max_share: 1, fees: [{ calculation: none }] }
+          included:     ["notice-14d"]
+        visibility:   public
+
+        transaction_mechanism:
+          available:  [{ id: direct_io, delivery_type: non_guaranteed }]
+          included:   ["direct_io"]
+          max_select: 1
+        serving_mode:      dai
+
+    min_commitments:
+      - { line_item_id: "weather-app-ctv", basis: spend, amount: 50000.00 }

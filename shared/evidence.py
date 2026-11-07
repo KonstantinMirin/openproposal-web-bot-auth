@@ -9,12 +9,13 @@ identical, which happens when two signatures verified against one cached fetch.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import sqlite3
 
-import rfc8785
 from iab_agentic_primitives.web_bot_auth import VerifiedDirectory
+
+from protocol.record import canonical, sha256_hex
+from protocol.values import JsonObject, JsonValue
 
 DIRECTORIES_SCHEMA = """
 -- A verified key directory response: one row per fetch. evidence is
@@ -35,14 +36,14 @@ def save_directory(db: sqlite3.Connection, directory: VerifiedDirectory | None) 
     """Stores the directory a verification used and returns its row key."""
     if directory is None:
         return None
-    headers = [list(line) for line in directory.headers]
-    fetch = {
+    headers: list[JsonValue] = [[name, value] for name, value in directory.headers]
+    fetch: JsonObject = {
         "url": directory.url,
         "status": directory.status,
         "headers": headers,
         "fetched_at": directory.fetched_at,
     }
-    digest = hashlib.sha256(rfc8785.dumps(fetch) + directory.body).hexdigest()
+    digest = sha256_hex(canonical(fetch) + directory.body)
     db.execute(
         "INSERT OR IGNORE INTO directories"
         " (digest, url, status, headers, body, fetched_at, evidence)"

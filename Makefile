@@ -10,6 +10,7 @@ lint: cfbot/node_modules
 	uv run ruff check --config ruff-domain.toml
 	uv run ruff check --config ruff-environment.toml
 	uv run ruff check --config ruff-buyer.toml
+	uv run ruff check --config ruff-digest.toml
 	cd cfbot && npx --no-install eslint server.mjs
 
 cfbot/node_modules: cfbot/package-lock.json

@@ -20,6 +20,7 @@ import httpx
 import pytest
 from iab_agentic_primitives.web_bot_auth import (
     Ed25519Key,
+    HTTPRequest,
     RequestSigner,
     StaticKeyResolver,
     parse_directory_response,
@@ -48,7 +49,8 @@ def signed(
 ) -> dict[str, str]:
     """Headers for a request signed as `origin` with `key` (by default, the buyer's active key)."""
     headers = {"Content-Type": "application/json"} if body else {}
-    return headers | RequestSigner(key or buyer_key(), origin).sign(method, url, headers, body)
+    request = HTTPRequest(method, url, headers, body)
+    return dict(RequestSigner(key or buyer_key(), origin).sign(request).headers.items())
 
 
 def commit_body(amount: float) -> bytes:

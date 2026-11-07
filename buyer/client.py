@@ -14,6 +14,7 @@ from typing import Literal
 import httpx
 from iab_agentic_primitives.web_bot_auth import (
     DirectoryResolver,
+    Origin,
     RequestSigner,
     ResponseVerifier,
     VerifiedSignature,
@@ -64,13 +65,13 @@ async def call_seller(
     verifier = ResponseVerifier(resolver)
     if signer is not None:
         # Signs the request, then verifies the response and its binding to it.
-        auth = WebBotAuth(signer, verifier, expected_origin=seller_origin)
+        auth = WebBotAuth(signer, verifier, expected_origin=Origin.parse(seller_origin))
     else:
         if token is None:
             raise ValueError(f"no bearer token is configured for {seller_origin}")
         headers["Authorization"] = f"Bearer {token}"
         # Sends the request unsigned, and still verifies the seller's signed answer.
-        auth = WebBotAuth.verify_only(verifier, expected_origin=seller_origin)
+        auth = WebBotAuth.verify_only(verifier, expected_origin=Origin.parse(seller_origin))
     async with http_client() as client:
         response = await client.request(method, url, content=body, headers=headers, auth=auth)
     verified = response.extensions["web_bot_auth"]

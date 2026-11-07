@@ -4,14 +4,8 @@
 # Run as its own stage: `uv run ruff check --config ruff-domain.toml` (make lint).
 # A separate config, so that no exemption here leaks into another ban.
 #
-# Scope today: the modules that hold the record rules both parties share. Step 1
-# moves the scope to protocol/**, and Step 5 adds seller/offers/**.
-include = [
-    "shared/record.py",
-    "shared/attribution.py",
-    "shared/documents.py",
-    "demo_types/**/*.py",
-]
+# Scope: the protocol rules both parties share. Step 5 adds seller/offers/**.
+include = ["protocol/**/*.py"]
 
 [lint]
 select = ["TID251"]

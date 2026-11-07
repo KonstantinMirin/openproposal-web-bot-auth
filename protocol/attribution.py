@@ -15,14 +15,14 @@ import tldextract
 _PSL = tldextract.TLDExtract(suffix_list_urls=(), cache_dir=None, include_psl_private_domains=True)
 
 
-def canonical_host(name: str) -> str:
+def canonicalize_host(name: str) -> str:
     """A host or domain in lowercase A-label form (§ 2.2 `Domain`)."""
     return idna.encode(name.rstrip("."), uts46=True).decode("ascii")
 
 
 def names_a_party(domain: str) -> bool:
     """False for a value that can't name a party: a public suffix, or a name under no suffix."""
-    parts = _PSL(canonical_host(domain))
+    parts = _PSL(canonicalize_host(domain))
     return bool(parts.suffix and parts.domain)
 
 
@@ -30,5 +30,5 @@ def attributes(signing_host: str, party_domain: str, *, body_covered: bool) -> b
     """True when a signature from `signing_host` attributes an entry to `party_domain`'s party."""
     if not body_covered or not names_a_party(party_domain):
         return False
-    host, domain = canonical_host(signing_host), canonical_host(party_domain)
+    host, domain = canonicalize_host(signing_host), canonicalize_host(party_domain)
     return host == domain or host.endswith("." + domain)

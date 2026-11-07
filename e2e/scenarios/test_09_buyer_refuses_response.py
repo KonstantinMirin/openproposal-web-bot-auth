@@ -36,7 +36,8 @@ def _seller_state(seller_db) -> tuple[list[tuple[str, str]], list[str]]:
 def test_buyer_refuses_unverifiable_responses(web, fault, seller_db, buyer_db):
     accepted = None
     for mode, reason in [
-        ("strip", "response-unsigned"),
+        # The library's reason for a response with no signature (wbalib-r1g.3).
+        ("strip", "signature-missing"),
         ("unbound", "response-not-bound"),
         ("rebound", "signature-invalid"),
     ]:

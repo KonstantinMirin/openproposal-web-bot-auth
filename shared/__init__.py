@@ -1,1 +1,2 @@
-"""What both parties share: the OpenProposal record rules and the Web Bot Auth setup."""
+"""What both parties share beside the protocol rules: the Web Bot Auth setup, the evidence
+store, and the operator key."""

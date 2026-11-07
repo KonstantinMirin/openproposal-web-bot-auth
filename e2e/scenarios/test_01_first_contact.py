@@ -11,7 +11,13 @@ import hashlib
 import json
 
 from conftest import BUYER, BUYER_OPERATOR, SELLER, stored_keys
-from iab_agentic_primitives.web_bot_auth import HTTPRequest, RequestVerifier, ResponseVerifier
+from iab_agentic_primitives.web_bot_auth import (
+    HTTPRequest,
+    HTTPResponse,
+    Origin,
+    RequestVerifier,
+    ResponseVerifier,
+)
 
 
 def test_first_contact_by_signature(web, seller_db, buyer_db):
@@ -70,8 +76,10 @@ def test_first_contact_by_signature(web, seller_db, buyer_db):
     request_headers = [tuple(line) for line in json.loads(evidence["headers"])]
     again = RequestVerifier(
         stored_keys(seller_db, evidence["directory_digest"], BUYER)
-    ).verify_sync(evidence["method"], evidence["url"], request_headers, evidence["body"])
-    assert again.origin == BUYER and again.keyid == evidence["keyid"] and again.body_covered
+    ).verify_sync(
+        HTTPRequest(evidence["method"], evidence["url"], request_headers, evidence["body"])
+    )
+    assert str(again.origin) == BUYER and again.keyid == evidence["keyid"] and again.body_covered
 
     # The buyer kept the seller's signed answer as received, bound to its request.
     answer = buyer_db.execute(
@@ -89,11 +97,13 @@ def test_first_contact_by_signature(web, seller_db, buyer_db):
     answered = ResponseVerifier(
         stored_keys(buyer_db, answer["directory_digest"], SELLER)
     ).verify_sync(
-        answer["status"],
-        [tuple(line) for line in json.loads(answer["headers"])],
-        answer["body"],
-        sent,
-        expected_origin=SELLER,
+        HTTPResponse(
+            answer["status"],
+            [tuple(line) for line in json.loads(answer["headers"])],
+            answer["body"],
+            sent,
+        ),
+        expected_origin=Origin.parse(SELLER),
     )
     assert answered.bound and answered.body_covered and answered.keyid == answer["keyid"]
 

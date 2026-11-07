@@ -325,7 +325,7 @@ signature: sig1=:5kF9XH4bsuauHZoFccx+QIPx31fC1lEEETIkSXE22ZRLN8OIL1otTSDNxFNjTIx
 <div class="diagram">
 <svg viewBox="0 0 760 468" role="img" aria-labelledby="f4-title f4-desc">
   <title id="f4-title">The same packages in the buyer and the seller</title>
-  <desc id="f4-desc">The buyer and the seller each run their own logic on top of the same layers: the generated OpenProposal SDK, the stopgap stack types in demo_types/stack.py, the record rules in shared/record.py, and the Web Bot Auth library. Both compute the same record_digest from the same bytes. cfbot, on Cloudflare's library, is a second implementation that proves interop rather than shared code.</desc>
+  <desc id="f4-desc">The buyer and the seller each run their own logic on top of the same layers: the generated OpenProposal SDK, the stopgap commit rules in protocol/operations.py, the record rules in protocol/record.py, and the Web Bot Auth library. Both compute the same record_digest from the same bytes. cfbot, on Cloudflare's library, is a second implementation that proves interop rather than shared code.</desc>
 
   <text class="t-title" x="160" y="26" text-anchor="middle">Buyer</text>
   <text class="t-title" x="600" y="26" text-anchor="middle">Seller</text>
@@ -348,20 +348,20 @@ signature: sig1=:5kF9XH4bsuauHZoFccx+QIPx31fC1lEEETIkSXE22ZRLN8OIL1otTSDNxFNjTIx
   <text class="t-small" x="380" y="128" text-anchor="middle">same types</text>
 
   <rect class="box-stopgap" x="20" y="160" width="280" height="46" rx="6"/>
-  <text class="t-title t-stopgap" x="36" y="180">Stack types, a stopgap</text>
-  <text class="t-mono t-small" x="36" y="198">demo_types/stack.py</text>
+  <text class="t-title t-stopgap" x="36" y="180">Commit rules, a stopgap</text>
+  <text class="t-mono t-small" x="36" y="198">protocol/operations.py</text>
   <rect class="box-stopgap" x="460" y="160" width="280" height="46" rx="6"/>
-  <text class="t-title t-stopgap" x="476" y="180">Stack types, a stopgap</text>
-  <text class="t-mono t-small" x="476" y="198">demo_types/stack.py</text>
+  <text class="t-title t-stopgap" x="476" y="180">Commit rules, a stopgap</text>
+  <text class="t-mono t-small" x="476" y="198">protocol/operations.py</text>
   <path class="wire-muted" d="M302,183 H324 M436,183 H458"/>
-  <text class="t-small" x="380" y="188" text-anchor="middle">same, by hand</text>
+  <text class="t-small" x="380" y="188" text-anchor="middle">same pair rule</text>
 
   <rect class="box" x="20" y="220" width="280" height="46" rx="6"/>
   <text class="t-title" x="36" y="240">Record rules (§ 4.1.1)</text>
-  <text class="t-mono t-small" x="36" y="258">shared/record.py</text>
+  <text class="t-mono t-small" x="36" y="258">protocol/record.py</text>
   <rect class="box" x="460" y="220" width="280" height="46" rx="6"/>
   <text class="t-title" x="476" y="240">Record rules (§ 4.1.1)</text>
-  <text class="t-mono t-small" x="476" y="258">shared/record.py</text>
+  <text class="t-mono t-small" x="476" y="258">protocol/record.py</text>
   <path class="wire-muted" d="M302,243 H324 M436,243 H458"/>
   <text class="t-small" x="380" y="248" text-anchor="middle">same digest rule</text>
 
@@ -390,7 +390,7 @@ signature: sig1=:5kF9XH4bsuauHZoFccx+QIPx31fC1lEEETIkSXE22ZRLN8OIL1otTSDNxFNjTIx
 <div class="prose">
 <p>An agreement holds only if both parties compute the same <code>record_digest</code>: the SHA-256 of the binding record in RFC 8785 canonical form. A party that parses one field differently, drops an unknown member, or writes a number another way computes a different digest, and the seller answers <code>record_mismatch</code>. The same holds for signatures: two verifiers that read the profile differently accept different messages.</p>
 <p>A generated SDK removes that risk at the source. Every party, in every language, gets types generated from one schema, so each one parses and serializes the same way. The Web Bot Auth library does the same for signing and verification. When the buyer and the seller each use these packages, they agree by construction rather than by testing each pair.</p>
-<p class="callout"><strong>Stopgap:</strong> <code>demo_types/stack.py</code> defines <code>Commit</code>, <code>CommitResult</code>, and <code>AssentEntry</code> by hand, because the SDK generator doesn't cover these three types of the specification's pull-request stack yet. Generated types replace that module, and both parties then import them from <code>openproposal</code> like every other type.</p>
+<p class="callout"><strong>Stopgap:</strong> <code>protocol/</code> holds the rules the SDK generator doesn't emit yet: the binding record and <code>record_digest</code>, and the § 5.6.1 rules that tie a <code>Commit</code>'s members together. It is typed on the generated classes, and both parties call it. When the generator emits these helpers, both parties import them from <code>openproposal</code> like every type.</p>
 </div>
 </section>
 
