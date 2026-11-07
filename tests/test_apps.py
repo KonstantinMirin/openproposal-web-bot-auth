@@ -11,6 +11,7 @@ import sqlite3
 from collections.abc import Iterator
 from pathlib import Path
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 from iab_agentic_primitives.web_bot_auth import (
@@ -36,11 +37,11 @@ from buyer.settings import BuyerSettings
 from seller.app import create_app as create_seller
 from seller.resources import SellerResources
 from seller.settings import SellerSettings
+from tests.stack import TOKEN
 
 SELLER = "https://seller.example"
 BUYER = "https://buyer.example"
 OPERATOR = {"X-Operator-Key": "operator-key-for-tests"}
-TOKEN = "bearer-token-for-tests"  # noqa: S105 -- a test value, not a deployed secret
 
 
 def seller_settings(data_dir: Path, *, faults: bool = False) -> SellerSettings:
@@ -258,23 +259,21 @@ def buyer(tmp_path: Path) -> Iterator[TestClient]:
         yield client
 
 
-def test_the_buyer_rotates_its_keys_through_its_operator_routes(buyer: TestClient) -> None:
-    assert buyer.get("/operator/keys").status_code == 403
-    keys = buyer.get("/operator/keys", headers=OPERATOR).json()
-    published = buyer.post("/operator/keys", headers=OPERATOR).json()
-    assert published["active"] == keys["active"]
-    assert set(published["published"]) == {keys["active"], published["published_kid"]}
-    # The production wait (600 s) hasn't passed, and the active key can't be retired.
-    new, old = published["published_kid"], keys["active"]
-    assert buyer.post(f"/operator/keys/{new}/activate", headers=OPERATOR).status_code == 409
-    assert buyer.delete(f"/operator/keys/{old}", headers=OPERATOR).status_code == 409
+def test_a_trigger_that_omits_the_seller_targets_the_configured_seller(tmp_path: Path) -> None:
+    """Defect 7a: the default used to be a literal origin, not the configured seller."""
+    sent: list[str] = []
 
+    def network(request: httpx.Request) -> httpx.Response:
+        sent.append(str(request.url))
+        return httpx.Response(503)  # unsigned, so the buyer refuses it
 
-def test_the_buyer_serves_its_keyring_as_its_directory(buyer: TestClient) -> None:
-    active = buyer.get("/operator/keys", headers=OPERATOR).json()["active"]
-    directory = buyer.get(DIRECTORY_PATH)
-    assert directory.status_code == 200
-    assert [k["kid"] for k in directory.json()["keys"]] == [active]
+    app = create_buyer(buyer_settings(tmp_path), transport=httpx.MockTransport(network))
+    with TestClient(app) as client:
+        outcome = client.post(
+            "/operator/read", json={"proposal_id": "p-1"}, headers=OPERATOR
+        ).json()
+    assert sent == [f"{SELLER}/proposals/p-1"]  # https://seller.example, as configured
+    assert (outcome["state"], outcome["reason"]) == ("refused", "signature-missing")
 
 
 def test_the_buyer_lifespan_closes_the_client_and_the_store(tmp_path: Path) -> None:

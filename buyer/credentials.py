@@ -15,7 +15,7 @@ from iab_agentic_primitives.web_bot_auth import Origin, RequestSigner, ResponseV
 from iab_agentic_primitives.web_bot_auth.httpx import WebBotAuth
 from pydantic import SecretStr
 
-from shared.auth import BearerMethod, SignatureMethod
+from transport.auth import BearerMethod, SignatureMethod
 
 
 @dataclass(frozen=True)

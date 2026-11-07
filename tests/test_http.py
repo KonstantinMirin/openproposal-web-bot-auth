@@ -47,18 +47,15 @@ def _error(code: str, retry: str = "none") -> ErrorObject:
     return ErrorObject.model_validate({"code": code, "detail": "d", "retry": retry})
 
 
-def test_the_spec_table_names_every_core_code() -> None:
+def test_every_core_code_gets_its_spec_status_and_retry_same_fits_503() -> None:
+    """The § 2.4 table: the SDK's core codes are the spec's, and each maps to its status."""
     assert set(CORE) == set(SPEC_STATUS)
-
-
-@pytest.mark.parametrize("code", sorted(SPEC_STATUS))
-def test_each_core_code_gets_the_spec_status(code: str) -> None:
-    assert status_for(_error(code)) == SPEC_STATUS[code]
-    assert status_for(_error(code, "refetch")) == SPEC_STATUS[code]
-    assert status_for(_error(code, "same")) == 503  # an error with retry: same fits 503
+    assert {code: status_for(_error(code)) for code in CORE} == SPEC_STATUS
+    assert {status_for(_error(code, "same")) for code in CORE} == {503}
 
 
 def test_an_extension_code_acts_on_retry() -> None:
+    """Defect 6: an unknown code raised KeyError; status_for is total."""
     assert status_for(_error("seller.example.com:inventory-hold")) == 400
     assert status_for(_error("seller.example.com:inventory-hold", "same")) == 503
 

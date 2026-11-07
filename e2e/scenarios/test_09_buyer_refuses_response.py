@@ -13,17 +13,21 @@ idempotency_key. The seller returns the stored result and writes no second
 entry (§ 5.6.1). Once the answer verifies, the buyer records the agreement.
 """
 
+from collections.abc import Callable, Iterator
+
+import httpx
 import pytest
 from conftest import BUYER_OPERATOR, SELLER_FAULTS
 
+from persistence.observe import BuyerRecords, SellerRecords
+from transport.control import CommitTrigger, ReadTrigger
+
 #: Each credential's own proposal and line item, which no earlier scenario commits to.
 TRIGGER = {
-    "web_bot_auth": {"proposal_id": "demo-wba-2", "line_item_ids": ["weather-app-ctv"]},
-    "bearer": {
-        "proposal_id": "demo-bearer-1",
-        "line_item_ids": ["weather-app-ctv"],
-        "credential": "bearer",
-    },
+    "web_bot_auth": CommitTrigger(proposal_id="demo-wba-2", line_item_ids=["weather-app-ctv"]),
+    "bearer": CommitTrigger(
+        proposal_id="demo-bearer-1", line_item_ids=["weather-app-ctv"], credential="bearer"
+    ),
 }
 #: The faults each credential must refuse, with the library's reason for each.
 FAULTS = {
@@ -39,43 +43,52 @@ CREDENTIALS = list(TRIGGER)
 
 
 @pytest.fixture
-def fault(web):
+def fault(web: httpx.Client) -> Iterator[Callable[[str, str], None]]:
     def set_fault(mode: str, on: str = "commit") -> None:
         assert web.put(SELLER_FAULTS, json={"mode": mode, "on": on}).status_code == 200
 
     yield set_fault
-    set_fault("none")
+    set_fault("none", "commit")
 
 
-def _seller_state(seller_records, proposal_id: str) -> tuple[list[tuple[str, str]], list[str]]:
+def _seller_state(
+    seller_records: SellerRecords, proposal_id: str
+) -> tuple[list[tuple[str, str | None]], list[str]]:
     entries = [(e.role, e.idempotency_key) for e in seller_records.entries(proposal_id)]
     return entries, seller_records.processed(proposal_id)
 
 
 @pytest.mark.parametrize("credential", CREDENTIALS)
-def test_buyer_refuses_unverifiable_reads(web, fault, credential):
-    read = {k: v for k, v in TRIGGER[credential].items() if k != "line_item_ids"}
+def test_buyer_refuses_unverifiable_reads(
+    web: httpx.Client, fault: Callable[[str, str], None], credential: str
+) -> None:
+    trigger = TRIGGER[credential]
+    read = ReadTrigger(proposal_id=trigger.proposal_id, credential=trigger.credential).model_dump()
     for mode, reason in FAULTS[credential]:
         fault(mode, "read")
         outcome = web.post(f"{BUYER_OPERATOR}/read", json=read).json()
         assert (outcome["state"], outcome["reason"]) == ("refused", reason), (mode, outcome)
         assert outcome["authentication_method"] == credential
 
-    fault("none")
+    fault("none", "commit")
     assert web.post(f"{BUYER_OPERATOR}/read", json=read).json()["state"] == "read"
 
 
 @pytest.mark.parametrize("credential", CREDENTIALS)
 def test_buyer_refuses_unverifiable_commit_answers(
-    web, fault, seller_records, buyer_records, credential
-):
+    web: httpx.Client,
+    fault: Callable[[str, str], None],
+    seller_records: SellerRecords,
+    buyer_records: BuyerRecords,
+    credential: str,
+) -> None:
     trigger = TRIGGER[credential]
-    proposal_id, items = trigger["proposal_id"], trigger["line_item_ids"]
+    proposal_id, items = trigger.proposal_id, trigger.line_item_ids
     before_entries, before_processed = _seller_state(seller_records, proposal_id)
     accepted = None
     for mode, reason in FAULTS[credential]:
-        fault(mode)
-        outcome = web.post(f"{BUYER_OPERATOR}/commit", json=trigger).json()
+        fault(mode, "commit")
+        outcome = web.post(f"{BUYER_OPERATOR}/commit", json=trigger.model_dump()).json()
         assert (outcome["state"], outcome["reason"]) == ("refused", reason), (mode, outcome)
 
         pending = buyer_records.commits(proposal_id, items)
@@ -93,8 +106,8 @@ def test_buyer_refuses_unverifiable_commit_answers(
             # Each retry is a replay of that commit: the stored result, and no new entry.
             assert state == accepted
 
-    fault("none")
-    outcome = web.post(f"{BUYER_OPERATOR}/commit", json=trigger).json()
+    fault("none", "commit")
+    outcome = web.post(f"{BUYER_OPERATOR}/commit", json=trigger.model_dump()).json()
     assert outcome["state"] == "agreed", outcome
     assert outcome["authentication_method"] == credential
     assert _seller_state(seller_records, proposal_id) == accepted

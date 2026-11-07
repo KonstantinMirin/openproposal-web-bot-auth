@@ -8,6 +8,16 @@
 # Caddy forwards the original Host; the agents verify against their own configured origin anyway.
 # Each agent's own controls (/operator/, cfbot's /run/, the test-only /test/) are never routed.
 
+# Every site block logs to one file.
+(wba_log) {
+	log {
+		output file /var/log/caddy/wba-demo-access.log {
+			roll_size 20mb
+			roll_keep 5
+		}
+	}
+}
+
 wba-demo.noetis.dev {
 	encode gzip zstd
 	# The runner's reports (runner/main.py), rewritten every 15 minutes.
@@ -21,46 +31,26 @@ wba-demo.noetis.dev {
 		root * /srv/wba-demo/openproposal-web-bot-auth/site
 		file_server
 	}
-	log {
-		output file /var/log/caddy/wba-demo-access.log {
-			roll_size 20mb
-			roll_keep 5
-		}
-	}
+	import wba_log
 }
 
 seller.wba-demo.noetis.dev {
 	@internal path /operator/* /test/*
 	respond @internal "Not found" 404
 	reverse_proxy 127.0.0.1:18081
-	log {
-		output file /var/log/caddy/wba-demo-access.log {
-			roll_size 20mb
-			roll_keep 5
-		}
-	}
+	import wba_log
 }
 
 buyer.wba-demo.noetis.dev {
 	@internal path /operator/*
 	respond @internal "Not found" 404
 	reverse_proxy 127.0.0.1:18082
-	log {
-		output file /var/log/caddy/wba-demo-access.log {
-			roll_size 20mb
-			roll_keep 5
-		}
-	}
+	import wba_log
 }
 
 cfbot.wba-demo.noetis.dev {
 	@internal path /run/*
 	respond @internal "Not found" 404
 	reverse_proxy 127.0.0.1:18083
-	log {
-		output file /var/log/caddy/wba-demo-access.log {
-			roll_size 20mb
-			roll_keep 5
-		}
-	}
+	import wba_log
 }

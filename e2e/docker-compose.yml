@@ -1,13 +1,16 @@
 # The demo stack. Run it with ./e2e/run-e2e.sh (or `make e2e`), which first
-# writes e2e/generated/ with gen_demo_tls.py.
+# writes e2e/generated/: the throwaway TLS material and secrets
+# (gen_demo_tls.py), and the front's Caddyfile (deploy/local_caddy.py).
 #
-# Every agent is reached at https://<name>.wba-demo.noetis.dev through the TLS
-# front, whose network aliases are those three names. Every container trusts
-# the public roots plus the demo CA. No agent is configured with another's key.
+# The services are deploy/compose.base.yml's; this file adds what the test
+# needs: the demo CA in every trust store, the short timings, the test-only
+# fault toggle, the TLS front, and the scenarios service. Every agent is
+# reached at https://<name>.wba-demo.noetis.dev through the front, whose network
+# aliases are those three names. The front is Caddy serving the production
+# snippet (deploy/Caddyfile.snippet), so scenario 11 checks the routing policy
+# that is deployed. No agent is configured with another's key.
 name: wba-demo
 
-# Origins: SELF_ORIGIN is a service's own origin, PEER_<ROLE>_ORIGIN a counterparty's.
-#
 # Timing, short so the rotation scenario stays short, and stated once: the agents
 # that use each value and the scenario that waits on it read the same anchor.
 # Production uses the library default, 300 s, for the cache age; serves max-age
@@ -21,77 +24,52 @@ x-rotation: &rotation
   WBA_ROTATION_WAIT: "20"
   WBA_SIGNATURE_LIFETIME: "10"
 
-x-python: &python
+x-test: &test
   image: wba-demo-python:local
-  build:
-    context: ..
-    additional_contexts:
-      wba-lib: ../../iab-agentic-primitives
   env_file: generated/demo.env
-  networks: [demo]
-  healthcheck:
-    test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
-    interval: 2s
-    retries: 30
+  healthcheck: { interval: 2s }
 
 services:
   seller:
-    <<: *python
-    command: ["uvicorn", "--factory", "seller.app:app_from_env", "--host", "0.0.0.0", "--port", "8000"]
-    user: app
+    extends: { file: ../deploy/compose.base.yml, service: seller }
+    <<: *test
     environment:
       <<: *cache-age
       SSL_CERT_FILE: /certs/bundle.pem
-      SELF_ORIGIN: https://seller.wba-demo.noetis.dev
-      PEER_BUYER_ORIGIN: https://buyer.wba-demo.noetis.dev
       # TEST ONLY: mounts PUT /test/fault (seller/faults.py).
       DEMO_FAULT_INJECTION: "1"
     volumes:
       - ./generated/bundle.pem:/certs/bundle.pem:ro
-      - seller-keys:/keys
-      - seller-db:/data
 
   buyer:
-    <<: *python
-    command: ["uvicorn", "--factory", "buyer.app:app_from_env", "--host", "0.0.0.0", "--port", "8000"]
-    user: app
+    extends: { file: ../deploy/compose.base.yml, service: buyer }
+    <<: *test
     environment:
       <<: *rotation
       SSL_CERT_FILE: /certs/bundle.pem
-      SELF_ORIGIN: https://buyer.wba-demo.noetis.dev
-      PEER_SELLER_ORIGIN: https://seller.wba-demo.noetis.dev
-      PEER_CFBOT_ORIGIN: https://cfbot.wba-demo.noetis.dev
       WBA_DIRECTORY_MAX_AGE: "0"
     volumes:
       - ./generated/bundle.pem:/certs/bundle.pem:ro
-      - buyer-keys:/keys
-      - buyer-db:/data
 
   cfbot:
-    build: ../cfbot
+    extends: { file: ../deploy/compose.base.yml, service: cfbot }
     image: wba-demo-cfbot:local
     env_file: generated/demo.env
     environment:
       NODE_EXTRA_CA_CERTS: /certs/ca.pem
-      SELF_ORIGIN: https://cfbot.wba-demo.noetis.dev
-      PEER_SELLER_ORIGIN: https://seller.wba-demo.noetis.dev
     volumes:
       - ./generated/ca.pem:/certs/ca.pem:ro
-      - cfbot-data:/data
-    networks: [demo]
-    healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8000/health"]
-      interval: 2s
-      retries: 30
+    healthcheck: { interval: 2s }
 
   front:
-    image: nginx:1.27-alpine
+    image: caddy:2.8-alpine
     volumes:
-      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./generated/Caddyfile:/etc/caddy/Caddyfile:ro
       - ./generated/front.pem:/certs/front.pem:ro
       - ./generated/front.key:/certs/front.key:ro
+      - ./generated/logs:/var/log/caddy
     networks:
-      demo:
+      agents:
         aliases:
           - seller.wba-demo.noetis.dev
           - buyer.wba-demo.noetis.dev
@@ -101,14 +79,15 @@ services:
       buyer: { condition: service_healthy }
       cfbot: { condition: service_healthy }
     healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "/dev/null", "--no-check-certificate", "https://127.0.0.1/health"]
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "--no-check-certificate", "https://seller.wba-demo.noetis.dev/health"]
       interval: 2s
       retries: 30
 
   # The e2e scenarios (pytest), not the live runner (runner/, deploy/).
   scenarios:
-    <<: *python
-    profiles: [test]
+    extends: { file: ../deploy/compose.base.yml, service: python }
+    <<: *test
+    profiles: !override [test]
     command: ["pytest", "-v", "-p", "no:cacheprovider", "e2e/scenarios"]
     environment:
       # The scenarios wait on the same timing the agents run with (test_10).
@@ -129,7 +108,7 @@ services:
       front: { condition: service_healthy }
 
 networks:
-  demo: {}
+  agents: {}
 
 volumes:
   seller-keys: {}

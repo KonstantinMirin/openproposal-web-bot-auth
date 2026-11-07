@@ -7,11 +7,16 @@ The boundary writes nothing, so the seller keeps no evidence for cfbot: evidence
 is kept only with an entry it carried.
 """
 
+import httpx
 from conftest import CFBOT, CFBOT_RUN
 from iab_agentic_primitives.web_bot_auth import DIRECTORY_PATH, Origin, thumbprint
 
+from persistence.observe import SellerRecords
 
-def test_cfbot_is_identity_established_only(web, seller_records):
+
+def test_cfbot_is_identity_established_only(
+    web: httpx.Client, seller_records: SellerRecords
+) -> None:
     whoami = web.post(f"{CFBOT_RUN}/whoami").json()
     assert whoami["status"] == 200
     assert whoami["body"]["kind"] == "public"
@@ -27,13 +32,13 @@ def test_cfbot_is_identity_established_only(web, seller_records):
     assert seller_records.directories_of(Origin.parse(CFBOT)) == 0
 
 
-def test_cfbot_cannot_read_the_issued_proposal(web):
+def test_cfbot_cannot_read_the_issued_proposal(web: httpx.Client) -> None:
     read = web.post(f"{CFBOT_RUN}/read?proposal_id=demo-wba-1").json()
     assert read["status"] == 404
     assert read["body"]["errors"][0]["code"] == "not_found"
 
 
-def test_cfbot_cannot_commit(web, seller_records):
+def test_cfbot_cannot_commit(web: httpx.Client, seller_records: SellerRecords) -> None:
     attempt = web.post(f"{CFBOT_RUN}/commit?proposal_id=demo-wba-2").json()
     assert attempt["status"] == 403
     assert attempt["body"]["errors"][0]["code"] == "not_eligible"

@@ -19,7 +19,7 @@ from protocol.values import JsonObject, JsonValue
 
 from .auth import AuthMethod
 
-#: The header every control call carries the operator key in (shared/operator.py).
+#: The header every control call carries the operator key in (transport/operator.py).
 OPERATOR_HEADER = "X-Operator-Key"
 
 

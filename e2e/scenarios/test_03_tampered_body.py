@@ -5,10 +5,15 @@ library's verifier refuses the request with 403, so the commit handler is
 never reached and nothing is written.
 """
 
+import httpx
 from conftest import SELLER, commit_body, signed
 
+from persistence.observe import SellerRecords
 
-def test_tampered_body_is_refused_before_the_handler(web, seller_records):
+
+def test_tampered_body_is_refused_before_the_handler(
+    web: httpx.Client, seller_records: SellerRecords
+) -> None:
     url = f"{SELLER}/proposals/demo-wba-2/commit"
     body = commit_body(160000.0)
     headers = signed("POST", url, body)

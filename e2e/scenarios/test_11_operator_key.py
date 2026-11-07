@@ -1,9 +1,10 @@
 """11. The agents' own controls: never routed by the front, and refused without the operator key.
 
 Each agent's `/operator/` (cfbot's `/run/`) routes are its operator's, not
-another agent's, so they sit outside the identity boundary. The front answers
-`404` for them, and the agent refuses a call inside the network that doesn't
-carry its `OPERATOR_KEY`.
+another agent's, so they sit outside the identity boundary. The front, Caddy
+serving the production snippet (deploy/Caddyfile.snippet), answers `404` for
+them and for the seller's test-only `/test/`, and the agent refuses a call
+inside the network that doesn't carry its `OPERATOR_KEY`.
 """
 
 import httpx
@@ -19,7 +20,9 @@ INSIDE = [
 
 @pytest.mark.parametrize(("method", "url"), INSIDE)
 @pytest.mark.parametrize("key", [None, "not-the-operator-key"])
-def test_operator_controls_refuse_a_call_without_the_key(method, url, key):
+def test_operator_controls_refuse_a_call_without_the_key(
+    method: str, url: str, key: str | None
+) -> None:
     headers = {"X-Operator-Key": key} if key else {}
     with httpx.Client(timeout=30) as client:  # no operator-key hook
         response = client.request(method, url, headers=headers, json={"principal_id": "buyer-wba"})
@@ -27,13 +30,19 @@ def test_operator_controls_refuse_a_call_without_the_key(method, url, key):
 
 
 @pytest.mark.parametrize(
-    "url", [f"{BUYER}/operator/keys", f"{SELLER}/operator/issue", f"{CFBOT}/run/whoami"]
+    "url",
+    [
+        f"{BUYER}/operator/keys",
+        f"{SELLER}/operator/issue",
+        f"{SELLER}/test/fault",
+        f"{CFBOT}/run/whoami",
+    ],
 )
-def test_the_front_never_routes_operator_controls(web, url):
+def test_the_front_never_routes_operator_controls(web: httpx.Client, url: str) -> None:
     assert web.post(url).status_code == 404
 
 
-def test_the_seller_issues_a_fresh_proposal_with_the_key(web):
+def test_the_seller_issues_a_fresh_proposal_with_the_key(web: httpx.Client) -> None:
     issued = web.post(
         "http://seller:8000/operator/issue", json={"principal_id": "buyer-wba"}
     ).json()

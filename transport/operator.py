@@ -1,14 +1,14 @@
 """The operator key: what an agent's own controls (`/operator/` routes) require.
 
 The controls are the party's own, never another agent's, so they sit outside
-the identity boundary. No front routes them (e2e/nginx.conf, the Caddy snippet
-in deploy/), and each call also carries `X-Operator-Key`, which must equal the
+the identity boundary. No front routes them (the Caddy snippet in deploy/, which
+the e2e front serves too), and each call also carries `X-Operator-Key`, which must equal the
 `OPERATOR_KEY` the agent's settings hold. An agent without `OPERATOR_KEY`
 refuses every operator call.
 
 A control route that fails raises `ControlError`, which `render_control`
 renders as `{"error": ..., "detail": ...}`, the same form the identity boundary
-uses. Each agent registers it once (shared/handlers.py).
+uses. Each agent registers it once (transport/handlers.py).
 """
 
 from __future__ import annotations

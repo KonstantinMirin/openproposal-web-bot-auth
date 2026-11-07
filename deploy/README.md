@@ -46,6 +46,37 @@ You can override these Compose variables when you run `docker compose`:
 | `WBA_RUN_DIR` | `../../run` | Where the runner writes its reports |
 | `RUN_INTERVAL` | `900` | Seconds between runs |
 
+### Every environment variable
+
+Each service reads its environment once, in its settings module
+(`seller/settings.py`, `buyer/settings.py`, `runner/settings.py`,
+`e2e/scenarios/settings.py`) or at the top of `cfbot/server.mjs`. The
+default is what the service uses when the variable is unset; the compose files
+set the values the table's last column names.
+
+| Variable | Service | Default | What it sets |
+| :--- | :--- | :--- | :--- |
+| `SELF_ORIGIN` | Seller, buyer, cfbot | `https://<service>.wba-demo.noetis.dev` | The service's own origin, which it signs as and verifies against |
+| `PEER_BUYER_ORIGIN` | Seller, runner, scenarios | `https://buyer.wba-demo.noetis.dev` | The signing buyer the seller seeds; the buyer the runner and the scenarios check |
+| `PEER_SELLER_ORIGIN` | Buyer, cfbot, runner, scenarios | `https://seller.wba-demo.noetis.dev` | The seller the buyer deals with and cfbot calls |
+| `PEER_CFBOT_ORIGIN` | Buyer, runner, scenarios | `https://cfbot.wba-demo.noetis.dev` | Cloudflare's verifier |
+| `DATA_DIR` | Seller, buyer | `/data` | The database (`seller.db`, `buyer.db`), on the `-db` volume |
+| `KEYS_DIR` | Seller, buyer | `/keys` | The signing key (seller `wba-key.jwk`) or keyring (buyer), on the `-keys` volume |
+| `CFBOT_KEY` | cfbot | `/data/cfbot-key.jwk` | cfbot's signing key, on `cfbot-data` |
+| `SSL_CERT_FILE` | Seller, buyer, runner, scenarios | The system's roots | The trust store for every outgoing call; unset live, the throwaway CA bundle locally |
+| `NODE_EXTRA_CA_CERTS` | cfbot | None | The throwaway CA, locally only |
+| `OPERATOR_KEY` | Seller, buyer, cfbot, runner, scenarios | None: every control call is refused (the runner won't start) | What `X-Operator-Key` must carry; from the secrets file |
+| `DEMO_BEARER_TOKEN` | Seller, buyer, runner, scenarios | None: no bearer buyer | The token the seller issues its bearer buyer; the runner reads it only to keep it out of reports |
+| `WBA_DIRECTORY_MAX_AGE` | Seller, buyer | `300` | The directory's `Cache-Control: max-age` (the e2e buyer: `0`) |
+| `WBA_MAX_CACHE_AGE` | Seller, buyer, scenarios | The library's, `300` | How long a cached directory answers without a fetch (the e2e seller: `20`) |
+| `WBA_ROTATION_WAIT` | Buyer, scenarios | `600` | How long a published key waits before it signs (e2e: `20`) |
+| `WBA_SIGNATURE_LIFETIME` | Buyer, scenarios | `300` | How long the buyer's request signatures last (e2e: `10`) |
+| `DEMO_FAULT_INJECTION` | Seller | Off | TEST ONLY: mounts `PUT /test/fault`; `make live-config` keeps it out of production |
+| `SELLER_CONTROL`, `BUYER_CONTROL` | Runner | `http://seller:8000`, `http://buyer:8000` | The agents' own controls, inside the network |
+| `SELLER_DB`, `BUYER_DB` | Runner | `/seller-data/seller.db`, `/buyer-data/buyer.db` | Both parties' databases, mounted read-only from the `-db` volumes |
+| `OUT_DIR` | Runner | `/out` | Where the reports go |
+| `RUN_INTERVAL` | Runner | `900` | Seconds between runs; `0` runs once |
+
 `docker-compose.prod.yml` fixes everything else: the three origins
 `https://seller.wba-demo.noetis.dev`, `https://buyer.wba-demo.noetis.dev`, and
 `https://cfbot.wba-demo.noetis.dev`; a directory `Cache-Control: max-age` of
@@ -59,9 +90,10 @@ the seller's test-only fault toggle isn't mounted.
 Run these steps in order. The host is `hetzner2`, and the commands that start
 with `rsync` run on your laptop from the directory that holds both checkouts.
 
-1.  In `README.md` and `site/index.html`, replace the placeholders
-    `LIBRARY_URL` and `SPEC_URL` with the published links. To find them, run
-    `grep -rn 'LIBRARY_URL\|SPEC_URL' README.md site/`.
+1.  Check that no placeholder is left in the tree: run `make placeholders`,
+    which CI runs too. It fails on any placeholder outside the seed template
+    `seller/seed/proposal.yaml`, whose placeholders the seller fills in when it
+    issues a proposal.
 
 2.  In Route 53, in the `noetis.dev` hosted zone, create four `A` records with
     a TTL of 300, each pointing at the host's public IPv4 address. On

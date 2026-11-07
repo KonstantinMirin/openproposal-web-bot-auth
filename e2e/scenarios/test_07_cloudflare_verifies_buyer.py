@@ -5,10 +5,11 @@ directory, checks its signatures with http-message-sig, and verifies the
 request with web-bot-auth's verify().
 """
 
+import httpx
 from conftest import BUYER, BUYER_OPERATOR, buyer_key
 
 
-def test_cloudflare_accepts_the_buyers_signature(web):
+def test_cloudflare_accepts_the_buyers_signature(web: httpx.Client) -> None:
     check = web.post(f"{BUYER_OPERATOR}/cloudflare-check").json()
     assert check["status"] == 200, check
     verdict = check["verdict"]

@@ -1,0 +1,75 @@
+# The demo's services, stated once. Not run on its own: the e2e stack
+# (e2e/docker-compose.yml) and the live deployment (deploy/docker-compose.prod.yml)
+# each extend these services and add only what differs. Relative paths here
+# resolve from this file's directory, deploy/.
+#
+# Each agent keeps its signing keys (/keys) and its database (/data) on
+# separate volumes, so that an observer can mount a party's database without
+# its keys. The overlays declare the volumes and the `agents` network.
+
+x-python: &python
+  image: wba-demo-python
+  build:
+    context: ..
+    additional_contexts:
+      # The library checkout, which lands at the same relative path as on the host.
+      wba-lib: ${WBA_LIB_DIR:-../../iab-agentic-primitives}
+  user: app
+  networks: [agents]
+  healthcheck:
+    test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+    interval: 10s
+    retries: 30
+
+services:
+  seller:
+    <<: *python
+    command: ["uvicorn", "--factory", "seller.app:app_from_env", "--host", "0.0.0.0", "--port", "8000"]
+    environment:
+      SELF_ORIGIN: https://seller.wba-demo.noetis.dev
+      PEER_BUYER_ORIGIN: https://buyer.wba-demo.noetis.dev
+    volumes:
+      - seller-keys:/keys
+      - seller-db:/data
+
+  buyer:
+    <<: *python
+    command: ["uvicorn", "--factory", "buyer.app:app_from_env", "--host", "0.0.0.0", "--port", "8000"]
+    environment:
+      SELF_ORIGIN: https://buyer.wba-demo.noetis.dev
+      PEER_SELLER_ORIGIN: https://seller.wba-demo.noetis.dev
+      PEER_CFBOT_ORIGIN: https://cfbot.wba-demo.noetis.dev
+    volumes:
+      - buyer-keys:/keys
+      - buyer-db:/data
+
+  cfbot:
+    build: ../cfbot
+    image: wba-demo-cfbot
+    environment:
+      SELF_ORIGIN: https://cfbot.wba-demo.noetis.dev
+      PEER_SELLER_ORIGIN: https://seller.wba-demo.noetis.dev
+    volumes:
+      - cfbot-data:/data
+    networks: [agents]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8000/health"]
+      interval: 10s
+      retries: 30
+
+  # The image's two other uses, the live runner and the e2e scenarios, extend this.
+  # It mounts nothing, and its profile keeps it from running by itself.
+  python:
+    <<: *python
+    profiles: [template]
+    healthcheck: { disable: true }
+
+networks:
+  agents: {}
+
+volumes:
+  seller-keys: {}
+  seller-db: {}
+  buyer-keys: {}
+  buyer-db: {}
+  cfbot-data: {}

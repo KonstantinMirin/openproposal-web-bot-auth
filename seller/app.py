@@ -7,7 +7,7 @@ the only caller of `SellerSettings.from_env()`.
 Every agent-facing route takes the caller from the identity boundary
 (`CallerDep`, seller/http.py) and nothing else. The `/operator/` routes are
 the seller's own controls, outside the boundary: no front routes them, and
-each call carries the operator key (shared/operator.py).
+each call carries the operator key (transport/operator.py).
 `ResponseSigningMiddleware` signs every response, refusals included, and binds
 it to the request it answers.
 """
@@ -34,9 +34,9 @@ from iab_agentic_primitives.web_bot_auth import (
 from iab_agentic_primitives.web_bot_auth.asgi import DirectoryMiddleware, ResponseSigningMiddleware
 from starlette.types import ASGIApp
 
-from shared.control import Health, Issued, IssueRequest
-from shared.operator import ControlError, OperatorKey
-from shared.wba import directory_resolver, http_client, tls_context
+from transport.control import Health, Issued, IssueRequest
+from transport.operator import ControlError, OperatorKey
+from transport.wba import directory_resolver, http_client, tls_context
 
 from .boundary import IdentityBoundary
 from .errors import Rejected, UnknownPrincipal

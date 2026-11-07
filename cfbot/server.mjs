@@ -91,26 +91,32 @@ async function directory(authority) {
 
 // ── Verifying, with the library's verify() ────────────────────────────────
 
-/**
- * Fetches the caller's directory, verifies the directory's own signatures with
- * http-message-sig, and returns the verifier for `keyid`. The directory must be
- * signed, and signed by that key (Web Bot Auth Appendix B.1). `checked` collects
- * the directory signatures verified, for the verdict.
- */
-// eslint-disable-next-line complexity -- Step 8 splits it into fetchDirectory, directoryVerifiers, verifyDirectorySignatures, and pickKey.
-async function resolveKey(candidate, checked) {
-  if (candidate.signatureAgent === undefined) throw new Error('no covered Signature-Agent member');
-  const origin = new URL(candidate.signatureAgent.uri).origin;
-  const url = `${origin}${HTTP_MESSAGE_SIGNATURES_DIRECTORY}`;
+/** The caller's directory, fetched without redirects; its status and its digest checked. */
+async function fetchDirectory(url) {
   const response = await fetch(url, { redirect: 'error' });
   if (response.status !== 200) throw new Error(`directory status ${response.status}`);
   const body = await response.text();
   const headers = Object.fromEntries(response.headers);
   if (headers['content-digest'] !== digest(body)) throw new Error('directory Content-Digest does not match');
-  const keys = (await Promise.all((JSON.parse(body).keys ?? []).map(k => verifierFromJWK(k).catch(() => undefined)))).filter(Boolean);
-  const signed = { kind: 'response', status: 200, fields: fieldsOf(headers), request: { kind: 'request', method: 'GET', targetUri: url, fields: [] } };
-  const input = parseDictionary(headers['signature-input'] ?? '');
+  return { headers, body };
+}
+
+/** A verifier for each key the directory lists; a key the library can't import is skipped. */
+async function directoryVerifiers(body) {
+  const keys = await Promise.all((JSON.parse(body).keys ?? []).map(k => verifierFromJWK(k).catch(() => undefined)));
+  return keys.filter(Boolean);
+}
+
+/**
+ * Verifies each of the directory's own signatures with http-message-sig (Web Bot
+ * Auth Appendix B.1), and returns the ones verified, for the verdict.
+ */
+async function verifyDirectorySignatures(url, directory, keys) {
+  const signed = { kind: 'response', status: 200, fields: fieldsOf(directory.headers),
+                   request: { kind: 'request', method: 'GET', targetUri: url, fields: [] } };
+  const input = parseDictionary(directory.headers['signature-input'] ?? '');
   if (input.size === 0) throw new Error(`${url} carries no directory signature`);
+  const checked = [];
   for (const [label, [, params]] of input) {
     if (params.get('tag') !== 'http-message-signatures-directory') throw new Error(`directory signature ${label} has the wrong tag`);
     const verifier = keys.find(k => k.keyid === params.get('keyid'));
@@ -122,10 +128,28 @@ async function resolveKey(candidate, checked) {
     });
     checked.push({ label, keyid: verifier.keyid });
   }
-  const verifier = keys.find(k => k.keyid === candidate.keyid);
-  if (verifier === undefined) throw new Error(`key ${candidate.keyid} is not in ${url}`);
-  if (!checked.some(c => c.keyid === candidate.keyid)) throw new Error(`key ${candidate.keyid} did not sign ${url}`);
+  return checked;
+}
+
+/** The verifier for `keyid`: listed in the directory, and one of the keys that signed it. */
+function pickKey(url, keys, checked, keyid) {
+  const verifier = keys.find(k => k.keyid === keyid);
+  if (verifier === undefined) throw new Error(`key ${keyid} is not in ${url}`);
+  if (!checked.some(c => c.keyid === keyid)) throw new Error(`key ${keyid} did not sign ${url}`);
   return verifier;
+}
+
+/**
+ * The verifier for the signature `candidate` names, from the caller's directory.
+ * `checked` collects the directory signatures verified, for the verdict.
+ */
+async function resolveKey(candidate, checked) {
+  if (candidate.signatureAgent === undefined) throw new Error('no covered Signature-Agent member');
+  const url = `${new URL(candidate.signatureAgent.uri).origin}${HTTP_MESSAGE_SIGNATURES_DIRECTORY}`;
+  const directory = await fetchDirectory(url);
+  const keys = await directoryVerifiers(directory.body);
+  checked.push(...await verifyDirectorySignatures(url, directory, keys));
+  return pickKey(url, keys, checked, candidate.keyid);
 }
 
 async function verifyRequest(req, body) {
@@ -167,32 +191,46 @@ function exampleCommit(lineItemId) {
   });
 }
 
-// eslint-disable-next-line complexity -- Step 8 replaces the if chain with a route table.
+// The routes any caller reaches.
+const routes = {
+  [`GET ${HTTP_MESSAGE_SIGNATURES_DIRECTORY}`]: async (_req, res) => {
+    const out = await directory(new URL(ORIGIN).host);
+    res.writeHead(200, out.headers);
+    res.end(out.body);
+  },
+  'GET /health': (_req, res) => json(res, 200, { ok: true }),
+  'POST /verify': async (req, res, { body }) => {
+    const verdict = await verifyRequest(req, body);
+    json(res, verdict.ok ? 200 : 403, verdict);
+  },
+};
+
+// The operator's controls: each one has cfbot sign a request to the seller.
+const operatorRoutes = {
+  'POST /run/whoami': async (_req, res) => json(res, 200, await signedFetch('GET', `${SELLER}/whoami`)),
+  'POST /run/read': async (_req, res, { proposal }) => json(res, 200, await signedFetch('GET', `${SELLER}/proposals/${proposal}`)),
+  'POST /run/commit': async (_req, res, { proposal }) =>
+    json(res, 200, await signedFetch('POST', `${SELLER}/proposals/${proposal}/commit`, exampleCommit('weather-app-ctv'))),
+};
+
+/** The route for a request: a public one, an operator one behind the key, or none. */
+function route(req, pathname) {
+  const name = `${req.method} ${pathname}`;
+  if (routes[name]) return routes[name];
+  if (!pathname.startsWith('/run/')) return undefined;
+  if (!isOperator(req)) return (_req, res) => json(res, 403, { error: 'operator key required' });
+  return operatorRoutes[name];
+}
+
 createServer(async (req, res) => {
   const chunks = [];
   for await (const chunk of req) chunks.push(chunk);
   const body = Buffer.concat(chunks).toString('utf8');
   const { pathname, searchParams } = new URL(req.url, ORIGIN);
+  const handler = route(req, pathname) ?? ((_req, out) => json(out, 404, { error: 'not found' }));
   try {
-    if (req.method === 'GET' && pathname === HTTP_MESSAGE_SIGNATURES_DIRECTORY) {
-      const out = await directory(new URL(ORIGIN).host);
-      res.writeHead(200, out.headers);
-      return res.end(out.body);
-    }
-    if (req.method === 'GET' && pathname === '/health') return json(res, 200, { ok: true });
-    if (req.method === 'POST' && pathname === '/verify') {
-      const verdict = await verifyRequest(req, body);
-      return json(res, verdict.ok ? 200 : 403, verdict);
-    }
-    if (pathname.startsWith('/run/') && !isOperator(req)) return json(res, 403, { error: 'operator key required' });
-    const proposal = searchParams.get('proposal_id') ?? 'demo-wba-1';
-    if (req.method === 'POST' && pathname === '/run/whoami') return json(res, 200, await signedFetch('GET', `${SELLER}/whoami`));
-    if (req.method === 'POST' && pathname === '/run/read') return json(res, 200, await signedFetch('GET', `${SELLER}/proposals/${proposal}`));
-    if (req.method === 'POST' && pathname === '/run/commit') {
-      return json(res, 200, await signedFetch('POST', `${SELLER}/proposals/${proposal}/commit`, exampleCommit('weather-app-ctv')));
-    }
-    return json(res, 404, { error: 'not found' });
+    await handler(req, res, { body, proposal: searchParams.get('proposal_id') ?? 'demo-wba-1' });
   } catch (e) {
-    return json(res, 500, { error: String(e?.stack ?? e) });
+    json(res, 500, { error: String(e?.stack ?? e) });
   }
 }).listen(8000, () => console.log(`cfbot ${signer.keyid} as ${ORIGIN}`));

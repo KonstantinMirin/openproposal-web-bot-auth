@@ -32,14 +32,24 @@ CONTRACTS = {
 CASES = (
     ({"parties-independent", "layers"}, "seller/planted.py", "import buyer.planted\n"),
     ({"parties-independent", "layers"}, "runner/planted.py", "from seller import planted\n"),
-    ({"layers"}, "shared/planted.py", "import seller.planted\n"),
+    # The runner imports transport/, so this reaches a party from another one too.
+    ({"layers", "parties-independent"}, "transport/planted.py", "import seller.planted\n"),
+    ({"layers"}, "shared/planted.py", "import transport.planted\n"),
     ({"layers"}, "protocol/planted.py", "import shared.planted\n"),
+    ({"runner-framework-free"}, "runner/planted.py", "import fastapi\n"),
+    # Through the control-plane code the runner imports: shared/operator.py's lesson.
+    ({"runner-framework-free"}, "transport/planted.py", "import starlette\n"),
     ({"offers-framework-free"}, "seller/offers.py", "import httpx\n"),
     # Through the identity types the offer logic takes: the chain Step 4 removed.
     ({"offers-framework-free"}, "seller/caller.py", "import iab_agentic_primitives\n"),
 )
-#: Modules present in every tree: the offer logic and the identity types it takes.
-NAMED = {"seller/offers.py": "from . import caller\n", "seller/caller.py": ""}
+#: Modules present in every tree: the offer logic and the identity types it takes, and
+#: the runner, which imports the transport code.
+NAMED = {
+    "seller/offers.py": "from . import caller\n",
+    "seller/caller.py": "",
+    "runner/main.py": "import transport.planted\n",
+}
 
 
 def _lint(tree: Path, planted: tuple[str, str] | None) -> str:

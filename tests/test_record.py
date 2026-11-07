@@ -11,7 +11,8 @@ from openproposal import AssentEntry, LineItemWrites
 
 from protocol.attribution import attributes
 from protocol.documents import load_yaml
-from protocol.record import WriteError, apply_writes, compose, record_digest
+from protocol.record import WriteError, apply_writes, compose, line_items_of, record_digest
+from protocol.values import JsonObject, objects, strings
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -29,20 +30,25 @@ FIXTURES = Path(__file__).parent / "fixtures"
         ),
     ],
 )
-def test_record_digest_reproduces_the_examples(name, expected):
+def test_record_digest_reproduces_the_examples(name: str, expected: str) -> None:
     doc = load_yaml(FIXTURES / name)
-    for entry in doc["assent"]:
+    for entry in objects(doc["assent"]):
+        ids = strings(entry["line_item_ids"])
         assert AssentEntry.model_validate(entry).record_digest == expected
-        assert record_digest(doc, entry["line_item_ids"]) == expected
+        assert record_digest(doc, ids) == expected
         # Recomputing the derived agreed_rate (§ 4.1.1) changes nothing.
-        assert record_digest(compose(doc, {}), entry["line_item_ids"]) == expected
+        assert record_digest(compose(doc, {}), ids) == expected
 
 
-def test_an_empty_buyer_supplied_moves_no_digest():
+def _first_item(doc: JsonObject) -> JsonObject:
+    return line_items_of(doc)[0]
+
+
+def test_an_empty_buyer_supplied_moves_no_digest() -> None:
     doc = load_yaml(FIXTURES / "proposal-agreed.yaml")
-    ids = [doc["line_items"][0]["line_item_id"]]
+    ids = [str(_first_item(doc)["line_item_id"])]
     before = record_digest(doc, ids)
-    doc["line_items"][0]["buyer_supplied"] = {"expected_match_rate": 0.5}
+    _first_item(doc)["buyer_supplied"] = {"expected_match_rate": 0.5}
     assert record_digest(doc, ids) == before
 
 
@@ -54,12 +60,18 @@ COMMITMENT = {
 }
 
 
-def test_writes_set_only_the_keys_they_name():
-    item = load_yaml(FIXTURES / "proposal-issued.yaml")["line_items"][1]
+def _properties(item: JsonObject) -> JsonObject:
+    properties = item["properties"]
+    assert isinstance(properties, dict)
+    return properties
+
+
+def test_writes_set_only_the_keys_they_name() -> None:
+    item = line_items_of(load_yaml(FIXTURES / "proposal-issued.yaml"))[1]
     writes = {"commitment": COMMITMENT, "properties": {"selected": ["weather-app"]}}
     written = apply_writes(item, LineItemWrites.model_validate(writes))
-    assert written["properties"]["selected"] == ["weather-app"]
-    assert written["properties"]["available"] == item["properties"]["available"]
+    assert _properties(written)["selected"] == ["weather-app"]
+    assert _properties(written)["available"] == _properties(item)["available"]
     with pytest.raises(WriteError):
         # The line item has no `daypart`, so there is nothing settable to write.
         daypart = {
@@ -78,5 +90,5 @@ def test_writes_set_only_the_keys_they_name():
         ("anything.github.io", "github.io", True, False),  # a public suffix names no party
     ],
 )
-def test_attribution(host, domain, covered, expected):
+def test_attribution(host: str, domain: str, covered: bool, expected: bool) -> None:
     assert attributes(host, domain, body_covered=covered) is expected

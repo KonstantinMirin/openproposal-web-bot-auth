@@ -6,6 +6,7 @@
 #   KEEP=1 deploy/localhost/run.sh   # leave it up; open https://wba-demo.noetis.dev:18443
 #                                    # after pointing the four names at 127.0.0.1
 set -euo pipefail
+source "$(dirname "$0")/../compose.sh"
 here="$(cd "$(dirname "$0")" && pwd)"
 repo="$(cd "$here/../.." && pwd)"
 gen="$here/generated"
@@ -16,17 +17,7 @@ mkdir -p "$gen/run" "$gen/logs"
 "$repo/deploy/make-env.sh" "$gen/wba-demo.env"
 
 # The production snippet, pointed at the containers and given the throwaway certificate.
-python3 - "$repo/deploy/Caddyfile.snippet" "$gen/Caddyfile" <<'EOF'
-import re, sys
-text = open(sys.argv[1]).read()
-for port, name in (("18081", "seller"), ("18082", "buyer"), ("18083", "cfbot")):
-    text = text.replace(f"127.0.0.1:{port}", f"{name}:8000")
-text = text.replace("/srv/wba-demo/openproposal-web-bot-auth/site", "/srv/site")
-text = text.replace("/srv/wba-demo/run", "/srv/run")
-text = re.sub(r"^([a-z.-]*wba-demo\.noetis\.dev) \{$",
-              r"\1 {\n\ttls /certs/front.pem /certs/front.key", text, flags=re.M)
-open(sys.argv[2], "w").write(text)
-EOF
+python3 "$repo/deploy/local_caddy.py" "$repo/deploy/Caddyfile.snippet" "$gen/Caddyfile"
 
 export WBA_ENV_FILE="$gen/wba-demo.env" WBA_RUN_DIR="$gen/run"
 compose=(docker compose -f "$repo/deploy/docker-compose.prod.yml"
@@ -35,13 +26,7 @@ if [[ -z "${KEEP:-}" ]]; then
     trap '"${compose[@]}" down --volumes --remove-orphans >/dev/null 2>&1' EXIT
 fi
 
-"${compose[@]}" down --volumes --remove-orphans >/dev/null 2>&1
-"${compose[@]}" build
-"${compose[@]}" up --detach --wait seller buyer cfbot caddy
-if ! "${compose[@]}" run --rm -e RUN_INTERVAL=0 runner; then
-    "${compose[@]}" logs --no-color seller buyer cfbot caddy | tail -n 200
-    exit 1
-fi
+compose_run "seller buyer cfbot caddy" -e RUN_INTERVAL=0 runner
 
 # The site serves the report the runner wrote, through the production snippet.
 curl --fail --silent --show-error --cacert "$repo/e2e/generated/ca.pem" \

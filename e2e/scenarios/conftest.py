@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import ssl
 import uuid
+from collections.abc import Iterator
 from pathlib import Path
 
 import httpx
@@ -82,7 +83,7 @@ def _operator_key(request: httpx.Request) -> None:
 
 
 @pytest.fixture
-def web():
+def web() -> Iterator[httpx.Client]:
     """A client that trusts the public roots plus the demo CA, as every container does."""
     with httpx.Client(
         verify=ssl.create_default_context(), timeout=30, event_hooks={"request": [_operator_key]}
@@ -91,14 +92,14 @@ def web():
 
 
 @pytest.fixture
-def seller_records():
+def seller_records() -> Iterator[SellerRecords]:
     """The seller's records, read-only."""
     with SellerRecords.open("/seller-data/seller.db") as records:
         yield records
 
 
 @pytest.fixture
-def buyer_records():
+def buyer_records() -> Iterator[BuyerRecords]:
     """The buyer's records, read-only."""
     with BuyerRecords.open("/buyer-data/buyer.db") as records:
         yield records

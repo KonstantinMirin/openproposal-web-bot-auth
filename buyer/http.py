@@ -5,9 +5,9 @@ from __future__ import annotations
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
-from shared.handlers import on_error
 from shared.keyring import RotationError
-from shared.operator import ControlError, render_control
+from transport.handlers import on_error
+from transport.operator import ControlError, render_control
 
 
 def rotation_refused(error: RotationError) -> JSONResponse:

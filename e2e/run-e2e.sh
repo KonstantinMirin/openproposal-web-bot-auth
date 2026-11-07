@@ -2,16 +2,13 @@
 # Brings the demo stack up from nothing, runs the scenarios, and tears it down.
 set -euo pipefail
 cd "$(dirname "$0")"
+source ../deploy/compose.sh
 
 uv run --project .. python gen_demo_tls.py
-compose=(docker compose -f docker-compose.yml)
-trap '"${compose[@]}" --profile test down --volumes --remove-orphans >/dev/null 2>&1' EXIT
+# The front serves the production Caddy snippet, rewritten for the containers.
+mkdir -p generated/logs
+python3 ../deploy/local_caddy.py ../deploy/Caddyfile.snippet generated/Caddyfile
 
-# Start from clean volumes, so every run is a fresh stack: no keys, no records.
-"${compose[@]}" --profile test down --volumes --remove-orphans >/dev/null 2>&1
-"${compose[@]}" --profile test build
-"${compose[@]}" up --detach --wait seller buyer cfbot front
-if ! "${compose[@]}" run --rm scenarios; then
-    "${compose[@]}" logs --no-color seller buyer cfbot | tail -n 200
-    exit 1
-fi
+compose=(docker compose -f docker-compose.yml --profile test)
+trap '"${compose[@]}" down --volumes --remove-orphans >/dev/null 2>&1' EXIT
+compose_run "seller buyer cfbot front" scenarios

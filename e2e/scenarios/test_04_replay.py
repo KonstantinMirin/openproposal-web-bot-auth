@@ -1,9 +1,10 @@
 """4. The same signed request sent twice: the second one is a replay, refused with 429."""
 
+import httpx
 from conftest import SELLER, signed
 
 
-def test_replayed_request_is_refused(web):
+def test_replayed_request_is_refused(web: httpx.Client) -> None:
     url = f"{SELLER}/proposals/demo-wba-1"
     headers = signed("GET", url)
 

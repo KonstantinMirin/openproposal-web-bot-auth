@@ -78,7 +78,7 @@ The code path, in order:
    reads the presented credential and refuses a request that presents both.
 3. A signature goes to the library's `RequestVerifier.verify`, which fetches
    the origin's directory through the resolver in
-   [`shared/wba.py`](shared/wba.py) and checks `Content-Digest` against the
+   [`transport/wba.py`](transport/wba.py) and checks `Content-Digest` against the
    body. The boundary then resolves the origin with `for_origin` (stored by
    [`seller/sqlite_store.py`](seller/sqlite_store.py)). It writes nothing: the
    verified request travels in the credential as a `SignedMessage`.
@@ -134,7 +134,7 @@ seller verifies each answer, then parses it as the document its status says it
 is (a `Proposal`, a `CommitResult`, or a § 2.4 `errors[]`), inside one refusal
 boundary. An answer that fails either step comes back as a refusal, never as an
 exception, and the buyer keeps nothing from it. The buyer's operator routes
-answer a discriminated `Outcome` ([`shared/control.py`](shared/control.py)):
+answer a discriminated `Outcome` ([`transport/control.py`](transport/control.py)):
 `read`, `agreed`, `rejected` (the seller said no), or `refused` (the buyer said
 no, with its reason).
 
@@ -261,7 +261,7 @@ evidence verifies again offline (§ 4.1.2).
 ```mermaid
 flowchart LR
     subgraph net[Docker network demo · e2e/docker-compose.yml]
-        F[nginx TLS front<br/>aliases seller., buyer., cfbot.wba-demo.noetis.dev<br/>throwaway CA]
+        F[Caddy TLS front, the production snippet<br/>aliases seller., buyer., cfbot.wba-demo.noetis.dev<br/>throwaway CA]
         S[seller] 
         B[buyer]
         C[cfbot]
@@ -322,9 +322,12 @@ fresh stack:
 
 ## Run it locally
 
-You need Docker with Compose, and [uv](https://docs.astral.sh/uv/). The
-library checkout must sit next to this repository, at
-`../iab-agentic-primitives`.
+You need Docker with Compose, and [uv](https://docs.astral.sh/uv/). A checkout
+of the library,
+[`iab-agentic-primitives-wba`](https://github.com/KonstantinMirin/iab-agentic-primitives-wba)
+on its `feat/web-bot-auth` branch, must sit next to this repository, at
+`../iab-agentic-primitives`: the directory name the uv path source in
+`pyproject.toml` and the image build use.
 
 To run the unit tests, run `make test`.
 
@@ -345,6 +348,8 @@ inside the network:
 ```bash
 cd e2e
 uv run --project .. python gen_demo_tls.py
+python3 ../deploy/local_caddy.py ../deploy/Caddyfile.snippet generated/Caddyfile
+mkdir -p generated/logs
 docker compose up --detach --wait seller buyer cfbot front
 docker compose run --rm scenarios python -c "import os, httpx; print(httpx.post(
     'http://buyer:8000/operator/commit', headers={'X-Operator-Key': os.environ['OPERATOR_KEY']},
@@ -367,15 +372,18 @@ Caddy, and create the DNS records. It also covers teardown.
 
 The live deployment differs from the local test only where production needs it:
 
-| Setting | Live | Local end-to-end test |
-| :--- | :--- | :--- |
-| TLS | Let's Encrypt, through the host's Caddy | A throwaway CA, through nginx |
-| Trust store | Public roots only | Public roots plus the throwaway CA |
-| Directory `Cache-Control: max-age` | 300 s | 300 s for the seller, 0 s for the buyer |
-| Verifier `max_cache_age` | 300 s | 20 s |
-| Wait before a published key signs | 600 s | 20 s |
-| Signature lifetime | 300 s | 10 s |
-| Seller fault toggle | Not mounted | Mounted for scenario 9 |
+| Setting | Party | Live | Local end-to-end test |
+| :--- | :--- | :--- | :--- |
+| TLS | Both | Let's Encrypt, through the host's Caddy | A throwaway CA, through a Caddy container that serves the same snippet |
+| Trust store | Both | Public roots only | Public roots plus the throwaway CA |
+| Directory `Cache-Control: max-age` | Seller | 300 s | 300 s |
+| Directory `Cache-Control: max-age` | Buyer | 300 s | 0 s |
+| Verifier `max_cache_age` | Seller, for the buyer's directory | 300 s | 20 s |
+| Verifier `max_cache_age` | Buyer, for the seller's directory | 300 s | 300 s, the library's default |
+| Wait before a published key signs | Buyer | 600 s | 20 s |
+| Request signature lifetime | Buyer | 300 s | 10 s |
+| Response signature lifetime | Seller | 300 s, the library's default | 300 s, the library's default |
+| Fault toggle | Seller | Not mounted | Mounted for scenario 9 |
 
 ## Where the pieces live
 

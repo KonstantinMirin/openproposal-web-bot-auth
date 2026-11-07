@@ -4,18 +4,10 @@ from __future__ import annotations
 
 import sqlite3
 from pathlib import Path
-from typing import Literal
 
 import pytest
 
-from persistence.sqlite import (
-    NoRowIdError,
-    NotAVocabularyError,
-    inserted,
-    one_of,
-    open_db,
-    transaction,
-)
+from persistence.sqlite import open_db, transaction
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS parent (id INTEGER PRIMARY KEY);
@@ -68,29 +60,3 @@ def test_a_transaction_takes_the_write_lock_up_front(tmp_path: Path) -> None:
     second.execute("PRAGMA busy_timeout = 0")
     with transaction(first), pytest.raises(sqlite3.OperationalError, match="locked"):
         second.execute("BEGIN IMMEDIATE")
-
-
-def test_open_db_creates_the_directory_and_enforces_foreign_keys(tmp_path: Path) -> None:
-    db = open_db(tmp_path / "a" / "b" / "test.db", SCHEMA)
-    assert (tmp_path / "a" / "b" / "test.db").exists()
-    with pytest.raises(sqlite3.IntegrityError):
-        db.execute("INSERT INTO strict_child (parent_id) VALUES (7)")
-
-
-def test_inserted_refuses_a_missing_row_id(db: sqlite3.Connection) -> None:
-    assert inserted(db.execute("INSERT INTO parent (id) VALUES (5)")) == 5
-    with pytest.raises(NoRowIdError):
-        inserted(db.cursor())  # a cursor that inserted nothing has no lastrowid
-
-
-def test_one_of_mirrors_a_literal_and_refuses_anything_else(db: sqlite3.Connection) -> None:
-    check = one_of("state", Literal["pending", "agreed"])
-    assert check == "CHECK (state IN ('pending', 'agreed'))"
-    db.execute(f"CREATE TABLE t (state TEXT {check})")
-    db.execute("INSERT INTO t VALUES ('agreed')")
-    with pytest.raises(sqlite3.IntegrityError):
-        db.execute("INSERT INTO t VALUES ('agred')")
-    with pytest.raises(NotAVocabularyError):
-        one_of("state", str)
-    with pytest.raises(NotAVocabularyError):
-        one_of("state", Literal["it's"])

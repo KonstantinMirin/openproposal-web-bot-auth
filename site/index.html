@@ -486,17 +486,17 @@ signature: sig1=:5kF9XH4bsuauHZoFccx+QIPx31fC1lEEETIkSXE22ZRLN8OIL1otTSDNxFNjTIx
 
 <h3>The local end-to-end test</h3>
 <div class="prose">
-  <p>The same images run in one Docker network for <code>make e2e</code>. An nginx front answers for the three agent names with a certificate from a throwaway certificate authority, which every container trusts. A pytest runner drives eleven scenarios, from first contact to key rotation, and inspects what each party stored.</p>
+  <p>The same images run in one Docker network for <code>make e2e</code>. A Caddy front, serving the production snippet, answers for the three agent names with a certificate from a throwaway certificate authority, which every container trusts. A pytest runner drives eleven scenarios, from first contact to key rotation, and inspects what each party stored.</p>
 </div>
 <figure>
 <div class="diagram">
 <svg viewBox="0 0 760 296" role="img" aria-labelledby="f6-title f6-desc">
   <title id="f6-title">Local end-to-end topology</title>
-  <desc id="f6-desc">Inside one Docker network, an nginx front answers for the three agent names with a throwaway certificate and passes requests to the seller, the buyer, and cfbot. A pytest runner calls the agents through the front, calls their controls directly, and reads both databases read-only.</desc>
+  <desc id="f6-desc">Inside one Docker network, a Caddy front, serving the production snippet, answers for the three agent names with a throwaway certificate and passes requests to the seller, the buyer, and cfbot. A pytest runner calls the agents through the front, calls their controls directly, and reads both databases read-only.</desc>
   <rect class="frame" x="10" y="14" width="740" height="272" rx="12"/>
   <text class="t-small t-muted" x="22" y="34">Docker network demo, from e2e/docker-compose.yml</text>
   <rect class="box-accent" x="30" y="48" width="700" height="62" rx="8"/>
-  <text class="t-title" x="44" y="72">nginx TLS front</text>
+  <text class="t-title" x="44" y="72">Caddy TLS front</text>
   <text class="t-small" x="44" y="94">Answers for seller., buyer., and cfbot.wba-demo.noetis.dev with a certificate from a throwaway CA</text>
   <rect class="box" x="30" y="146" width="150" height="60" rx="6"/>
   <text class="t-title" x="44" y="170">seller</text>
@@ -529,7 +529,7 @@ signature: sig1=:5kF9XH4bsuauHZoFccx+QIPx31fC1lEEETIkSXE22ZRLN8OIL1otTSDNxFNjTIx
 <table>
   <thead><tr><th>Setting</th><th>Live</th><th>Local end-to-end test</th></tr></thead>
   <tbody>
-    <tr><td>TLS</td><td>Let's Encrypt, through the host's Caddy</td><td>A throwaway CA, through nginx</td></tr>
+    <tr><td>TLS</td><td>Let's Encrypt, through the host's Caddy</td><td>A throwaway CA, through a Caddy container that serves the same snippet</td></tr>
     <tr><td>Trust store</td><td>Public roots only</td><td>Public roots plus the throwaway CA</td></tr>
     <tr><td>Directory <code>Cache-Control: max-age</code></td><td>300 s</td><td>300 s for the seller, 0 s for the buyer</td></tr>
     <tr><td>Verifier cache (<code>max_cache_age</code>)</td><td>300 s</td><td>20 s</td></tr>

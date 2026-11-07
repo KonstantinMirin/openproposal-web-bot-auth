@@ -31,6 +31,7 @@ dev = [
     "pytest>=8",
     "pytest-cov>=6",
     "ruff==0.17.4",
+    "types-jsonschema>=4.23",
     "types-pyyaml>=6.0",
 ]
 
@@ -46,7 +47,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["protocol", "persistence", "shared", "seller", "buyer", "runner"]
+packages = ["protocol", "persistence", "shared", "transport", "seller", "buyer", "runner"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -75,163 +76,47 @@ max-branches = 12
 max-statements = 50
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["S101", "PLR2004", "ANN"]
-"e2e/scenarios/**" = ["S101", "PLR2004", "ANN"]
+# Stated non-defects, not exemptions: a test asserts with `assert` (S101), and
+# compares against the literal values the specification and the scenario name
+# (PLR2004). Every other rule holds in tests too, annotations included.
+"tests/**" = ["S101", "PLR2004"]
+"e2e/scenarios/**" = ["S101", "PLR2004"]
 
 [tool.mypy]
 strict = true
 plugins = ["pydantic.mypy"]
 warn_unused_ignores = true
-# The scope: the modules that pass strict today. Each step adds the modules it
-# makes clean; Step 8 ends with every package, tests/, and e2e/. A module
-# outside the scope is still analyzed for its callers, but reports nothing
-# (the follow_imports override below). Out of scope today, by the step that
-# brings it in:
-#   Step 8: the rest of tests/, and e2e/
-# tests/ has no __init__.py, so its modules are named from the repository root.
-explicit_package_bases = true
-files = [
-    "seller/__init__.py",
-    "seller/app.py",
-    "seller/boundary.py",
-    "seller/caller.py",
-    "seller/errors.py",
-    "seller/faults.py",
-    "seller/http.py",
-    "seller/offers/__init__.py",
-    "seller/offers/acceptance.py",
-    "seller/offers/checks.py",
-    "seller/offers/issuance.py",
-    "seller/offers/ledger.py",
-    "seller/offers/reading.py",
-    "seller/ports.py",
-    "seller/resources.py",
-    "seller/seed.py",
-    "seller/settings.py",
-    "seller/sqlite_store.py",
-    "buyer/__init__.py",
-    "buyer/app.py",
-    "buyer/cfbot.py",
-    "buyer/credentials.py",
-    "buyer/flow.py",
-    "buyer/http.py",
-    "buyer/plan.py",
-    "buyer/refusal.py",
-    "buyer/repository.py",
-    "buyer/resources.py",
-    "buyer/seller_client.py",
-    "buyer/settings.py",
-    "persistence/__init__.py",
-    "persistence/evidence.py",
-    "persistence/observe.py",
-    "persistence/sqlite.py",
-    "protocol/__init__.py",
-    "protocol/attribution.py",
-    "protocol/documents.py",
-    "protocol/operations.py",
-    "protocol/record.py",
-    "protocol/status.py",
-    "protocol/values.py",
-    "shared/__init__.py",
-    "shared/auth.py",
-    "shared/control.py",
-    "shared/handlers.py",
-    "shared/keyring.py",
-    "shared/lifespan.py",
-    "shared/operator.py",
-    "shared/settings.py",
-    "shared/wba.py",
-    "runner/__init__.py",
-    "runner/checks.py",
-    "runner/main.py",
-    "runner/observe.py",
-    "runner/report.py",
-    "runner/settings.py",
-    "tests/_tools.py",
-    "tests/conftest.py",
-    "tests/test_apps.py",
-    "tests/factories.py",
-    "tests/test_architecture.py",
-    "tests/test_boundary.py",
-    "tests/test_buyer_repository.py",
-    "tests/test_guards_ast_grep.py",
-    "tests/test_guards_import_contracts.py",
-    "tests/test_guards_ruff_bans.py",
-    "tests/test_guards_skips.py",
-    "tests/test_http.py",
-    "tests/test_offers.py",
-    "tests/test_operations.py",
-    "tests/test_record_rules.py",
-    "tests/test_sdk.py",
-    "tests/test_seller_store.py",
-    "tests/test_settings.py",
-    "tests/test_sqlite.py",
-]
-
-# Out-of-scope demo modules: analyzed when an in-scope module imports them,
-# silent otherwise. The entry goes when the scope covers every package (Step 8).
-[[tool.mypy.overrides]]
-module = ["seller.*", "buyer.*", "shared.*", "runner.*", "persistence.*"]
-follow_imports = "silent"
-
-# No explicit Any: the tier grows with each step until it covers every module (Step 8).
-[[tool.mypy.overrides]]
-module = [
-    "seller.app",
-    "seller.boundary",
-    "seller.caller",
-    "seller.errors",
-    "seller.faults",
-    "seller.http",
-    "seller.offers.*",
-    "seller.ports",
-    "seller.resources",
-    "seller.seed",
-    "seller.settings",
-    "seller.sqlite_store",
-    "buyer.*",
-    "persistence.*",
-    "protocol.*",
-    "runner.*",
-    "shared.auth",
-    "shared.control",
-    "shared.handlers",
-    "shared.keyring",
-    "shared.lifespan",
-    "shared.operator",
-    "shared.settings",
-    "shared.wba",
-    "tests._tools",
-    "tests.conftest",
-    "tests.test_apps",
-    "tests.factories",
-    "tests.test_architecture",
-    "tests.test_boundary",
-    "tests.test_buyer_repository",
-    "tests.test_guards_ast_grep",
-    "tests.test_guards_import_contracts",
-    "tests.test_guards_ruff_bans",
-    "tests.test_guards_skips",
-    "tests.test_http",
-    "tests.test_offers",
-    "tests.test_operations",
-    "tests.test_record_rules",
-    "tests.test_sdk",
-    "tests.test_seller_store",
-    "tests.test_settings",
-    "tests.test_sqlite",
-]
+# No explicit Any anywhere: JSON is protocol.values.JsonValue, and every value is typed.
 disallow_any_explicit = true
+# Every package, the unit tests, and the e2e scenarios. tests/ has no __init__.py, so
+# its modules are named from the repository root; the scenarios import their
+# conftest and settings by bare name, as pytest runs them, so e2e/scenarios is on
+# the path.
+explicit_package_bases = true
+mypy_path = ["e2e/scenarios"]
+files = [
+    "protocol",
+    "persistence",
+    "shared",
+    "transport",
+    "seller",
+    "buyer",
+    "runner",
+    "tests",
+    "deploy/local_caddy.py",
+    "e2e/gen_demo_tls.py",
+    "e2e/scenarios",
+]
 
 [tool.coverage.run]
-source = ["protocol", "persistence", "seller", "buyer", "shared", "runner"]
+source = ["protocol", "persistence", "seller", "buyer", "shared", "transport", "runner"]
 branch = true
 
 [tool.coverage.report]
 # The branch coverage measured on the tree before Step 0 (45.26), raised to each
 # step's measured total (Step 1: 50.90; Step 2: 77.57; Step 3: 79.98; Step 4: 84.78;
-# Step 5: 88.07; the refusal body and the library at f1f4092: 88.40; Step 6: 91.58; Step 7: 96.96).
-# It is never lowered.
-fail_under = 96.96
+# Step 5: 88.07; the refusal body and the library at f1f4092: 88.40; Step 6: 91.58;
+# Step 7: 96.96; Step 8: 97.32, on the behavior suite). It is never lowered.
+fail_under = 97.32
 precision = 2
 show_missing = false

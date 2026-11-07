@@ -47,6 +47,7 @@ from pydantic import SecretStr
 from starlette.types import ASGIApp
 
 from persistence.evidence import EvidenceReader
+from persistence.observe import SellerRecords
 from protocol.documents import load_yaml
 from protocol.operations import compose_commit
 from protocol.values import JsonObject
@@ -55,14 +56,14 @@ from seller.offers.issuance import load_template
 from seller.seed import seed
 from seller.settings import SellerSettings
 from seller.sqlite_store import SqliteSellerStore
-from shared.wba import directory_resolver, http_client, tls_context
+from tests.stack import TOKEN
+from transport.wba import directory_resolver, http_client, tls_context
 
 SELLER = "https://seller.example.com"
 #: Under a public suffix, so that a signature can attribute an entry to the buyer (§ 4.1.2).
 BUYER = "https://buyer.example.com"
 #: An origin that publishes a directory, and that the seller has no principal for.
 STRANGER = "https://stranger.example.com"
-TOKEN = "bearer-token-for-tests"  # noqa: S105 -- a test value, not a deployed secret
 PLAN = load_yaml(Path(__file__).resolve().parent.parent / "buyer" / "plan.yaml")
 
 
@@ -129,13 +130,11 @@ def signed(
     return dict(RequestSigner(key, origin).sign(request).headers.items())
 
 
-def _rows(data_dir: Path, table: str) -> int:
-    """How many rows the seller kept in `table`, read from its database file."""
-    db = sqlite3.connect(f"file:{data_dir / 'seller.db'}?mode=ro", uri=True)
-    try:
-        return int(db.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])  # noqa: S608
-    finally:
-        db.close()
+def _kept(data_dir: Path) -> tuple[int, int]:
+    """How many signed requests and directory fetches the seller kept."""
+    with SellerRecords.open(data_dir / "seller.db") as seller:
+        requests = sum(seller.requests_from(Origin.parse(o)) for o in (BUYER, STRANGER))
+        return requests, seller.directories()
 
 
 class DownNonceStore:
@@ -295,7 +294,7 @@ def test_a_verified_origin_without_a_principal_is_public_and_writes_nothing(
         ).status_code
         == 404
     )
-    assert _rows(tmp_path, "signed_requests") == _rows(tmp_path, "directories") == 0
+    assert _kept(tmp_path) == (0, 0)
 
 
 # ── Evidence is kept with the entry, and only then ────────────────────────
@@ -334,7 +333,7 @@ def test_a_signed_commit_keeps_its_request_with_the_entry(
 ) -> None:
     path = "/proposals/demo-wba-1/commit"
     document = _issued(seller, signed("GET", "/proposals/demo-wba-1", parties.buyer))
-    assert _rows(tmp_path, "signed_requests") == 0  # reading kept nothing
+    assert _kept(tmp_path)[0] == 0  # reading kept nothing
 
     body = _commit_body(document, key=str(uuid.uuid4()), at=datetime.now(UTC))
     headers = signed("POST", path, parties.buyer, body=body)
@@ -369,8 +368,9 @@ def test_a_rejected_commit_keeps_no_evidence(
     answer = seller.post(path, content=body, headers=signed("POST", path, parties.buyer, body=body))
     assert answer.status_code == 409
     assert answer.json()["errors"][0]["code"] == "record_mismatch"
-    assert _rows(tmp_path, "assent") == 0
-    assert _rows(tmp_path, "signed_requests") == _rows(tmp_path, "directories") == 0
+    with SellerRecords.open(tmp_path / "seller.db") as records:
+        assert records.entries("demo-wba-1") == []
+    assert _kept(tmp_path) == (0, 0)
 
 
 # ── The offer logic is credential-blind ───────────────────────────────────

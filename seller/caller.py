@@ -20,7 +20,7 @@ from typing import Annotated, Literal, NoReturn
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from shared.auth import BearerMethod, SignatureMethod
+from transport.auth import BearerMethod, SignatureMethod
 
 
 class AmendedIdentityError(TypeError):

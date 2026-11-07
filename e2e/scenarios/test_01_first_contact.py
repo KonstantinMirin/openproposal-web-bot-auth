@@ -11,11 +11,16 @@ import asyncio
 import hashlib
 import json
 
+import httpx
 from conftest import BUYER, BUYER_OPERATOR, SELLER
 from iab_agentic_primitives.web_bot_auth import Origin, ServerIdentity
 
+from persistence.observe import BuyerRecords, SellerRecords
 
-def test_first_contact_by_signature(web, seller_records, buyer_records):
+
+def test_first_contact_by_signature(
+    web: httpx.Client, seller_records: SellerRecords, buyer_records: BuyerRecords
+) -> None:
     # Neither side holds a key or a directory of the other yet.
     assert seller_records.directories() == 0
     assert buyer_records.directories() == 0
@@ -48,10 +53,12 @@ def test_first_contact_by_signature(web, seller_records, buyer_records):
     assert entry.authentication_method == "web_bot_auth"
     assert entry.attributed is True
     bought = buyer_records.commit(outcome["commit_id"])
-    assert bought.state == "agreed"
+    assert bought is not None and bought.state == "agreed"
+    assert entry.evidence_id is not None
     evidence = seller_records.request(entry.evidence_id)
     assert evidence.origin == BUYER and evidence.request.method == "POST"
     assert evidence.request.body == bought.body  # the exact bytes the buyer signed and sent
+    assert evidence.directory_digest is not None
     directory = seller_records.directory(evidence.directory_digest)
     assert directory.url == f"{BUYER}/.well-known/http-message-signatures-directory"
 

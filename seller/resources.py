@@ -2,7 +2,7 @@
 
 `create_app` (seller/app.py) opens these once at startup and closes them on
 shutdown. `resources` is the one function that reads the lifespan's state
-(through shared/lifespan.py). Every route asks for a port of the one store
+(through transport/lifespan.py). Every route asks for a port of the one store
 (`OfferStoreDep`, `OnboardingDep`), and seller/http.py takes the identity
 boundary from here, so the boundary resolves the caller in the same database
 the handlers then write to.
@@ -17,7 +17,7 @@ import httpx
 from fastapi import Depends, Request
 
 from protocol.values import JsonObject
-from shared.lifespan import state_of
+from transport.lifespan import state_of
 
 from .boundary import IdentityBoundary
 from .ports import OfferStore, Onboarding

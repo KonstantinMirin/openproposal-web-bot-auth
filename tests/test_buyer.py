@@ -19,12 +19,14 @@ party kept.
 from __future__ import annotations
 
 import json
+import sqlite3
 from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import httpx
 import pytest
 
+from buyer.repository import NotPendingError
 from tests.stack import BUYER, CFBOT, OPERATOR, SELLER, Stack
 
 DISPLAY = "business-daily-display"
@@ -156,6 +158,13 @@ def test_a_bearer_call_without_an_issued_token_is_refused_unsent(tmp_path: Path)
         assert stack.requests == []
 
 
+def test_a_commit_to_a_proposal_the_seller_wont_show_is_refused(stack: Stack) -> None:
+    outcome = stack.commit("no-such-proposal", [DISPLAY]).json()
+    assert (outcome["state"], outcome["reason"]) == ("refused", "unreadable-proposal")
+    assert "not_found" in outcome["detail"]
+    assert [m for m, _ in _sent(stack)] == ["GET"]  # nothing to commit to, so nothing sent
+
+
 def test_a_commit_trigger_names_at_least_one_line_item(stack: Stack) -> None:
     trigger = {"proposal_id": "demo-wba-1", "line_item_ids": []}
     response = stack.buyer.post("/operator/commit", json=trigger, headers=OPERATOR)
@@ -255,7 +264,7 @@ def test_a_proposal_that_names_another_seller_is_refused(stack: Stack) -> None:
 
 
 def _entries(
-    edit: Callable[[list[dict[str, object]]], None],
+    edit: Callable[[list[dict[str, object]]], object],
 ) -> Callable[[dict[str, object]], None]:
     def apply(document: dict[str, object]) -> None:
         entries = document["entries"]
@@ -286,6 +295,41 @@ def test_a_result_that_doesnt_answer_the_commit_is_refused_then_replayed(
     # The same commit, re-sent whole, gets the seller's stored result.
     stack.answer = None
     assert stack.commit("demo-wba-1", [DISPLAY]).json()["state"] == "agreed"
+    assert _commits(stack, "demo-wba-1") == ["agreed"]
+
+
+def test_a_settlement_that_fails_keeps_no_evidence(stack: Stack) -> None:
+    """Defect 3: the buyer kept the answer and settled the commit in two autocommits, so a
+    failed settlement left the evidence behind. Now both are one transaction."""
+
+    def settled_meanwhile(request: httpx.Request) -> httpx.Response | None:
+        if request.method != "POST":
+            return None
+        db = sqlite3.connect(stack.buyer_dir / "buyer.db")
+        try:  # another trigger settled the commit while this one waited for the seller
+            db.execute("UPDATE commits SET state = 'rejected'")
+            db.commit()
+        finally:
+            db.close()
+        return stack.forward(request)
+
+    stack.answer = settled_meanwhile
+    with pytest.raises(NotPendingError):
+        stack.commit("demo-wba-1", [DISPLAY])
+    assert _kept_answers(stack) == 0
+    with stack.buyer_db() as db:
+        assert db.execute("SELECT COUNT(*) FROM signed_requests").fetchone()[0] == 0
+
+
+def test_a_pending_commit_is_found_whatever_the_order_of_its_line_items(stack: Stack) -> None:
+    later = {"errors": [{"code": "not_committable", "detail": "busy", "retry": "same"}]}
+    _replace(stack, "POST", 503, json.dumps(later).encode())
+    assert stack.commit("demo-wba-1", [DISPLAY, CTV]).json()["state"] == "rejected"
+    stack.answer = None
+    agreed = stack.commit("demo-wba-1", [CTV, DISPLAY]).json()
+    assert agreed["state"] == "agreed", agreed
+    first, again = (r.content for r in stack.requests if r.method == "POST")
+    assert first == again  # the pending commit, re-sent whole
     assert _commits(stack, "demo-wba-1") == ["agreed"]
 
 

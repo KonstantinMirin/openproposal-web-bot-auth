@@ -36,9 +36,9 @@ from typing import TypeVar
 import httpx
 from pydantic import ValidationError
 
-from shared.auth import AuthMethod
-from shared.control import OPERATOR_HEADER
-from shared.wba import Transport, http_client, tls_context
+from transport.auth import AuthMethod
+from transport.control import OPERATOR_HEADER
+from transport.wba import Transport, http_client, tls_context
 
 from .checks import Done
 from .observe import LINE_ITEM, Observer, instant_of

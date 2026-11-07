@@ -19,6 +19,7 @@ RUN uv sync --no-install-project
 COPY protocol protocol
 COPY persistence persistence
 COPY shared shared
+COPY transport transport
 COPY seller seller
 COPY buyer buyer
 COPY runner runner

@@ -33,7 +33,7 @@ services:
       - ./localhost/generated/logs:/var/log/caddy
     ports: ["127.0.0.1:18443:443"]
     networks:
-      live:
+      agents:
         aliases:
           - wba-demo.noetis.dev
           - seller.wba-demo.noetis.dev

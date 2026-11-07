@@ -5,11 +5,14 @@ hash and resolves the same `ResolvedCaller` type a signature resolves, with
 `authentication_method: bearer`. The offer logic is the same code either way.
 """
 
+import httpx
 from conftest import BUYER, BUYER_OPERATOR, SELLER, signed
 from settings import BEARER_TOKEN
 
+from persistence.observe import SellerRecords
 
-def test_bearer_token_resolves_the_same_identity_type(web):
+
+def test_bearer_token_resolves_the_same_identity_type(web: httpx.Client) -> None:
     by_token = web.get(
         f"{SELLER}/whoami", headers={"Authorization": f"Bearer {BEARER_TOKEN}"}
     ).json()
@@ -26,7 +29,7 @@ def test_bearer_token_resolves_the_same_identity_type(web):
     assert by_signature["credential"]["origin"] == BUYER
 
 
-def test_commit_with_a_bearer_token(web, seller_records):
+def test_commit_with_a_bearer_token(web: httpx.Client, seller_records: SellerRecords) -> None:
     outcome = web.post(
         f"{BUYER_OPERATOR}/commit",
         json={

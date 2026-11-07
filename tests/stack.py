@@ -48,7 +48,7 @@ from buyer.settings import BuyerSettings
 from seller.app import create_app as create_seller
 from seller.settings import SellerSettings
 from shared.keyring import Keyring
-from shared.wba import directory_resolver, http_client, tls_context
+from transport.wba import directory_resolver, http_client, tls_context
 
 SELLER = "https://seller.wba-demo.noetis.dev"
 BUYER = "https://buyer.wba-demo.noetis.dev"
@@ -209,11 +209,15 @@ class Stack:
             "line_item_ids": line_item_ids,
             "credential": credential,
         }
-        return self.buyer.post("/operator/commit", json=trigger, headers=OPERATOR)
+        response: httpx.Response = self.buyer.post(
+            "/operator/commit", json=trigger, headers=OPERATOR
+        )
+        return response
 
     def read(self, proposal_id: str, credential: str = "web_bot_auth") -> httpx.Response:
         trigger = {"proposal_id": proposal_id, "credential": credential}
-        return self.buyer.post("/operator/read", json=trigger, headers=OPERATOR)
+        response: httpx.Response = self.buyer.post("/operator/read", json=trigger, headers=OPERATOR)
+        return response
 
     # What each party kept
 

@@ -13,8 +13,8 @@ from typing import Generic, NoReturn, TypeVar
 
 from persistence.observe import KeptAgreement, KeptCommit, KeptEntry
 from protocol.values import JsonObject
-from shared.auth import AuthMethod
-from shared.control import Agreed, CloudflareCheck, Outcome
+from transport.auth import AuthMethod
+from transport.control import Agreed, CloudflareCheck, Outcome
 
 T = TypeVar("T")
 V = TypeVar("V", covariant=True)

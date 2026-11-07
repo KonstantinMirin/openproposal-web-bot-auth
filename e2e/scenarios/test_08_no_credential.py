@@ -5,10 +5,15 @@ a signature covers it through `Content-Digest`, but it never parses it, so a
 failing credential is refused even when the body isn't JSON.
 """
 
+import httpx
 from conftest import SELLER, commit_body, signed
 
+from persistence.observe import SellerRecords
 
-def test_commit_without_a_credential_is_refused(web, seller_records):
+
+def test_commit_without_a_credential_is_refused(
+    web: httpx.Client, seller_records: SellerRecords
+) -> None:
     response = web.post(
         f"{SELLER}/proposals/demo-wba-2/commit",
         content=commit_body(160000.0),
@@ -19,14 +24,14 @@ def test_commit_without_a_credential_is_refused(web, seller_records):
     assert seller_records.entries("demo-wba-2") == []
 
 
-def test_an_invalid_token_is_refused_not_downgraded(web):
+def test_an_invalid_token_is_refused_not_downgraded(web: httpx.Client) -> None:
     response = web.get(f"{SELLER}/whoami", headers={"Authorization": "Bearer not-a-token"})
     assert response.status_code == 401
     assert response.json()["error"] == "invalid-token"
     assert web.get(f"{SELLER}/whoami").json()["kind"] == "public"  # no credential at all
 
 
-def test_a_failing_credential_is_refused_before_the_body_is_parsed(web):
+def test_a_failing_credential_is_refused_before_the_body_is_parsed(web: httpx.Client) -> None:
     url = f"{SELLER}/proposals/demo-wba-2/commit"
     broken = b"{not json"
     json_type = {"Content-Type": "application/json"}

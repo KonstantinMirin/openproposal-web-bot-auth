@@ -12,7 +12,7 @@ SELLER = os.environ.get("PEER_SELLER_ORIGIN", "https://seller.wba-demo.noetis.de
 BUYER = os.environ.get("PEER_BUYER_ORIGIN", "https://buyer.wba-demo.noetis.dev")
 CFBOT = os.environ.get("PEER_CFBOT_ORIGIN", "https://cfbot.wba-demo.noetis.dev")
 
-#: What each agent's own controls require (shared/operator.py).
+#: What each agent's own controls require (transport/operator.py).
 OPERATOR_KEY = os.environ["OPERATOR_KEY"]
 #: The token the seller issued its bearer buyer.
 BEARER_TOKEN = os.environ["DEMO_BEARER_TOKEN"]

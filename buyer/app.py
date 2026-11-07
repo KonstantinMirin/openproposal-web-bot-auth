@@ -8,13 +8,14 @@ Agents reach `buyer.wba-demo.noetis.dev` only for the directory, which
 `DirectoryMiddleware` serves from the keyring on every fetch. The
 `/operator/` routes are the buyer's own controls: no front routes them, so they
 are reachable only inside the network, and each call carries the operator key
-(shared/operator.py).
+(transport/operator.py).
 """
 
 from __future__ import annotations
 
 import json
-from collections.abc import AsyncIterator
+import time
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from typing import TypedDict
 
@@ -23,7 +24,8 @@ from iab_agentic_primitives.web_bot_auth import KeyResolver, PublishPolicy, Serv
 from iab_agentic_primitives.web_bot_auth.asgi import DirectoryMiddleware
 from starlette.types import ASGIApp
 
-from shared.control import (
+from shared.keyring import Keyring
+from transport.control import (
     CloudflareCheck,
     CommitTrigger,
     Health,
@@ -32,9 +34,8 @@ from shared.control import (
     PublishedKey,
     ReadTrigger,
 )
-from shared.keyring import Keyring
-from shared.operator import OperatorKey
-from shared.wba import Transport, directory_resolver, http_client, tls_context
+from transport.operator import OperatorKey
+from transport.wba import Transport, directory_resolver, http_client, tls_context
 
 from .cfbot import Cfbot
 from .flow import Buyer
@@ -126,11 +127,13 @@ def create_app(
     *,
     resolver: KeyResolver | None = None,
     transport: Transport | None = None,
+    clock: Callable[[], float] = time.time,
 ) -> ASGIApp:
     """The buyer, from its settings. Its lifespan owns the store and the one client.
 
     `resolver` replaces the directory resolver the buyer verifies sellers' answers
-    with. `transport` answers in place of the network, for tests.
+    with. `transport` answers in place of the network, and `clock` tells the keyring
+    the time, for tests.
 
     The result is the FastAPI app inside the library's `DirectoryMiddleware`.
     """
@@ -139,6 +142,7 @@ def create_app(
         settings.keyring_dir,
         rotation_wait=settings.rotation_wait,
         signature_lifetime=settings.signature_lifetime,
+        clock=clock,
     )
 
     @asynccontextmanager

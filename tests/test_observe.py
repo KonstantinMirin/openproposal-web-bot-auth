@@ -14,7 +14,12 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
-from iab_agentic_primitives.web_bot_auth import Origin, ServerIdentity, WebBotAuthError
+from iab_agentic_primitives.web_bot_auth import (
+    DIRECTORY_PATH,
+    Origin,
+    ServerIdentity,
+    WebBotAuthError,
+)
 
 from persistence.evidence import NoEvidenceError
 from persistence.observe import BuyerRecords, SellerRecords
@@ -58,6 +63,24 @@ def test_the_seller_records_read_the_commit_as_the_boundary_resolved_it(
         assert seller.requests_from(Origin.parse(BUYER)) == 1
 
 
+def test_one_directory_fetch_verified_twice_is_kept_once(tmp_path: Path) -> None:
+    with Stack(tmp_path / "agents") as stack:
+        for proposal_id in ("demo-wba-1", "demo-wba-2"):
+            assert stack.commit(proposal_id, [DISPLAY]).json()["state"] == "agreed"
+        served = stack.buyer.get(DIRECTORY_PATH).content
+    with SellerRecords.open(stack.seller_dir / "seller.db") as seller:
+        # Two signatures, one cached fetch: one row, with the exact body bytes verified.
+        assert seller.requests_from(Origin.parse(BUYER)) == 2
+        assert seller.directories() == 1
+        entry, _ = seller.entries("demo-wba-1")
+        assert entry.evidence_id is not None
+        digest = seller.request(entry.evidence_id).directory_digest
+        assert digest is not None
+        kept = seller.directory(digest)
+    assert kept.url == f"{BUYER}{DIRECTORY_PATH}"
+    assert kept.body == served  # the same key set, byte for byte
+
+
 def test_both_parties_kept_evidence_verifies_again_offline(
     agreed: tuple[Stack, dict[str, object]],
 ) -> None:
@@ -78,6 +101,9 @@ def test_both_parties_kept_evidence_verifies_again_offline(
         commit_id = outcome["commit_id"]
         assert isinstance(commit_id, int)
         commit = buyer.commit(commit_id)
+        # The scenarios find a commit by its proposal and line items, in any order.
+        assert buyer.commits("demo-wba-1", [DISPLAY]) == [commit]
+        assert buyer.commits("demo-wba-1", ["weather-app-ctv"]) == []
     assert answered.bound and answered.body_covered
     assert commit is not None and commit.state == "agreed"
     assert kept.request.body == commit.body  # the exact bytes the buyer signed and sent

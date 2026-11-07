@@ -23,7 +23,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from protocol.values import JsonObject, JsonValue
-from shared.control import OPERATOR_HEADER, Agreed, CloudflareCheck
+from transport.control import OPERATOR_HEADER, Agreed, CloudflareCheck
 
 FORMAT: Literal[2] = 2
 #: How many runs history.json keeps, newest first.

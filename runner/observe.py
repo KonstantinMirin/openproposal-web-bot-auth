@@ -1,7 +1,7 @@
 """The runner's steps: what it asks the agents, and what it reads of what each party kept.
 
 The runner reaches the agents' own controls through their typed control-plane
-models (shared/control.py), and reads both parties' databases read-only through
+models (transport/control.py), and reads both parties' databases read-only through
 their read models (persistence/observe.py), never with its own SQL. It holds no
 agent's key: what it verifies, it verifies against the directory bytes a party
 kept, or against a directory it fetches itself.
@@ -24,8 +24,8 @@ from persistence.evidence import KeptFetch, KeptRequest, KeptResponse
 from persistence.observe import BuyerRecords, SellerRecords
 from protocol.record import digest_of, sha256_hex
 from protocol.values import instant
-from shared.auth import AuthMethod
-from shared.control import OUTCOME, Agreed, CloudflareCheck, CommitTrigger, Issued, IssueRequest
+from transport.auth import AuthMethod
+from transport.control import OUTCOME, Agreed, CloudflareCheck, CommitTrigger, Issued, IssueRequest
 
 from . import checks
 from .checks import Done, expect

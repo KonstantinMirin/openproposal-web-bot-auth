@@ -20,9 +20,9 @@ from openproposal import Commit, LineItemWrites, dump
 
 from protocol.attribution import attributes
 from protocol.operations import ProtocolViolation, check_result, compose_commit, parse_commit
-from shared.auth import AuthMethod
-from shared.control import Agreed, Outcome, Read, Refused, Rejected, SellerView
 from shared.keyring import Keyring
+from transport.auth import AuthMethod
+from transport.control import Agreed, Outcome, Read, Refused, Rejected, SellerView
 
 from .credentials import Bearer, BuyerCredential, SignWith
 from .plan import Plan

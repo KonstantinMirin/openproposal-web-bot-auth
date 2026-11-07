@@ -5,7 +5,7 @@ import pytest
 from protocol.documents import InvalidDocument, loads_yaml
 
 
-def test_core_schema_values():
+def test_core_schema_values() -> None:
     doc = loads_yaml(
         "b: &b {x: 1}\nm: {<<: *b, y: 2}\nt: 2026-11-10T00:00:00Z\nd: 2026-11-10\n"
         "u: 1_000\nbin: 0b11\nhex: 0x18\ne: 24.00\nno: no\nyes: True\nn: ~\n"
@@ -35,6 +35,6 @@ def test_core_schema_values():
         "",
     ],
 )
-def test_documents_with_no_json_form_are_invalid(text):
+def test_documents_with_no_json_form_are_invalid(text: str) -> None:
     with pytest.raises(InvalidDocument):
         loads_yaml(text)

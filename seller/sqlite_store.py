@@ -19,7 +19,7 @@ from persistence import evidence
 from persistence.sqlite import one_of, open_db, transaction
 from protocol.record import sha256_hex
 from protocol.values import JsonObject
-from shared.auth import AuthMethod
+from transport.auth import AuthMethod
 
 from .caller import ResolvedCaller, SignatureCredential
 from .ports import PrincipalRecord, ProcessedCommit, StoredProposal

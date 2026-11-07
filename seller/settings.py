@@ -7,7 +7,7 @@
 | `DATA_DIR` | `/data` | its database, `seller.db` |
 | `KEYS_DIR` | `/keys` | its signing key, `wba-key.jwk`, on a volume no other service mounts |
 | `SSL_CERT_FILE` | the system's roots | the trust store for directory fetches |
-| `OPERATOR_KEY` | none: operator calls are refused | its own controls (shared/operator.py) |
+| `OPERATOR_KEY` | none: operator calls are refused | its own controls (transport/operator.py) |
 | `DEMO_BEARER_TOKEN` | none: no bearer buyer | the token it issues the bearer buyer |
 | `WBA_DIRECTORY_MAX_AGE` | `300` | its directory's `Cache-Control: max-age` |
 | `WBA_MAX_CACHE_AGE` | the library's, 300 | how long a cached directory answers |

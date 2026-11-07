@@ -2,7 +2,7 @@
 
 `create_app` (buyer/app.py) opens these once at startup and closes them on
 shutdown. `resources` is the one function that reads the lifespan's state
-(through shared/lifespan.py).
+(through transport/lifespan.py).
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ from typing import Annotated
 from fastapi import Depends, Request
 
 from shared.keyring import Keyring
-from shared.lifespan import state_of
+from transport.lifespan import state_of
 
 from .cfbot import Cfbot
 from .flow import Buyer

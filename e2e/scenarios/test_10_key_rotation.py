@@ -18,8 +18,11 @@ runner.
 
 import time
 
+import httpx
 from conftest import BUYER, BUYER_OPERATOR, SELLER, buyer_key, signed
 from settings import MAX_CACHE_AGE, ROTATION_WAIT, SIGNATURE_LIFETIME
+
+from transport.control import OUTCOME, Read
 
 URL = f"{SELLER}/whoami"
 
@@ -28,14 +31,15 @@ def _until(moment: float) -> None:
     time.sleep(max(0.0, moment - time.time()))
 
 
-def _read(web) -> dict:
+def _read(web: httpx.Client) -> Read:
     """The buyer reads its proposal, signed with its active key; the seller must answer 200."""
-    read = web.post(f"{BUYER_OPERATOR}/read", json={"proposal_id": "demo-wba-1"}).json()
-    assert read["state"] == "read", read
+    response = web.post(f"{BUYER_OPERATOR}/read", json={"proposal_id": "demo-wba-1"})
+    read = OUTCOME.validate_json(response.content)
+    assert isinstance(read, Read), read
     return read
 
 
-def _verified_keyid(web, kid: str) -> str:
+def _verified_keyid(web: httpx.Client, kid: str) -> str:
     """The keyid the seller verified for a request signed with the buyer's key `kid`.
 
     The seller keeps no evidence for a read, so `/whoami` is where it says which key it
@@ -44,10 +48,12 @@ def _verified_keyid(web, kid: str) -> str:
     whoami = web.get(URL, headers=signed("GET", URL, key=buyer_key(kid)))
     assert whoami.status_code == 200, whoami.text
     assert whoami.json()["credential"]["origin"] == BUYER
-    return whoami.json()["credential"]["keyid"]
+    keyid = whoami.json()["credential"]["keyid"]
+    assert isinstance(keyid, str)
+    return keyid
 
 
-def test_key_rotation(web):
+def test_key_rotation(web: httpx.Client) -> None:
     old = buyer_key().thumbprint
 
     # 1. Publish the new key. Requests still go out signed with the old key, and verify.
@@ -55,7 +61,7 @@ def test_key_rotation(web):
     published_at = time.time()
     new = keys["published_kid"]
     assert keys["active"] == old and set(keys["published"]) == {old, new}
-    assert _read(web)["keyid"] == old
+    assert _read(web).keyid == old
     assert _verified_keyid(web, old) == old
     # The switch waits until no verifier can still be serving a directory without it.
     early = web.post(f"{BUYER_OPERATOR}/keys/{new}/activate")
@@ -65,7 +71,7 @@ def test_key_rotation(web):
     _until(published_at + ROTATION_WAIT + 1)
     assert web.post(f"{BUYER_OPERATOR}/keys/{new}/activate").json()["active"] == new
     switched_at = time.time()
-    assert _read(web)["keyid"] == new
+    assert _read(web).keyid == new
     assert _verified_keyid(web, new) == new
 
     # 3. Remove the old key once every signature it made has expired.

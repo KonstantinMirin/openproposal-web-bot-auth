@@ -15,7 +15,7 @@ from iab_agentic_primitives.web_bot_auth.httpx import WebBotAuth
 from pydantic import TypeAdapter, ValidationError
 
 from protocol.values import JsonValue
-from shared.control import CloudflareCheck
+from transport.control import CloudflareCheck
 
 _VERDICT: TypeAdapter[JsonValue] = TypeAdapter(JsonValue)
 

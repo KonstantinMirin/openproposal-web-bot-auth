@@ -20,7 +20,7 @@ import pytest
 from iab_agentic_primitives.web_bot_auth import Origin
 from pydantic import SecretStr
 
-from runner.main import publish, run_once
+from runner.main import main, publish, run_once
 from runner.report import (
     HISTORY,
     NotPublic,
@@ -176,6 +176,22 @@ def test_a_run_fails_when_the_parties_records_dont_add_up(
     report = asyncio.run(run_once(_settings(stack, tmp_path / "out"), transport=transport))
     failed = {s.id: s.detail for s in report.steps if not s.ok}
     assert failed.get(step) == f"CheckFailed: {detail}", failed
+
+
+def test_a_cfbot_refusal_fails_the_cloudflare_step(stack: Stack, tmp_path: Path) -> None:
+    stack.cfbot = lambda _: httpx.Response(403, json={"ok": False, "reason": "signature-invalid"})
+    report = _run(stack, tmp_path / "out")
+    (cloudflare,) = [s for s in report.steps if s.id == "cloudflare"]
+    assert not cloudflare.ok and "cfbot refused: 403" in (cloudflare.detail or "")
+    assert [s.id for s in report.steps if not s.ok] == ["cloudflare"]
+
+
+def test_the_runner_refuses_to_start_without_an_operator_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("OPERATOR_KEY", raising=False)
+    with pytest.raises(SystemExit, match="OPERATOR_KEY is not set"):
+        main()
 
 
 # What a report may hold

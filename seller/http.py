@@ -33,8 +33,8 @@ from openproposal import CommitResult, ErrorObject, dump
 from starlette.exceptions import HTTPException
 
 from protocol.values import JsonObject
-from shared.handlers import on_error
-from shared.operator import ControlError, render_control
+from transport.handlers import on_error
+from transport.operator import ControlError, render_control
 
 from .boundary import Refused
 from .caller import Caller
