@@ -8,7 +8,7 @@ from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any
 
-from iab_agentic_primitives.web_bot_auth import DirectoryResolver, RequestSigner, WebBotAuthError
+from iab_agentic_primitives.web_bot_auth import KeyResolver, RequestSigner, WebBotAuthError
 from openproposal import LineItemWrites, Proposal, dump, dump_json
 from pydantic import BaseModel
 
@@ -23,7 +23,7 @@ from protocol.operations import (
 )
 from protocol.values import JsonObject, commitment_key
 
-from .client import Credential, Exchange, call_seller
+from .client import Credential, Exchange, HTTPClient, call_seller
 from .keyring import Keyring
 from .store import Store
 
@@ -52,15 +52,16 @@ class Buyer:
     def __init__(
         self,
         store: Store,
-        resolver: DirectoryResolver,
+        resolver: KeyResolver,
         keyring: Keyring,
         origin: str,
         plan: Mapping[str, LineItemWrites],
         *,
+        client: HTTPClient,
         signature_lifetime: int = 300,
     ) -> None:
         self.store, self.resolver, self.keyring, self.origin = store, resolver, keyring, origin
-        self.plan, self.signature_lifetime = plan, signature_lifetime
+        self.plan, self.client, self.signature_lifetime = plan, client, signature_lifetime
 
     @property
     def signer(self) -> RequestSigner:
@@ -72,6 +73,7 @@ class Buyer:
     ) -> Exchange:
         try:
             exchange = await call_seller(
+                self.client,
                 method,
                 seller["origin"] + path,
                 seller_origin=seller["origin"],

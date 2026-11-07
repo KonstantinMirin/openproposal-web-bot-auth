@@ -63,6 +63,10 @@ class Store:
         self.db.execute("PRAGMA foreign_keys = ON")
         self.db.executescript(DIRECTORIES_SCHEMA + SCHEMA)
 
+    def close(self) -> None:
+        """Closes the connection. The app's lifespan calls it on shutdown."""
+        self.db.close()
+
     def add_seller(
         self, origin: str, domain: str, legal_name: str, bearer_token: str | None
     ) -> None:

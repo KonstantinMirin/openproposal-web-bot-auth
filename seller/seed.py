@@ -7,7 +7,9 @@ the bearer buyer only by its token's hash.
 from __future__ import annotations
 
 from pathlib import Path
-from urllib.parse import urlsplit
+
+from iab_agentic_primitives.web_bot_auth import Origin
+from pydantic import SecretStr
 
 from protocol.documents import load_yaml
 from protocol.record import line_items_of
@@ -16,10 +18,6 @@ from protocol.values import JsonObject
 from .store import Store
 
 TEMPLATE = Path(__file__).parent / "seed" / "proposal.yaml"
-
-
-class NoHostError(ValueError):
-    """The configured buyer origin names no host, so the seller can't record the buyer."""
 
 
 def issued_document(proposal_id: str, legal_name: str, domain: str) -> JsonObject:
@@ -36,22 +34,21 @@ def issue(store: Store, principal_id: str, proposal_id: str, legal_name: str, do
     store.add_proposal(principal_id, issued_document(proposal_id, legal_name, domain))
 
 
-def seed(store: Store, *, buyer_origin: str, bearer_token: str | None) -> None:
+def seed(store: Store, *, buyer_origin: Origin, bearer_token: SecretStr | None) -> None:
+    """Writes the first-boot records into an empty store; does nothing to a seeded one."""
     if not store.is_empty():
         return
     with store.transaction():
-        # A buyer that signs: the seller's onboarding recorded its origin.
-        host = urlsplit(buyer_origin).hostname
-        if host is None:
-            raise NoHostError(buyer_origin)
+        # A buyer that signs: the seller's onboarding recorded its origin, and its domain.
+        host = buyer_origin.host
         store.add_principal("buyer-wba", "Demo Buyer Agency LLC", host)
-        store.add_origin_credential("buyer-wba", buyer_origin)
+        store.add_origin_credential("buyer-wba", str(buyer_origin))
         for n in (1, 2):
             issue(store, "buyer-wba", f"demo-wba-{n}", "Demo Buyer Agency LLC", host)
 
         # A buyer that presents a bearer token the seller issued it.
-        if bearer_token:
+        if bearer_token is not None:
             domain = "bearer-buyer.wba-demo.noetis.dev"
             store.add_principal("buyer-bearer", "Bearer Agency LLC", domain)
-            store.add_token_credential("buyer-bearer", bearer_token)
+            store.add_token_credential("buyer-bearer", bearer_token.get_secret_value())
             issue(store, "buyer-bearer", "demo-bearer-1", "Bearer Agency LLC", domain)

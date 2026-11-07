@@ -26,17 +26,15 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import sqlite3
 import sys
 import time
-from collections.abc import Awaitable, Callable, Iterator
+from collections.abc import Awaitable, Callable, Iterator, Sequence
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit
 
 import httpx
 from iab_agentic_primitives.web_bot_auth import (
@@ -52,7 +50,9 @@ from iab_agentic_primitives.web_bot_auth import (
 from protocol.record import digest_of, sha256_hex
 from protocol.values import instant
 from shared.operator import HEADER as OPERATOR_HEADER
-from shared.wba import http_client
+from shared.wba import http_client, tls_context
+
+from .settings import RunnerSettings
 
 DIRECTORY_PATH = "/.well-known/http-message-signatures-directory"
 HISTORY = 20
@@ -74,28 +74,6 @@ WITHHELD = frozenset(
         "via",
     }
 )
-#: Environment variables whose values must never reach a report.
-SECRET_VARIABLES = ("OPERATOR_KEY", "DEMO_BEARER_TOKEN")
-
-
-class Config:
-    """The runner's settings, from the environment."""
-
-    def __init__(self, env: dict[str, str] | None = None) -> None:
-        env = dict(os.environ if env is None else env)
-        self.seller = env.get("SELLER_ORIGIN", "https://seller.wba-demo.noetis.dev")
-        self.buyer = env.get("BUYER_ORIGIN", "https://buyer.wba-demo.noetis.dev")
-        self.cfbot = env.get("CFBOT_ORIGIN", "https://cfbot.wba-demo.noetis.dev")
-        self.seller_control = env.get("SELLER_CONTROL", "http://seller:8000")
-        self.buyer_control = env.get("BUYER_CONTROL", "http://buyer:8000")
-        self.operator_key = env.get("OPERATOR_KEY", "")
-        self.seller_db = env.get("SELLER_DB", "/seller-data/seller.db")
-        self.buyer_db = env.get("BUYER_DB", "/buyer-data/buyer.db")
-        self.out_dir = Path(env.get("OUT_DIR", "/out"))
-        self.interval = float(env.get("RUN_INTERVAL", "900"))
-        self.secrets = [env[name] for name in SECRET_VARIABLES if len(env.get(name, "")) >= 8]
-
-
 # ── Sanitizing ────────────────────────────────────────────────────────────
 
 
@@ -124,7 +102,7 @@ class NotPublic(Exception):
     """The report holds something that must not be published."""
 
 
-def assert_public(report: dict[str, Any], secrets: list[str]) -> str:
+def assert_public(report: dict[str, Any], secrets: Sequence[str]) -> str:
     """The report as JSON text; raises `NotPublic` when it holds a secret or a private key."""
     text = json.dumps(report, indent=1, ensure_ascii=False)
     for secret in secrets:
@@ -232,12 +210,12 @@ def _database(path: str) -> Iterator[sqlite3.Connection]:
         db.close()
 
 
-def _stored_keys(db: sqlite3.Connection, digest: str, origin: str) -> StaticKeyResolver:
+def _stored_keys(db: sqlite3.Connection, digest: str, origin: Origin) -> StaticKeyResolver:
     """The keys of a stored directory, after the library verifies the stored bytes again."""
     row = db.execute("SELECT * FROM directories WHERE digest = ?", (digest,)).fetchone()
     headers = [tuple(line) for line in json.loads(row["headers"])]
     directory = parse_directory_response(
-        row["status"], headers, row["body"], urlsplit(origin).hostname, int(row["fetched_at"])
+        row["status"], headers, row["body"], origin.host, int(row["fetched_at"])
     )
     return StaticKeyResolver({origin: list(directory.values())})
 
@@ -245,20 +223,22 @@ def _stored_keys(db: sqlite3.Connection, digest: str, origin: str) -> StaticKeyR
 class Flow:
     """The steps of one run, against one deployment."""
 
-    def __init__(self, config: Config, control: httpx.AsyncClient) -> None:
-        self.config, self.control = config, control
+    def __init__(
+        self, config: RunnerSettings, control: httpx.AsyncClient, web: httpx.AsyncClient
+    ) -> None:
+        #: `control` reaches the agents' own controls; `web` fetches over public HTTPS.
+        self.config, self.control, self.web = config, control, web
 
-    async def directory(self, origin: str) -> dict[str, Any]:
+    async def directory(self, origin: Origin) -> dict[str, Any]:
         """Fetches the origin's directory as a verifier does, and verifies it with the library."""
-        url = origin + DIRECTORY_PATH
-        async with http_client(timeout=10) as client:
-            response = await client.get(url, headers={"Accept-Encoding": "identity"})
+        url = origin.directory_url
+        response = await self.web.get(url, headers={"Accept-Encoding": "identity"})
         lines = response.headers.multi_items()
         keys = parse_directory_response(
             response.status_code,
             lines,
             response.content,
-            urlsplit(origin).hostname,
+            origin.host,
             int(time.time()),
             url=url,
         )
@@ -286,7 +266,7 @@ class Flow:
         response = await self.control.post(
             f"{self.config.buyer_control}/operator/commit",
             json={
-                "seller": self.config.seller,
+                "seller": str(self.config.seller),
                 "proposal_id": proposal_id,
                 "line_item_ids": [LINE_ITEM],
                 "credential": credential,
@@ -329,7 +309,9 @@ class Flow:
             evidence = db.execute(
                 "SELECT * FROM evidence WHERE id = ?", (entry["evidence_id"],)
             ).fetchone()
-            expect(evidence["origin"] == self.config.buyer, f"evidence from {evidence['origin']}")
+            expect(
+                evidence["origin"] == str(self.config.buyer), f"evidence from {evidence['origin']}"
+            )
             view["request"] = {
                 "method": evidence["method"],
                 "url": evidence["url"],
@@ -359,7 +341,9 @@ class Flow:
                 "SELECT * FROM evidence WHERE id = ?", (outcome["evidence_id"],)
             ).fetchone()
             expect(evidence is not None, "the buyer kept no evidence")
-            expect(evidence["origin"] == self.config.seller, f"answer from {evidence['origin']}")
+            expect(
+                evidence["origin"] == str(self.config.seller), f"answer from {evidence['origin']}"
+            )
             directory = _directory_view(
                 db.execute(
                     "SELECT * FROM directories WHERE digest = ?", (evidence["directory_digest"],)
@@ -432,7 +416,7 @@ class Flow:
                 )
             )
         expect(
-            str(again.origin) == self.config.buyer and again.body_covered,
+            again.origin == self.config.buyer and again.body_covered,
             "the seller's evidence doesn't verify again",
         )
         with _database(self.config.buyer_db) as db:
@@ -451,7 +435,7 @@ class Flow:
                 HTTPResponse(
                     row["status"], [tuple(x) for x in json.loads(row["headers"])], row["body"], sent
                 ),
-                expected_origin=Origin.parse(self.config.seller),
+                expected_origin=self.config.seller,
             )
         expect(
             answered.bound and answered.body_covered, "the buyer's evidence doesn't verify again"
@@ -469,29 +453,35 @@ class Flow:
         check = response.json()
         verdict = check["verdict"]
         expect(check["status"] == 200 and verdict.get("ok") is True, f"cfbot refused: {verdict}")
-        expect(verdict["identity"] == self.config.buyer, f"cfbot saw {verdict['identity']}")
+        expect(verdict["identity"] == str(self.config.buyer), f"cfbot saw {verdict['identity']}")
         return {
             "detail": f"{verdict['verifier']} accepted {verdict['identity']}",
             "verdict": verdict,
         }
 
 
-async def run_once(config: Config) -> dict[str, Any]:
+async def run_once(config: RunnerSettings) -> dict[str, Any]:
     """One run of every step. Never raises: a failure is a step outcome."""
     run, started = Run(), time.time()
     report: dict[str, Any] = {
         "format": 1,
         "started_at": _instant(started),
-        "origins": {"seller": config.seller, "buyer": config.buyer, "cfbot": config.cfbot},
+        "origins": {
+            "seller": str(config.seller),
+            "buyer": str(config.buyer),
+            "cfbot": str(config.cfbot),
+        },
         "software": {
             name: _version(name) for name in ("iab-agentic-primitives", "openproposal-sdk")
         },
         "line_item_ids": [LINE_ITEM],
     }
-    async with httpx.AsyncClient(
-        timeout=60, headers={OPERATOR_HEADER: config.operator_key}
-    ) as control:
-        flow = Flow(config, control)
+    key = "" if config.operator_key is None else config.operator_key.get_secret_value()
+    async with (
+        httpx.AsyncClient(timeout=60, headers={OPERATOR_HEADER: key}) as control,
+        http_client(tls_context(config.ca_bundle), timeout=10) as web,
+    ):
+        flow = Flow(config, control, web)
         report["directories"] = {}
         for party, origin in (
             ("seller", config.seller),
@@ -601,7 +591,7 @@ def updated_history(previous: list[dict[str, Any]], report: dict[str, Any]) -> l
     return [history_entry(report), *previous][:HISTORY]
 
 
-def publish(config: Config, report: dict[str, Any]) -> None:
+def publish(config: RunnerSettings, report: dict[str, Any]) -> None:
     """Writes latest-run.json and history.json, or a bare failure when the report isn't public."""
     try:
         text = assert_public(report, config.secrets)
@@ -632,8 +622,8 @@ def publish(config: Config, report: dict[str, Any]) -> None:
 
 
 def main() -> None:
-    config = Config()
-    if not config.operator_key:
+    config = RunnerSettings.from_env()
+    if config.operator_key is None:
         sys.exit("OPERATOR_KEY is not set")
     while True:
         report = asyncio.run(run_once(config))

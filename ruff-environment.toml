@@ -10,18 +10,9 @@ extend-exclude = ["vendor"]
 select = ["TID251"]
 
 [lint.per-file-ignores]
-# Where Settings.from_env() lives: the one sanctioned reader per agent.
+# Where Settings.from_env() lives: the one sanctioned reader per agent (seller,
+# buyer, runner, and the e2e scenarios). Nothing else reads the environment.
 "*/settings.py" = ["TID251"]
-# Exemptions (shrink-only). Each one reads the environment today, and Step 2 (the
-# composition root and per-agent settings) removes it.
-"seller/app.py" = ["TID251"]  # Step 2: seller/settings.py
-"buyer/app.py" = ["TID251"]  # Step 2: buyer/settings.py
-"shared/operator.py" = ["TID251"]  # Step 2: the operator key comes from settings
-"shared/wba.py" = ["TID251"]  # Step 2: the CA bundle and cache age come from settings
-"runner/live.py" = ["TID251"]  # Step 2: runner settings
-"e2e/scenarios/conftest.py" = ["TID251"]  # Step 2: e2e/scenarios/settings.py
-"e2e/scenarios/test_02_bearer.py" = ["TID251"]  # Step 2: e2e/scenarios/settings.py
-
 [lint.flake8-tidy-imports.banned-api]
 "os.environ".msg = "Read the environment once, in the agent's Settings.from_env()."
 "os.getenv".msg = "Read the environment once, in the agent's Settings.from_env()."

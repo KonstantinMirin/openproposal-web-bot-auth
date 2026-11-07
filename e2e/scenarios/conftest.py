@@ -10,7 +10,6 @@ never would: a tampered body, a replay, a key the directory doesn't list.
 from __future__ import annotations
 
 import json
-import os
 import sqlite3
 import ssl
 import uuid
@@ -21,14 +20,14 @@ import pytest
 from iab_agentic_primitives.web_bot_auth import (
     Ed25519Key,
     HTTPRequest,
+    Origin,
     RequestSigner,
     StaticKeyResolver,
     parse_directory_response,
 )
+from settings import BUYER, CFBOT, OPERATOR_KEY, SELLER
 
-SELLER = "https://seller.wba-demo.noetis.dev"
-BUYER = "https://buyer.wba-demo.noetis.dev"
-CFBOT = "https://cfbot.wba-demo.noetis.dev"
+__all__ = ["BUYER", "CFBOT", "SELLER"]  # the stack's addresses, re-exported for the scenarios
 # Operator and test controls, reached inside the network, not through the TLS front.
 BUYER_OPERATOR = "http://buyer:8000/operator"
 SELLER_FAULTS = "http://seller:8000/test/fault"
@@ -82,7 +81,7 @@ def commit_body(amount: float) -> bytes:
 def _operator_key(request: httpx.Request) -> None:
     """Adds the operator key to the agents' controls, which the runner reaches over plain http."""
     if request.url.scheme == "http":
-        request.headers["X-Operator-Key"] = os.environ["OPERATOR_KEY"]
+        request.headers["X-Operator-Key"] = OPERATOR_KEY
 
 
 @pytest.fixture
@@ -99,7 +98,7 @@ def stored_keys(db: sqlite3.Connection, digest: str, origin: str) -> StaticKeyRe
     row = db.execute("SELECT * FROM directories WHERE digest = ?", (digest,)).fetchone()
     headers = [tuple(line) for line in json.loads(row["headers"])]
     directory = parse_directory_response(
-        row["status"], headers, row["body"], origin.removeprefix("https://"), int(row["fetched_at"])
+        row["status"], headers, row["body"], Origin.parse(origin).host, int(row["fetched_at"])
     )
     return StaticKeyResolver({origin: list(directory.values())})
 

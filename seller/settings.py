@@ -1,0 +1,57 @@
+"""The seller's settings: the only code on the seller that reads the environment.
+
+| Variable | Default | What it sets |
+|---|---|---|
+| `SELF_ORIGIN` | `https://seller.wba-demo.noetis.dev` | the seller's own origin |
+| `PEER_BUYER_ORIGIN` | `https://buyer.wba-demo.noetis.dev` | the signing buyer it seeds |
+| `DATA_DIR` | `/data` | its key and database |
+| `SSL_CERT_FILE` | the system's roots | the trust store for directory fetches |
+| `OPERATOR_KEY` | none: operator calls are refused | its own controls (shared/operator.py) |
+| `DEMO_BEARER_TOKEN` | none: no bearer buyer | the token it issues the bearer buyer |
+| `WBA_DIRECTORY_MAX_AGE` | `300` | its directory's `Cache-Control: max-age` |
+| `WBA_MAX_CACHE_AGE` | the library's, 300 | how long a cached directory answers |
+| `DEMO_FAULT_INJECTION` | off | TEST ONLY: mounts `PUT /test/fault` |
+"""
+
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass
+from pathlib import Path
+
+from iab_agentic_primitives.web_bot_auth import Origin
+from pydantic import SecretStr
+
+from shared import settings as read
+
+
+@dataclass(frozen=True)
+class SellerSettings:
+    self_origin: Origin
+    peer_buyer_origin: Origin
+    data_dir: Path
+    ca_bundle: Path | None = None
+    operator_key: SecretStr | None = None
+    bearer_token: SecretStr | None = None
+    directory_max_age: int = 300
+    max_cache_age: int | None = None
+    #: TEST ONLY: install seller/faults.py.
+    faults: bool = False
+
+    @classmethod
+    def from_env(cls, env: read.Environment | None = None) -> SellerSettings:
+        """Reads the settings once; raises `SettingsError`, naming the variable, for a bad value."""
+        env = os.environ if env is None else env
+        return cls(
+            self_origin=read.origin(env, "SELF_ORIGIN", "https://seller.wba-demo.noetis.dev"),
+            peer_buyer_origin=read.origin(
+                env, "PEER_BUYER_ORIGIN", "https://buyer.wba-demo.noetis.dev"
+            ),
+            data_dir=read.path(env, "DATA_DIR", "/data"),
+            ca_bundle=read.optional_path(env, "SSL_CERT_FILE"),
+            operator_key=read.secret(env, "OPERATOR_KEY"),
+            bearer_token=read.secret(env, "DEMO_BEARER_TOKEN"),
+            directory_max_age=read.integer(env, "WBA_DIRECTORY_MAX_AGE", 300),
+            max_cache_age=read.optional_integer(env, "WBA_MAX_CACHE_AGE"),
+            faults=read.flag(env, "DEMO_FAULT_INJECTION"),
+        )

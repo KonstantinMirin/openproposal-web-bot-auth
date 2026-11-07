@@ -33,6 +33,7 @@ from pydantic import BaseModel, ConfigDict
 from protocol.attribution import attributes
 
 from .errors import Refused
+from .resources import IdentityDep, StoreDep, VerifierDep
 
 
 class Frozen(BaseModel):
@@ -105,13 +106,14 @@ def _bearer(value: str | None) -> str | None:
     return token.strip()
 
 
-async def resolve_caller(request: Request) -> ResolvedCaller | PublicCaller:
-    """Confirms the presented credential and resolves it to this seller's principal."""
-    store, verifier, identity = (
-        request.app.state.store,
-        request.app.state.verifier,
-        request.app.state.identity,
-    )
+async def resolve_caller(
+    request: Request, store: StoreDep, verifier: VerifierDep, identity: IdentityDep
+) -> ResolvedCaller | PublicCaller:
+    """Confirms the presented credential and resolves it to this seller's principal.
+
+    The store, the verifier, and the seller's identity come from the same typed
+    providers the handlers use (seller/resources.py).
+    """
     headers = [(k.decode("latin-1"), v.decode("latin-1")) for k, v in request.headers.raw]
     body = await request.body()
 

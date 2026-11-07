@@ -104,6 +104,10 @@ class Store:
         self.db.execute("PRAGMA foreign_keys = ON")
         self.db.executescript(DIRECTORIES_SCHEMA + SCHEMA)
 
+    def close(self) -> None:
+        """Closes the connection. The app's lifespan calls it on shutdown."""
+        self.db.close()
+
     # Principals and credentials
 
     def add_principal(self, id: str, legal_name: str, domain: str) -> None:

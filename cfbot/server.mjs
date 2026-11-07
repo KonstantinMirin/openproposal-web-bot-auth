@@ -20,8 +20,9 @@ import { parseDictionary } from 'structured-headers';
 import { HTTP_MESSAGE_SIGNATURES_DIRECTORY, generateNonce, sign, verify } from 'web-bot-auth';
 import { signerFromJWK, verifierFromJWK } from 'web-bot-auth/crypto';
 
-const ORIGIN = process.env.CFBOT_ORIGIN ?? 'https://cfbot.wba-demo.noetis.dev';
-const SELLER = process.env.SELLER_ORIGIN ?? 'https://seller.wba-demo.noetis.dev';
+// SELF_ORIGIN is this agent's own origin; PEER_SELLER_ORIGIN is the seller it calls.
+const ORIGIN = process.env.SELF_ORIGIN ?? 'https://cfbot.wba-demo.noetis.dev';
+const SELLER = process.env.PEER_SELLER_ORIGIN ?? 'https://seller.wba-demo.noetis.dev';
 const KEY_PATH = process.env.CFBOT_KEY ?? '/data/cfbot-key.jwk';
 const DIRECTORY_MEDIA_TYPE = 'application/http-message-signatures-directory+json';
 const LIFETIME = 300;

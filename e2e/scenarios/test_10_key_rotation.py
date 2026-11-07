@@ -5,21 +5,23 @@ fetching it again, even for a keyid it doesn't list. So the buyer:
 
 1. publishes the new key next to the old one, and keeps signing with the old key;
 2. switches to the new key once no verifier can still be using a copy without
-   it: the directory's `Cache-Control: max-age` plus `max_cache_age`. In this
-   stack the buyer serves `max_age=0`, so that is 0 s plus 20 s; in production,
-   300 s plus 300 s;
-3. removes the old key once every signature it made has expired (10 s here).
+   it (`WBA_ROTATION_WAIT`): the directory's `Cache-Control: max-age` plus
+   `max_cache_age`. In this stack the buyer serves `max_age=0`, so that is 0 s
+   plus 20 s; in production, 300 s plus 300 s;
+3. removes the old key once every signature it made has expired
+   (`WBA_SIGNATURE_LIFETIME`, 10 s here).
 
-After the next cache refresh, the seller refuses the old key.
+After the next cache refresh (`WBA_MAX_CACHE_AGE`), the seller refuses the old
+key. The timing is the stack's own, which e2e/docker-compose.yml passes to the
+runner.
 """
 
 import json
 import time
 
 from conftest import BUYER, BUYER_OPERATOR, SELLER, buyer_key, signed
+from settings import MAX_CACHE_AGE, ROTATION_WAIT, SIGNATURE_LIFETIME
 
-MAX_CACHE_AGE = 20
-SIGNATURE_LIFETIME = 10
 URL = f"{SELLER}/whoami"
 
 
@@ -61,7 +63,7 @@ def test_key_rotation(web, seller_db):
     assert early.status_code == 409, early.text
 
     # 2. Switch. The seller's copy is now stale, so it fetches the directory that lists the new key.
-    _until(published_at + MAX_CACHE_AGE + 1)
+    _until(published_at + ROTATION_WAIT + 1)
     assert web.post(f"{BUYER_OPERATOR}/keys/{new}/activate").json()["active"] == new
     switched_at = time.time()
     assert _read(web)["keyid"] == new

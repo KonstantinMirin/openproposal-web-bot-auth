@@ -4,6 +4,8 @@ The request carries one credential: a Web Bot Auth signature, through the
 library's `WebBotAuth`, or the bearer token the seller issued. Either way the
 seller signs its response, and the buyer verifies that signature and, for a
 signed request, its binding to the request. A response that fails is refused.
+
+Every call goes through the client the buyer's lifespan owns (buyer/app.py).
 """
 
 from __future__ import annotations
@@ -13,7 +15,7 @@ from typing import Literal
 
 import httpx
 from iab_agentic_primitives.web_bot_auth import (
-    DirectoryResolver,
+    KeyResolver,
     Origin,
     RequestSigner,
     ResponseVerifier,
@@ -21,9 +23,11 @@ from iab_agentic_primitives.web_bot_auth import (
 )
 from iab_agentic_primitives.web_bot_auth.httpx import WebBotAuth
 
-from shared.wba import http_client
-
 Credential = Literal["web_bot_auth", "bearer"]
+
+#: The client every call goes through. The rest of the buyer holds one and passes it
+#: here; only this module sends requests with it.
+HTTPClient = httpx.AsyncClient
 
 
 @dataclass(frozen=True)
@@ -48,11 +52,12 @@ class Exchange:
 
 
 async def call_seller(
+    client: httpx.AsyncClient,
     method: str,
     url: str,
     *,
     seller_origin: str,
-    resolver: DirectoryResolver,
+    resolver: KeyResolver,
     signer: RequestSigner | None,
     token: str | None = None,
     body: bytes = b"",
@@ -72,8 +77,7 @@ async def call_seller(
         headers["Authorization"] = f"Bearer {token}"
         # Sends the request unsigned, and still verifies the seller's signed answer.
         auth = WebBotAuth.verify_only(verifier, expected_origin=Origin.parse(seller_origin))
-    async with http_client() as client:
-        response = await client.request(method, url, content=body, headers=headers, auth=auth)
+    response = await client.request(method, url, content=body, headers=headers, auth=auth)
     verified = response.extensions["web_bot_auth"]
     return Exchange(
         method=method,
@@ -89,6 +93,7 @@ async def call_seller(
 
 
 async def call_signed(
+    client: httpx.AsyncClient,
     method: str,
     url: str,
     *,
@@ -97,7 +102,4 @@ async def call_signed(
 ) -> httpx.Response:
     """A signed request to a peer that doesn't sign its responses, such as cfbot."""
     headers = {"Content-Type": "application/json"} if body else {}
-    async with http_client() as client:
-        return await client.request(
-            method, url, content=body, headers=headers, auth=WebBotAuth(signer)
-        )
+    return await client.request(method, url, content=body, headers=headers, auth=WebBotAuth(signer))

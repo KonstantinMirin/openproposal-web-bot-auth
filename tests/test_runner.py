@@ -6,13 +6,13 @@ import pytest
 
 from runner.live import (
     HISTORY,
-    Config,
     NotPublic,
     assert_public,
     public_headers,
     publish,
     updated_history,
 )
+from runner.settings import RunnerSettings
 
 
 def test_public_headers_withhold_credentials_and_proxy_fields():
@@ -57,7 +57,9 @@ def test_history_keeps_the_newest_runs():
 
 
 def test_publish_writes_a_bare_failure_instead_of_a_secret(tmp_path):
-    config = Config({"OUT_DIR": str(tmp_path), "OPERATOR_KEY": "operator-secret-value"})
+    config = RunnerSettings.from_env(
+        {"OUT_DIR": str(tmp_path), "OPERATOR_KEY": "operator-secret-value"}
+    )
     publish(
         config,
         {

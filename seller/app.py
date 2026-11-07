@@ -1,5 +1,9 @@
 """The seller agent: issued proposals, offer acceptance, and its signed key directory.
 
+`create_app(settings)` is the seller's composition root, and nothing happens
+at import time. Uvicorn builds the app with `--factory seller.app:app_from_env`,
+the only caller of `SellerSettings.from_env()`.
+
 Every agent-facing route takes the caller from `resolve_caller` and nothing
 else. The `/operator/` routes are the seller's own controls, outside the
 boundary: no front routes them, and each call carries the operator key
@@ -9,17 +13,19 @@ refusals included, and binds it to the request it answers.
 
 from __future__ import annotations
 
-import os
 import secrets
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
-from pathlib import Path
+from typing import TypedDict
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
-from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from iab_agentic_primitives.web_bot_auth import (
     Ed25519Key,
+    KeyResolver,
     MemoryNonceStore,
+    NonceStore,
     RequestVerifier,
     ResponseSigner,
     ServerIdentity,
@@ -30,57 +36,33 @@ from pydantic import BaseModel
 from starlette.types import ASGIApp
 
 from protocol.values import instant
-from shared.operator import require_operator
-from shared.wba import directory_resolver
+from shared.operator import OperatorKey
+from shared.wba import directory_resolver, http_client, tls_context
 
 from . import offers
 from .errors import OfferError, Refused
-from .faults import MODES, FaultInjection
+from .faults import FaultInjection
 from .identity import CallerDep
+from .resources import SellerResources, StoreDep
 from .seed import issue, seed
+from .settings import SellerSettings
 from .store import Store
 
-ORIGIN = os.environ.get("SELLER_ORIGIN", "https://seller.wba-demo.noetis.dev")
-DATA = Path(os.environ.get("SELLER_DATA", "/data"))
-FAULTS = os.environ.get("DEMO_FAULT_INJECTION") == "1"
-# How long a cache may hold the directory: its Cache-Control max-age, 300 s by default.
-DIRECTORY_MAX_AGE = int(os.environ.get("WBA_DIRECTORY_MAX_AGE", "300"))
-
-# The seller mints its key on first boot. No buyer is ever configured with it.
-key = Ed25519Key.load_or_create(DATA / "wba-key.jwk")
-store = Store(DATA / "seller.db")
-seed(
-    store,
-    buyer_origin=os.environ.get("DEMO_BUYER_ORIGIN", "https://buyer.wba-demo.noetis.dev"),
-    bearer_token=os.environ.get("DEMO_BEARER_TOKEN"),
-)
-
-api = FastAPI(title="Demo seller")
-api.state.store = store
-#: The seller's own base URL, as the library's ASGI helpers and the boundary read it.
-IDENTITY = ServerIdentity.from_config(ORIGIN)
-api.state.identity = IDENTITY
-api.state.verifier = RequestVerifier(directory_resolver(), nonces=MemoryNonceStore())
-
-api.add_exception_handler(Refused, lambda _request, e: e.response())
-api.add_exception_handler(OfferError, lambda _request, e: e.response())
-
-
-@api.exception_handler(RequestValidationError)
-async def _invalid(_request: Request, e: RequestValidationError) -> JSONResponse:
-    detail = "; ".join(f"{'/'.join(map(str, err['loc']))}: {err['msg']}" for err in e.errors())
-    return OfferError("validation", detail, retry="none").response()
+#: The agent-facing routes. Each one takes its caller from the identity boundary.
+api = APIRouter()
 
 
 @api.get("/proposals/{proposal_id}")
-async def get_proposal(proposal_id: str, caller: CallerDep) -> JSONResponse:
+async def get_proposal(proposal_id: str, caller: CallerDep, store: StoreDep) -> JSONResponse:
     return JSONResponse(offers.full_representation(store, caller, proposal_id))
 
 
 # Allowlisted: the route reads the raw body from Request. Step 4 replaces it with RawBodyDep.
 # ast-grep-ignore: routes-take-no-request
 @api.post("/proposals/{proposal_id}/commit")
-async def commit(proposal_id: str, caller: CallerDep, request: Request) -> JSONResponse:
+async def commit(
+    proposal_id: str, caller: CallerDep, store: StoreDep, request: Request
+) -> JSONResponse:
     # The route takes the body as bytes, so nothing parses it before resolve_caller has
     # confirmed the credential: a failing credential is refused even when the JSON is broken.
     body = offers.parse_commit(await request.body())
@@ -102,11 +84,12 @@ class Issue(BaseModel):
     principal_id: str
 
 
-operator = APIRouter(prefix="/operator", dependencies=[Depends(require_operator)])
+#: The seller's own controls. `create_app` puts the operator-key guard on them.
+operator = APIRouter(prefix="/operator")
 
 
 @operator.post("/issue")
-async def issue_proposal(body: Issue) -> dict[str, str]:
+async def issue_proposal(body: Issue, store: StoreDep) -> dict[str, str]:
     """Issues a fresh copy of the seed proposal to a buyer this seller knows (§ 4.3).
 
     The live runner (runner/live.py) commits to a fresh proposal on every run,
@@ -122,27 +105,73 @@ async def issue_proposal(body: Issue) -> dict[str, str]:
     return {"proposal_id": proposal_id, "principal_id": principal["id"]}
 
 
-api.include_router(operator)
+class _State(TypedDict):
+    """What the lifespan yields; requests read it through seller/resources.py."""
+
+    resources: SellerResources
 
 
-class FaultMode(BaseModel):
-    mode: str
+def create_app(
+    settings: SellerSettings,
+    *,
+    nonces: NonceStore | None = None,
+    resolver: KeyResolver | None = None,
+) -> ASGIApp:
+    """The seller, from its settings. Its lifespan owns the store, the client, and the verifier.
+
+    `nonces` and `resolver` replace the in-memory nonce store and the directory
+    resolver, as a deployment with several workers or a test does.
+
+    The result is the FastAPI app wrapped in the library's middlewares, so that
+    every response is signed, a server error's included.
+    """
+    # The seller mints its key on first boot. No buyer is ever configured with it.
+    key = Ed25519Key.load_or_create(settings.data_dir / "wba-key.jwk")
+    identity = ServerIdentity.from_config(str(settings.self_origin))
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI) -> AsyncIterator[_State]:
+        store = Store(settings.data_dir / "seller.db")
+        client = http_client(tls_context(settings.ca_bundle))
+        try:
+            seed(store, buyer_origin=settings.peer_buyer_origin, bearer_token=settings.bearer_token)
+            keys: KeyResolver = (
+                directory_resolver(client, max_cache_age=settings.max_cache_age)
+                if resolver is None
+                else resolver
+            )
+            verifier = RequestVerifier(
+                keys, nonces=MemoryNonceStore() if nonces is None else nonces
+            )
+            yield {"resources": SellerResources(identity, store, client, verifier)}
+        finally:
+            await client.aclose()
+            store.close()
+
+    agent = FastAPI(title="Demo seller", lifespan=lifespan)
+    agent.add_exception_handler(Refused, lambda _request, e: e.response())
+    agent.add_exception_handler(OfferError, lambda _request, e: e.response())
+    agent.include_router(api)
+    agent.include_router(operator, dependencies=[Depends(OperatorKey(settings.operator_key))])
+
+    signer = ResponseSigner(key, str(settings.self_origin))
+    signed = ResponseSigningMiddleware(agent, signer, identity=identity)
+    answering = _with_faults(agent, signed, signer, identity) if settings.faults else signed
+    # The signed key directory at the well-known path, for buyers to find the seller's key.
+    return DirectoryMiddleware(
+        answering, [key], identity=identity, max_age=settings.directory_max_age
+    )
 
 
-if FAULTS:
-
-    @api.put("/test/fault")
-    async def set_fault(body: FaultMode) -> dict[str, str]:
-        """TEST ONLY: see seller/faults.py."""
-        if body.mode not in MODES:
-            raise OfferError("validation", f"mode is one of {MODES}", retry="none")
-        FaultInjection.mode = body.mode
-        return {"mode": body.mode}
+def _with_faults(
+    agent: FastAPI, signed: ASGIApp, signer: ResponseSigner, identity: ServerIdentity
+) -> FaultInjection:
+    """TEST ONLY: wraps the signed app in seller/faults.py and mounts its `PUT /test/fault`."""
+    faults = FaultInjection(signed, signer, identity)
+    agent.include_router(faults.control())
+    return faults
 
 
-signer = ResponseSigner(key, ORIGIN)
-app: ASGIApp = ResponseSigningMiddleware(api, signer, identity=IDENTITY)
-if FAULTS:
-    app = FaultInjection(app, signer, IDENTITY)
-# The signed key directory at the well-known path, for buyers to find the seller's key.
-app = DirectoryMiddleware(app, [key], identity=IDENTITY, max_age=DIRECTORY_MAX_AGE)
+def app_from_env() -> ASGIApp:
+    """Uvicorn's factory: the seller as its environment configures it."""
+    return create_app(SellerSettings.from_env())

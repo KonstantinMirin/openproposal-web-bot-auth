@@ -6,6 +6,21 @@
 # the public roots plus the demo CA. No agent is configured with another's key.
 name: wba-demo
 
+# Origins: SELF_ORIGIN is a service's own origin, PEER_<ROLE>_ORIGIN a counterparty's.
+#
+# Timing, short so the rotation scenario stays short, and stated once: the agents
+# that use each value and the scenario that waits on it read the same anchor.
+# Production uses the library default, 300 s, for the cache age; serves max-age
+# 300, waits 600 s (max-age 300 plus max_cache_age 300), and signs for 300 s.
+x-cache-age: &cache-age
+  # How long the seller answers from a cached buyer directory.
+  WBA_MAX_CACHE_AGE: "20"
+x-rotation: &rotation
+  # No cache may hold the buyer's directory (max-age 0), so the rotation wait is
+  # the seller's 20 s cache alone; short signatures too.
+  WBA_ROTATION_WAIT: "20"
+  WBA_SIGNATURE_LIFETIME: "10"
+
 x-python: &python
   image: wba-demo-python:local
   build:
@@ -22,35 +37,30 @@ x-python: &python
 services:
   seller:
     <<: *python
-    command: ["uvicorn", "seller.app:app", "--host", "0.0.0.0", "--port", "8000"]
+    command: ["uvicorn", "--factory", "seller.app:app_from_env", "--host", "0.0.0.0", "--port", "8000"]
     user: app
     environment:
+      <<: *cache-age
       SSL_CERT_FILE: /certs/bundle.pem
-      SELLER_ORIGIN: https://seller.wba-demo.noetis.dev
-      DEMO_BUYER_ORIGIN: https://buyer.wba-demo.noetis.dev
+      SELF_ORIGIN: https://seller.wba-demo.noetis.dev
+      PEER_BUYER_ORIGIN: https://buyer.wba-demo.noetis.dev
       # TEST ONLY: mounts PUT /test/fault (seller/faults.py).
       DEMO_FAULT_INJECTION: "1"
-      # Short, so the rotation scenario stays short. Production uses the library default, 300 s.
-      WBA_MAX_CACHE_AGE: "20"
     volumes:
       - ./generated/bundle.pem:/certs/bundle.pem:ro
       - seller-data:/data
 
   buyer:
     <<: *python
-    command: ["uvicorn", "buyer.app:app", "--host", "0.0.0.0", "--port", "8000"]
+    command: ["uvicorn", "--factory", "buyer.app:app_from_env", "--host", "0.0.0.0", "--port", "8000"]
     user: app
     environment:
+      <<: *rotation
       SSL_CERT_FILE: /certs/bundle.pem
-      BUYER_ORIGIN: https://buyer.wba-demo.noetis.dev
-      DEMO_SELLER_ORIGIN: https://seller.wba-demo.noetis.dev
-      CFBOT_ORIGIN: https://cfbot.wba-demo.noetis.dev
-      # No cache may hold the directory, so the rotation wait is the seller's 20 s cache
-      # alone; short signatures too, so the rotation scenario stays short. Production
-      # serves max-age 300, waits 600 s (max-age 300 plus max_cache_age 300), and signs for 300 s.
+      SELF_ORIGIN: https://buyer.wba-demo.noetis.dev
+      PEER_SELLER_ORIGIN: https://seller.wba-demo.noetis.dev
+      PEER_CFBOT_ORIGIN: https://cfbot.wba-demo.noetis.dev
       WBA_DIRECTORY_MAX_AGE: "0"
-      WBA_ROTATION_WAIT: "20"
-      WBA_SIGNATURE_LIFETIME: "10"
     volumes:
       - ./generated/bundle.pem:/certs/bundle.pem:ro
       - buyer-data:/data
@@ -61,8 +71,8 @@ services:
     env_file: generated/demo.env
     environment:
       NODE_EXTRA_CA_CERTS: /certs/ca.pem
-      CFBOT_ORIGIN: https://cfbot.wba-demo.noetis.dev
-      SELLER_ORIGIN: https://seller.wba-demo.noetis.dev
+      SELF_ORIGIN: https://cfbot.wba-demo.noetis.dev
+      PEER_SELLER_ORIGIN: https://seller.wba-demo.noetis.dev
     volumes:
       - ./generated/ca.pem:/certs/ca.pem:ro
       - cfbot-data:/data
@@ -98,7 +108,12 @@ services:
     profiles: [test]
     command: ["pytest", "-v", "-p", "no:cacheprovider", "e2e/scenarios"]
     environment:
+      # The scenarios wait on the same timing the agents run with (test_10).
+      <<: [*cache-age, *rotation]
       SSL_CERT_FILE: /certs/bundle.pem
+      PEER_SELLER_ORIGIN: https://seller.wba-demo.noetis.dev
+      PEER_BUYER_ORIGIN: https://buyer.wba-demo.noetis.dev
+      PEER_CFBOT_ORIGIN: https://cfbot.wba-demo.noetis.dev
     volumes:
       - ./generated/bundle.pem:/certs/bundle.pem:ro
       # Read-only: the scenarios inspect what each party stored.

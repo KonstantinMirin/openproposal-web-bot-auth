@@ -5,14 +5,13 @@ hash and resolves the same `ResolvedCaller` type a signature resolves, with
 `authentication_method: bearer`. The offer logic is the same code either way.
 """
 
-import os
-
 from conftest import BUYER_OPERATOR, SELLER, signed
+from settings import BEARER_TOKEN
 
 
 def test_bearer_token_resolves_the_same_identity_type(web):
     by_token = web.get(
-        f"{SELLER}/whoami", headers={"Authorization": f"Bearer {os.environ['DEMO_BEARER_TOKEN']}"}
+        f"{SELLER}/whoami", headers={"Authorization": f"Bearer {BEARER_TOKEN}"}
     ).json()
     by_signature = web.get(f"{SELLER}/whoami", headers=signed("GET", f"{SELLER}/whoami")).json()
 
