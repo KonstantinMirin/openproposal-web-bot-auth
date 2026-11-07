@@ -18,8 +18,8 @@ dependencies = [
     # The Public Suffix List, read offline, for the attribution rule (§ 4.1.2).
     "tldextract>=5.1",
     "idna>=3.7,<4",
-    # YAML 1.2, the schema § 4.1.1 names for a document carried as YAML.
-    "ruamel.yaml>=0.18",
+    # The YAML parser; shared/documents.py applies the YAML 1.2 core schema § 4.1.1 names.
+    "pyyaml>=6.0.2",
 ]
 
 [dependency-groups]
@@ -27,7 +27,8 @@ dev = ["pytest>=8", "ruff>=0.8"]
 
 [tool.uv.sources]
 # A path dependency on the library checkout next to this repository. The same
-# relative layout holds inside the Docker build (see e2e/Dockerfile).
+# relative layout holds inside the Docker build (see Dockerfile and the wba-lib
+# additional context in e2e/docker-compose.yml).
 iab-agentic-primitives = { path = "../iab-agentic-primitives", editable = true }
 openproposal-sdk = { path = "vendor/openproposal-sdk", editable = true }
 
