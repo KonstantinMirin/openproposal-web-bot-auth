@@ -33,17 +33,22 @@ CFBOT_RUN = "http://cfbot:8000/run"
 BUYER_KEYS = Path("/buyer-data/keys")
 
 
+def active_key_file() -> str:
+    """The file name of the buyer's active key (buyer/keyring.py)."""
+    return json.loads((BUYER_KEYS / "state.json").read_text())["active"]
+
+
 def buyer_key(name: str | None = None) -> Ed25519Key:
-    """The buyer's newest published key, or the key file `name` (published or retired)."""
+    """The buyer's active key, or the key file `name` (published or retired)."""
     if name is None:
-        return Ed25519Key.load_or_create(max(BUYER_KEYS.glob("*.jwk")))
+        return Ed25519Key.load_or_create(BUYER_KEYS / active_key_file())
     path = BUYER_KEYS / name
     return Ed25519Key.load_or_create(path if path.exists() else BUYER_KEYS / "retired" / name)
 
 
 def signed(method: str, url: str, body: bytes = b"", *, key: Ed25519Key | None = None,
            origin: str = BUYER) -> dict[str, str]:
-    """Headers for a request signed as `origin` with `key` (by default, the buyer's newest)."""
+    """Headers for a request signed as `origin` with `key` (by default, the buyer's active key)."""
     headers = {"Content-Type": "application/json"} if body else {}
     return headers | RequestSigner(key or buyer_key(), origin).sign(method, url, headers, body)
 
