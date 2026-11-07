@@ -28,9 +28,11 @@ from .store import Store
 ORIGIN = os.environ.get("BUYER_ORIGIN", "https://buyer.wba-demo.noetis.dev")
 DATA = Path(os.environ.get("BUYER_DATA", "/data"))
 CFBOT_ORIGIN = os.environ.get("CFBOT_ORIGIN", "https://cfbot.wba-demo.noetis.dev")
+# How long a cache may hold the directory: its Cache-Control max-age, 300 s by default.
+DIRECTORY_MAX_AGE = int(os.environ.get("WBA_DIRECTORY_MAX_AGE", "300"))
 # Rotation waits (buyer/keyring.py). In production, ROTATION_WAIT is the directory's
-# Cache-Control max-age (300 s) plus the library's default max_cache_age (300 s), and
-# signatures last the profile's 300 s maximum.
+# max-age (300 s) plus the library's default max_cache_age (300 s), and signatures
+# last the profile's 300 s maximum.
 ROTATION_WAIT = float(os.environ.get("WBA_ROTATION_WAIT", "600"))
 SIGNATURE_LIFETIME = int(os.environ.get("WBA_SIGNATURE_LIFETIME", "300"))
 
@@ -113,4 +115,4 @@ async def cloudflare_check() -> dict:
 
 
 # A live key source: the middleware reads the keyring on every directory fetch.
-app = DirectoryMiddleware(api, keyring.published, base_url=ORIGIN)
+app = DirectoryMiddleware(api, keyring.published, base_url=ORIGIN, max_age=DIRECTORY_MAX_AGE)

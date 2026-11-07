@@ -6,7 +6,8 @@ fetching it again, even for a keyid it doesn't list. So the buyer:
 1. publishes the new key next to the old one, and keeps signing with the old key;
 2. switches to the new key once no verifier can still be using a copy without
    it: the directory's `Cache-Control: max-age` plus `max_cache_age`. In this
-   stack that is 0 s plus 20 s; in production, 300 s plus the library's 300 s;
+   stack the buyer serves `max_age=0`, so that is 0 s plus 20 s; in production,
+   300 s plus 300 s;
 3. removes the old key once every signature it made has expired (10 s here).
 
 After the next cache refresh, the seller refuses the old key.

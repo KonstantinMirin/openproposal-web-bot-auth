@@ -7,9 +7,9 @@ signs. A rotation follows standard practice, and the keyring enforces its waits:
 2. `activate(kid)` switches signing to it, once `rotation_wait` has passed since
    it was published. That is the longest a verifier may keep using a copy of the
    directory without the new key: an HTTP cache may hold the response for its
-   `Cache-Control: max-age` (300 s from the library), and the library's
-   verifier answers from a cached copy for `FetchPolicy.max_cache_age` (300 s by
-   default), so production waits 600 s.
+   `Cache-Control: max-age` (`DirectoryMiddleware`'s `max_age`, 300 s by
+   default), and the library's verifier answers from a cached copy for
+   `FetchPolicy.max_cache_age` (300 s by default), so production waits 600 s.
 3. `retire(kid)` takes the old key out of the directory, once every signature it
    made has expired: `signature_lifetime` after it stopped signing. Its file
    moves to `keys/retired/`.
