@@ -37,6 +37,8 @@ class Exchange:
     headers: list[tuple[str, str]]
     body: bytes
     verified: VerifiedSignature
+    #: The key that signed the request, or None for a bearer request.
+    keyid: str | None
 
     def request_record(self) -> tuple[str, str, list[tuple[str, str]], bytes]:
         """The request as sent, which the response is bound to. A bearer token is left out."""
@@ -49,16 +51,18 @@ async def call_seller(
     url: str,
     *,
     seller_origin: str,
-    credential: Credential,
     resolver: DirectoryResolver,
-    signer: RequestSigner,
+    signer: RequestSigner | None,
     token: str | None = None,
     body: bytes = b"",
 ) -> Exchange:
-    """Sends one request to the seller and verifies the signed response; raises `WebBotAuthError`."""
+    """Sends one request to the seller and verifies the signed response; raises `WebBotAuthError`.
+
+    With `signer`, the request is signed with Web Bot Auth; without it, it carries `token`.
+    """
     headers = {"Content-Type": "application/json"} if body else {}
     verifier = ResponseVerifier(resolver)
-    if credential == "web_bot_auth":
+    if signer is not None:
         # Signs the request, then verifies the response and its binding to it.
         auth = WebBotAuth(signer, verifier, expected_origin=seller_origin)
     else:
@@ -73,7 +77,7 @@ async def call_seller(
     return Exchange(
         method=method, url=url, request_headers=response.request.headers.multi_items(),
         request_body=body, status=response.status_code, headers=response.headers.multi_items(),
-        body=response.content, verified=verified,
+        body=response.content, verified=verified, keyid=signer.key.kid if signer else None,
     )
 
 

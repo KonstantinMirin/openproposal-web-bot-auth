@@ -56,7 +56,8 @@ class Buyer:
         try:
             exchange = await call_seller(
                 method, seller["origin"] + path, seller_origin=seller["origin"],
-                credential=credential, resolver=self.resolver, signer=self.signer,
+                resolver=self.resolver,
+                signer=self.signer if credential == "web_bot_auth" else None,
                 token=seller["bearer_token"], body=body,
             )
         except WebBotAuthError as e:
@@ -82,7 +83,7 @@ class Buyer:
         state = "read" if exchange.status == 200 else "rejected"
         return Outcome(state=state, detail=f"status {exchange.status}: {exchange.body.decode()}",
                        seller=_party(seller), authentication_method=credential,
-                       keyid=self.signer.key.kid)
+                       keyid=exchange.keyid)
 
     async def commit(self, seller_origin: str, proposal_id: str, line_item_ids: list[str],
                      credential: Credential) -> Outcome:
@@ -154,7 +155,7 @@ class Buyer:
         self.store.settle_commit(row["id"], "agreed", entries=entries)
         return Outcome(
             state="agreed", seller=_party(seller), authentication_method=credential,
-            keyid=self.signer.key.kid if credential == "web_bot_auth" else None,
+            keyid=answer.keyid,
             record_digest=acceptance.record_digest, entries=entries, attributed=attributed,
             evidence_id=evidence_id, commit_id=row["id"],
         )
