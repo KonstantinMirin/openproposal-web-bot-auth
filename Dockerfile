@@ -1,8 +1,9 @@
-# One image for the seller, the buyer, and the e2e runner.
+# One image for the seller, the buyer, the e2e runner, and the live runner.
 #
-# Build it through e2e/docker-compose.yml: its additional context `wba-lib` is
-# the iab-agentic-primitives checkout, which lands at the same relative path as
-# on the host, so pyproject.toml's path source resolves unchanged.
+# Build it through e2e/docker-compose.yml or deploy/docker-compose.prod.yml.
+# Their additional context `wba-lib` is the iab-agentic-primitives checkout,
+# which lands at the same relative path as on the host, so pyproject.toml's
+# path source resolves unchanged.
 FROM python:3.12-slim
 COPY --from=ghcr.io/astral-sh/uv:0.11.28 /uv /bin/uv
 ENV UV_LINK_MODE=copy UV_PROJECT_ENVIRONMENT=/venv PATH=/venv/bin:$PATH \
@@ -19,6 +20,7 @@ COPY demo_types demo_types
 COPY shared shared
 COPY seller seller
 COPY buyer buyer
+COPY runner runner
 COPY e2e/scenarios e2e/scenarios
 
 RUN useradd --uid 10001 app && mkdir /data && chown app /data
