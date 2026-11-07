@@ -5,3 +5,4 @@
 .ruff_cache
 e2e/generated
 cfbot/node_modules
+deploy/localhost/generated

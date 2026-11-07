@@ -1,0 +1,41 @@
+# A local rehearsal of the live deployment: deploy/docker-compose.prod.yml plus this file.
+# Run it with deploy/localhost/run.sh (or `make live-local`).
+#
+# Public DNS and Let's Encrypt aren't available locally, so this override, and only this
+# override, adds what stands in for them: a Caddy container that serves the production
+# Caddyfile snippet (with the upstreams pointed at the containers and the e2e stack's
+# throwaway certificate), network aliases for the four public names, and the throwaway CA in
+# each container's trust store. Paths are relative to deploy/, the project directory.
+services:
+  seller:
+    environment: { SSL_CERT_FILE: /certs/bundle.pem }
+    volumes: [../e2e/generated/bundle.pem:/certs/bundle.pem:ro]
+  buyer:
+    environment: { SSL_CERT_FILE: /certs/bundle.pem }
+    volumes: [../e2e/generated/bundle.pem:/certs/bundle.pem:ro]
+  runner:
+    environment: { SSL_CERT_FILE: /certs/bundle.pem }
+    volumes: [../e2e/generated/bundle.pem:/certs/bundle.pem:ro]
+    depends_on:
+      caddy: { condition: service_started }
+  cfbot:
+    environment: { NODE_EXTRA_CA_CERTS: /certs/ca.pem }
+    volumes: [../e2e/generated/ca.pem:/certs/ca.pem:ro]
+
+  caddy:
+    image: caddy:2.8-alpine
+    volumes:
+      - ./localhost/generated/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ../e2e/generated/front.pem:/certs/front.pem:ro
+      - ../e2e/generated/front.key:/certs/front.key:ro
+      - ../site:/srv/site:ro
+      - ${WBA_RUN_DIR:-../../run}:/srv/run:ro
+      - ./localhost/generated/logs:/var/log/caddy
+    ports: ["127.0.0.1:18443:443"]
+    networks:
+      live:
+        aliases:
+          - wba-demo.noetis.dev
+          - seller.wba-demo.noetis.dev
+          - buyer.wba-demo.noetis.dev
+          - cfbot.wba-demo.noetis.dev

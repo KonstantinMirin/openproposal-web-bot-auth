@@ -1,0 +1,66 @@
+# ── Web Bot Auth demo: the explainer site and three agents (deploy/README.md) ──
+# Append to the host Caddyfile (/etc/caddy/Caddyfile). Caddy gets each certificate from Let's
+# Encrypt at load; the names are fixed, so no on_demand TLS. These named blocks take precedence
+# over any https:// catch-all on the host.
+#
+# The agent blocks pass every request and response through unchanged: no `encode`, because a
+# signature covers Content-Digest, the digest of the body bytes as sent, and no header rewrites.
+# Caddy forwards the original Host; the agents verify against their own configured origin anyway.
+# Each agent's own controls (/operator/, cfbot's /run/, the test-only /test/) are never routed.
+
+wba-demo.noetis.dev {
+	encode gzip zstd
+	# The runner's reports (runner/live.py), rewritten every 15 minutes.
+	@run path /latest-run.json /history.json
+	handle @run {
+		root * /srv/wba-demo/run
+		header Cache-Control "no-cache"
+		file_server
+	}
+	handle {
+		root * /srv/wba-demo/openproposal-web-bot-auth/site
+		file_server
+	}
+	log {
+		output file /var/log/caddy/wba-demo-access.log {
+			roll_size 20mb
+			roll_keep 5
+		}
+	}
+}
+
+seller.wba-demo.noetis.dev {
+	@internal path /operator/* /test/*
+	respond @internal "Not found" 404
+	reverse_proxy 127.0.0.1:18081
+	log {
+		output file /var/log/caddy/wba-demo-access.log {
+			roll_size 20mb
+			roll_keep 5
+		}
+	}
+}
+
+buyer.wba-demo.noetis.dev {
+	@internal path /operator/*
+	respond @internal "Not found" 404
+	reverse_proxy 127.0.0.1:18082
+	log {
+		output file /var/log/caddy/wba-demo-access.log {
+			roll_size 20mb
+			roll_keep 5
+		}
+	}
+}
+
+cfbot.wba-demo.noetis.dev {
+	@internal path /run/*
+	respond @internal "Not found" 404
+	reverse_proxy 127.0.0.1:18083
+	log {
+		output file /var/log/caddy/wba-demo-access.log {
+			roll_size 20mb
+			roll_keep 5
+		}
+	}
+}
