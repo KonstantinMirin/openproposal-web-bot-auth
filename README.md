@@ -341,11 +341,11 @@ The live deployment differs from the local test only where production needs it:
 ## Where the pieces live
 
 - **The Web Bot Auth library**: the `iab_agentic_primitives.web_bot_auth`
-  module of [`iab-agentic-primitives`](LIBRARY_URL), documented in its
+  module of [`iab-agentic-primitives`](https://github.com/KonstantinMirin/iab-agentic-primitives-wba/blob/feat/web-bot-auth/WEB_BOT_AUTH.md), documented in its
   `WEB_BOT_AUTH.md`. This demo depends on a checkout next to this repository
   through a uv path source in [`pyproject.toml`](pyproject.toml). Every
   signature, verification, directory, and fetch rule comes from it.
-- **The specification**: [OpenProposal 3.0](SPEC_URL). The demo follows § 1.2
+- **The specification**: [OpenProposal 3.0](https://github.com/IABTechLab/OpenProposal/pull/142). The demo follows § 1.2
   (identity layers), § 2.8 (the Web Bot Auth profile), § 4.1.1 (binding
   record), § 4.1.2 (assent and signed-message evidence), § 4.3 (issued
   proposals), and § 5.6.1 (`Commit` and `CommitResult`). The seller's seed
