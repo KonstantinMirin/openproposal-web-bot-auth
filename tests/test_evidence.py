@@ -4,7 +4,7 @@ import sqlite3
 
 from iab_agentic_primitives.web_bot_auth import VerifiedDirectory
 
-from shared.evidence import DIRECTORIES_SCHEMA, save_directory
+from persistence.evidence import DIRECTORIES_SCHEMA, save_directory
 
 BODY = b'{"keys": []}'
 URL = "https://buyer.wba-demo.noetis.dev/.well-known/http-message-signatures-directory"

@@ -17,7 +17,7 @@ import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Literal, TypedDict
+from typing import TypedDict
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException
 from iab_agentic_primitives.web_bot_auth import KeyResolver, ServerIdentity
@@ -27,15 +27,15 @@ from pydantic import BaseModel, TypeAdapter
 from starlette.types import ASGIApp
 
 from protocol.documents import load_yaml
+from shared.keyring import Keyring, RotationError
 from shared.operator import OperatorKey
-from shared.wba import Transport, directory_resolver, http_client, tls_context
+from shared.wba import AuthMethod, Transport, directory_resolver, http_client, tls_context
 
 from .client import HTTPClient, call_signed
 from .flow import Buyer, Outcome
-from .keyring import Keyring, RotationError
+from .repository import BuyerRepository, Counterparty
 from .resources import BuyerResources, FlowDep, KeyringDep, ResourcesDep, SettingsDep
 from .settings import BuyerSettings
-from .store import Store
 
 PLAN = Path(__file__).parent / "plan.yaml"
 #: The buyer's plan: a § 3.4 `LineItemWrites` per line item, checked strictly.
@@ -59,7 +59,7 @@ class Trigger(BaseModel):
     seller: str | None = None
     proposal_id: str
     line_item_ids: list[str] = []
-    credential: Literal["web_bot_auth", "bearer"] = "web_bot_auth"
+    credential: AuthMethod = "web_bot_auth"
 
 
 def _seller(trigger: Trigger, settings: BuyerSettings) -> str:
@@ -156,7 +156,7 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[_State]:
-        store = Store(settings.data_dir / "buyer.db")
+        store = BuyerRepository(settings.data_dir / "buyer.db")
         client = http_client(tls_context(settings.ca_bundle), transport=transport)
         try:
             yield {"resources": _resources(settings, store, keyring, client, resolver)}
@@ -178,7 +178,7 @@ def create_app(
 
 def _resources(
     settings: BuyerSettings,
-    store: Store,
+    store: BuyerRepository,
     keyring: Keyring,
     client: HTTPClient,
     resolver: KeyResolver | None,
@@ -186,12 +186,8 @@ def _resources(
     # The buyer knows the seller by its origin only, and its domain is that origin's host.
     # The token is the bearer flow's credential.
     seller = settings.peer_seller_origin
-    token = settings.bearer_token
-    store.add_seller(
-        str(seller),
-        seller.host,
-        "Demo Seller Inc.",
-        None if token is None else token.get_secret_value(),
+    store.add_counterparty(
+        Counterparty(seller, seller.host, "Demo Seller Inc.", settings.bearer_token)
     )
     flow = Buyer(
         store,

@@ -19,7 +19,7 @@ def test_cfbot_is_identity_established_only(web, seller_db):
 
     # The seller kept the verified request, and the directory it verified against.
     evidence = seller_db.execute(
-        "SELECT * FROM evidence WHERE id = ?", (credential["evidence_id"],)
+        "SELECT * FROM signed_requests WHERE id = ?", (credential["evidence_id"],)
     ).fetchone()
     assert evidence["origin"] == CFBOT and evidence["directory_digest"] is not None
 

@@ -43,17 +43,17 @@ from . import offers
 from .errors import OfferError, Refused
 from .faults import FaultInjection
 from .identity import CallerDep
-from .resources import SellerResources, StoreDep
+from .resources import OfferStoreDep, OnboardingDep, SellerResources
 from .seed import issue, seed
 from .settings import SellerSettings
-from .store import Store
+from .sqlite_store import SqliteSellerStore
 
 #: The agent-facing routes. Each one takes its caller from the identity boundary.
 api = APIRouter()
 
 
 @api.get("/proposals/{proposal_id}")
-async def get_proposal(proposal_id: str, caller: CallerDep, store: StoreDep) -> JSONResponse:
+async def get_proposal(proposal_id: str, caller: CallerDep, store: OfferStoreDep) -> JSONResponse:
     return JSONResponse(offers.full_representation(store, caller, proposal_id))
 
 
@@ -61,7 +61,7 @@ async def get_proposal(proposal_id: str, caller: CallerDep, store: StoreDep) -> 
 # ast-grep-ignore: routes-take-no-request
 @api.post("/proposals/{proposal_id}/commit")
 async def commit(
-    proposal_id: str, caller: CallerDep, store: StoreDep, request: Request
+    proposal_id: str, caller: CallerDep, store: OfferStoreDep, request: Request
 ) -> JSONResponse:
     # The route takes the body as bytes, so nothing parses it before resolve_caller has
     # confirmed the credential: a failing credential is refused even when the JSON is broken.
@@ -89,7 +89,7 @@ operator = APIRouter(prefix="/operator")
 
 
 @operator.post("/issue")
-async def issue_proposal(body: Issue, store: StoreDep) -> dict[str, str]:
+async def issue_proposal(body: Issue, store: OnboardingDep) -> dict[str, str]:
     """Issues a fresh copy of the seed proposal to a buyer this seller knows (§ 4.3).
 
     The live runner (runner/live.py) commits to a fresh proposal on every run,
@@ -101,8 +101,8 @@ async def issue_proposal(body: Issue, store: StoreDep) -> dict[str, str]:
     stamp = instant(datetime.now(UTC)).replace("-", "").replace(":", "")
     proposal_id = f"live-{body.principal_id}-{stamp}-{secrets.token_hex(2)}"
     with store.transaction():
-        issue(store, principal["id"], proposal_id, principal["legal_name"], principal["domain"])
-    return {"proposal_id": proposal_id, "principal_id": principal["id"]}
+        issue(store, principal, proposal_id)
+    return {"proposal_id": proposal_id, "principal_id": principal.id}
 
 
 class _State(TypedDict):
@@ -131,7 +131,7 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[_State]:
-        store = Store(settings.data_dir / "seller.db")
+        store = SqliteSellerStore(settings.data_dir / "seller.db")
         client = http_client(tls_context(settings.ca_bundle))
         try:
             seed(store, buyer_origin=settings.peer_buyer_origin, bearer_token=settings.bearer_token)
@@ -149,8 +149,8 @@ def create_app(
             store.close()
 
     agent = FastAPI(title="Demo seller", lifespan=lifespan)
-    agent.add_exception_handler(Refused, lambda _request, e: e.response())
-    agent.add_exception_handler(OfferError, lambda _request, e: e.response())
+    agent.add_exception_handler(Refused, _refused)
+    agent.add_exception_handler(OfferError, _rejected)
     agent.include_router(api)
     agent.include_router(operator, dependencies=[Depends(OperatorKey(settings.operator_key))])
 
@@ -161,6 +161,20 @@ def create_app(
     return DirectoryMiddleware(
         answering, [key], identity=identity, max_age=settings.directory_max_age
     )
+
+
+async def _refused(_request: Request, error: Exception) -> JSONResponse:
+    """The boundary's refusal. Async, so it runs on the event loop's thread."""
+    if not isinstance(error, Refused):
+        raise error
+    return error.response()
+
+
+async def _rejected(_request: Request, error: Exception) -> JSONResponse:
+    """The offer logic's § 2.4 rejection. Async, so it runs on the event loop's thread."""
+    if not isinstance(error, OfferError):
+        raise error
+    return error.response()
 
 
 def _with_faults(

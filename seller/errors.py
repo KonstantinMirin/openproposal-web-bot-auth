@@ -6,10 +6,10 @@
 
 from __future__ import annotations
 
-import json
 from typing import Any, Literal
 
 from fastapi.responses import JSONResponse
+from openproposal import ErrorObject
 
 
 class Refused(Exception):
@@ -60,19 +60,19 @@ class OfferError(Exception):
         # § 2.4: an error with retry `same` fits 503.
         self.status = 503 if retry == "same" else _STATUS[code]
 
-    def stored_form(self) -> tuple[int, list[dict[str, Any]]]:
-        return self.status, [self.error]
+    def error_object(self) -> ErrorObject:
+        """The rejection as the ledger stores it (§ 5.6.1). Its status follows from its code."""
+        return ErrorObject.model_validate(self.error)
 
     @classmethod
-    def stored(cls, errors_json: str) -> OfferError:
+    def stored(cls, error: ErrorObject) -> OfferError:
         """The rejection a replay returns: the stored result (§ 5.6.1)."""
-        error = json.loads(errors_json)[0]
         return cls(
-            error["code"],
-            error["detail"],
-            retry=error["retry"],
-            version=error.get("version"),
-            pointer=error.get("pointer"),
+            error.code,
+            error.detail,
+            retry=error.retry,
+            version=error.version,
+            pointer=error.pointer,
         )
 
     def response(self) -> JSONResponse:

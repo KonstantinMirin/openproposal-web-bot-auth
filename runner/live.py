@@ -47,6 +47,7 @@ from iab_agentic_primitives.web_bot_auth import (
     parse_directory_response,
 )
 
+from persistence.evidence import RESPONSE_WITH_REQUEST
 from protocol.record import digest_of, sha256_hex
 from protocol.values import instant
 from shared.operator import HEADER as OPERATOR_HEADER
@@ -307,7 +308,7 @@ class Flow:
                 view["detail"] = f"resolved {principal_id} by token hash; no signature evidence"
                 return view
             evidence = db.execute(
-                "SELECT * FROM evidence WHERE id = ?", (entry["evidence_id"],)
+                "SELECT * FROM signed_requests WHERE id = ?", (entry["evidence_id"],)
             ).fetchone()
             expect(
                 evidence["origin"] == str(self.config.buyer), f"evidence from {evidence['origin']}"
@@ -337,9 +338,7 @@ class Flow:
     async def buyer_view(self, outcome: dict[str, Any]) -> dict[str, Any]:
         """The request as the buyer sent it, and the seller's signed answer as it arrived."""
         with _database(self.config.buyer_db) as db:
-            evidence = db.execute(
-                "SELECT * FROM evidence WHERE id = ?", (outcome["evidence_id"],)
-            ).fetchone()
+            evidence = db.execute(RESPONSE_WITH_REQUEST, (outcome["evidence_id"],)).fetchone()
             expect(evidence is not None, "the buyer kept no evidence")
             expect(
                 evidence["origin"] == str(self.config.seller), f"answer from {evidence['origin']}"
@@ -403,7 +402,7 @@ class Flow:
         """Verifies both kept messages again, offline, against the directory bytes each kept."""
         with _database(self.config.seller_db) as db:
             row = db.execute(
-                "SELECT * FROM evidence WHERE id = ?", (seller["evidence_id"],)
+                "SELECT * FROM signed_requests WHERE id = ?", (seller["evidence_id"],)
             ).fetchone()
             again = RequestVerifier(
                 _stored_keys(db, row["directory_digest"], self.config.buyer)
@@ -420,9 +419,7 @@ class Flow:
             "the seller's evidence doesn't verify again",
         )
         with _database(self.config.buyer_db) as db:
-            row = db.execute(
-                "SELECT * FROM evidence WHERE id = ?", (buyer["evidence_id"],)
-            ).fetchone()
+            row = db.execute(RESPONSE_WITH_REQUEST, (buyer["evidence_id"],)).fetchone()
             sent = HTTPRequest(
                 row["request_method"],
                 row["request_url"],

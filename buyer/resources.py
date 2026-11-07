@@ -12,19 +12,19 @@ from typing import Annotated
 
 from fastapi import Depends, Request
 
+from shared.keyring import Keyring
 from shared.lifespan import state_of
 
 from .client import HTTPClient
 from .flow import Buyer
-from .keyring import Keyring
+from .repository import BuyerRepository
 from .settings import BuyerSettings
-from .store import Store
 
 
 @dataclass(frozen=True)
 class BuyerResources:
     settings: BuyerSettings
-    store: Store
+    store: BuyerRepository
     keyring: Keyring
     #: The one client every call to a seller, a directory, or cfbot goes through.
     client: HTTPClient

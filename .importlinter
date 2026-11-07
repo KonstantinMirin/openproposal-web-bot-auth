@@ -1,11 +1,11 @@
 # Import-layer contracts, checked by `uv run lint-imports` (make guards).
-# The contracts that hold today. Step 3 adds persistence, and Step 8 sets the
-# final order.
+# The contracts that hold today. Step 8 sets the final order.
 [importlinter]
 root_packages =
     seller
     buyer
     shared
+    persistence
     protocol
     runner
 include_external_packages = True
@@ -19,9 +19,10 @@ modules =
     runner
 
 [importlinter:contract:layers]
-name = Party code sits above the shared code, which sits above the protocol rules
+name = Party code sits above the shared code, then storage, then the protocol rules
 type = layers
 layers =
     seller | buyer | runner
     shared
+    persistence
     protocol

@@ -31,6 +31,8 @@ def test_tampered_body_is_refused_before_the_handler(web, seller_db):
         == 0
     )
     assert (
-        seller_db.execute("SELECT COUNT(*) FROM evidence WHERE body = ?", (tampered,)).fetchone()[0]
+        seller_db.execute(
+            "SELECT COUNT(*) FROM signed_requests WHERE body = ?", (tampered,)
+        ).fetchone()[0]
         == 0
     )

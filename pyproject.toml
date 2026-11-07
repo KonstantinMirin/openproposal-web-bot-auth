@@ -45,7 +45,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["protocol", "shared", "seller", "buyer", "runner"]
+packages = ["protocol", "persistence", "shared", "seller", "buyer", "runner"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -78,9 +78,6 @@ max-statements = 50
 "e2e/scenarios/**" = ["S101", "PLR2004", "ANN"]
 # Exemptions for production files. They only shrink: each line lists the exact
 # codes today's tree reports in that file, and the step that removes them.
-"buyer/keyring.py" = ["TRY003"]  # Step 3: shared/keyring.py with KeyringState
-"buyer/store.py" = ["ANN201", "PLR0913", "PLR0917"]  # Step 3: buyer/repository.py
-"seller/store.py" = ["PLR0913"]  # Step 3: seller/sqlite_store.py
 "seller/identity.py" = ["PLR2004"]  # Step 4: refusal hints come from the library
 "seller/errors.py" = ["ANN204", "PLR0913"]  # Step 5: pure errors, rendering in seller/http.py
 "seller/offers.py" = ["C901", "PLR0912", "PLR0913", "PLR0917"]  # Step 5: seller/offers/
@@ -97,7 +94,6 @@ warn_unused_ignores = true
 # outside the scope is still analyzed for its callers, but reports nothing
 # (the follow_imports override below). Out of scope today, by the step that
 # brings it in:
-#   Step 3: seller/store, buyer/store
 #   Step 5: seller/offers, seller/errors
 #   Step 6: buyer/flow
 #   Step 7: runner/live
@@ -109,15 +105,20 @@ files = [
     "seller/app.py",
     "seller/faults.py",
     "seller/identity.py",
+    "seller/ports.py",
     "seller/resources.py",
     "seller/seed.py",
     "seller/settings.py",
+    "seller/sqlite_store.py",
     "buyer/__init__.py",
     "buyer/app.py",
     "buyer/client.py",
-    "buyer/keyring.py",
+    "buyer/repository.py",
     "buyer/resources.py",
     "buyer/settings.py",
+    "persistence/__init__.py",
+    "persistence/evidence.py",
+    "persistence/sqlite.py",
     "protocol/__init__.py",
     "protocol/attribution.py",
     "protocol/documents.py",
@@ -125,7 +126,7 @@ files = [
     "protocol/record.py",
     "protocol/values.py",
     "shared/__init__.py",
-    "shared/evidence.py",
+    "shared/keyring.py",
     "shared/lifespan.py",
     "shared/operator.py",
     "shared/settings.py",
@@ -136,6 +137,7 @@ files = [
     "tests/conftest.py",
     "tests/test_apps.py",
     "tests/test_architecture.py",
+    "tests/test_buyer_repository.py",
     "tests/test_guards_ast_grep.py",
     "tests/test_guards_import_contracts.py",
     "tests/test_guards_ruff_bans.py",
@@ -143,13 +145,15 @@ files = [
     "tests/test_operations.py",
     "tests/test_record_rules.py",
     "tests/test_sdk.py",
+    "tests/test_seller_store.py",
     "tests/test_settings.py",
+    "tests/test_sqlite.py",
 ]
 
 # Out-of-scope demo modules: analyzed when an in-scope module imports them,
 # silent otherwise. The entry goes when the scope covers every package (Step 8).
 [[tool.mypy.overrides]]
-module = ["seller.*", "buyer.*", "shared.*", "runner.*"]
+module = ["seller.*", "buyer.*", "shared.*", "runner.*", "persistence.*"]
 follow_imports = "silent"
 
 # No explicit Any: the tier grows with each step until it covers every module (Step 8).
@@ -158,17 +162,20 @@ module = [
     "seller.app",
     "seller.faults",
     "seller.identity",
+    "seller.ports",
     "seller.resources",
     "seller.seed",
     "seller.settings",
+    "seller.sqlite_store",
     "buyer.app",
     "buyer.client",
-    "buyer.keyring",
+    "buyer.repository",
     "buyer.resources",
     "buyer.settings",
+    "persistence.*",
     "protocol.*",
     "runner.settings",
-    "shared.evidence",
+    "shared.keyring",
     "shared.lifespan",
     "shared.operator",
     "shared.settings",
@@ -177,6 +184,7 @@ module = [
     "tests.conftest",
     "tests.test_apps",
     "tests.test_architecture",
+    "tests.test_buyer_repository",
     "tests.test_guards_ast_grep",
     "tests.test_guards_import_contracts",
     "tests.test_guards_ruff_bans",
@@ -184,17 +192,19 @@ module = [
     "tests.test_operations",
     "tests.test_record_rules",
     "tests.test_sdk",
+    "tests.test_seller_store",
     "tests.test_settings",
+    "tests.test_sqlite",
 ]
 disallow_any_explicit = true
 
 [tool.coverage.run]
-source = ["protocol", "seller", "buyer", "shared", "runner"]
+source = ["protocol", "persistence", "seller", "buyer", "shared", "runner"]
 branch = true
 
 [tool.coverage.report]
 # The branch coverage measured on the tree before Step 0 (45.26), raised to each
-# step's measured total (Step 1: 50.90; Step 2: 77.57). It is never lowered.
-fail_under = 77.57
+# step's measured total (Step 1: 50.90; Step 2: 77.57; Step 3: 79.98). It is never lowered.
+fail_under = 79.98
 precision = 2
 show_missing = false

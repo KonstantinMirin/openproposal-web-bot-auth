@@ -8,7 +8,6 @@ parsed once from the stored raw JSON; the raw JSON stays the digest input.
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Any
 
 from openproposal import (
     AssentEntry,
@@ -37,11 +36,11 @@ from protocol.record import (
     line_items_of,
     proposal_items,
 )
-from protocol.values import commitment_key, instant, matches
+from protocol.values import JsonObject, JsonValue, commitment_key, instant, matches
 
 from .errors import OfferError
-from .identity import Caller, ResolvedCaller
-from .store import Store
+from .identity import Caller, ResolvedCaller, provenance_of
+from .ports import OfferRepository, OfferStore, StoredProposal
 
 #: The statuses a `commit` can name (§ 4.3.2).
 COMMITTABLE: frozenset[LineItemStatus] = frozenset(
@@ -60,19 +59,23 @@ def parse_commit(body: bytes) -> Commit:
         raise OfferError("validation", str(e), retry="none") from e
 
 
-def _issued_to(store: Store, caller: Caller, proposal_id: str) -> dict[str, Any]:
+def _issued_to(store: OfferRepository, caller: Caller, proposal_id: str) -> StoredProposal:
     """The stored proposal, when it is issued to the caller's principal (§ 4.3)."""
-    found = store.proposal(proposal_id)
-    if found is None or not isinstance(caller, ResolvedCaller) or found[0] != caller.principal.id:
+    found = store.issued(proposal_id)
+    if (
+        found is None
+        or not isinstance(caller, ResolvedCaller)
+        or found.buyer_principal_id != caller.principal.id
+    ):
         # An issued proposal exists only for its buyer (§ 2.4 `not_found`).
         raise OfferError("not_found", f"no proposal {proposal_id} for this caller", retry="none")
-    return found[1]
+    return found
 
 
-def full_representation(store: Store, caller: Caller, proposal_id: str) -> dict[str, Any]:
+def full_representation(store: OfferRepository, caller: Caller, proposal_id: str) -> JsonObject:
     """The Full Representation (§ 2.1) of an issued proposal, for its buyer only."""
-    document = _issued_to(store, caller, proposal_id)
-    assent = store.assent(proposal_id)
+    document = _issued_to(store, caller, proposal_id).document
+    assent: list[JsonValue] = [dump(e) for e in store.assent(proposal_id)]
     return {**document, "assent": assent} if assent else document
 
 
@@ -92,13 +95,9 @@ def proposal_status(statuses: list[LineItemStatus]) -> ProposalStatus:
     return ProposalStatuses.WITHDRAWN
 
 
-def _assent(store: Store, proposal_id: str) -> list[AssentEntry]:
-    return [AssentEntry.model_validate(e) for e in store.assent(proposal_id)]
-
-
-def _result(store: Store, proposal_id: str, key: str) -> CommitResult:
+def _result(store: OfferRepository, proposal_id: str, key: str) -> CommitResult:
     """§ 5.6.1: the buyer's entry, then each matching entry written after it."""
-    return result_for(_assent(store, proposal_id), key)
+    return result_for(store.assent(proposal_id), key)
 
 
 def _live_names(assent: list[AssentEntry]) -> set[str]:
@@ -118,8 +117,8 @@ def _live_names(assent: list[AssentEntry]) -> set[str]:
 
 
 def _checks(
-    document: dict[str, Any], assent: list[AssentEntry], commit: Commit, now: datetime
-) -> tuple[dict[str, Any], bytes]:
+    document: JsonObject, assent: list[AssentEntry], commit: Commit, now: datetime
+) -> tuple[JsonObject, bytes]:
     """The § 5.6.1 checks of a new `commit`. Returns the composed record and the digest input.
 
     The order follows § 5.6.1: "The rejection MUST carry `expired` when
@@ -212,7 +211,11 @@ def _checks(
 
 
 def commit(
-    store: Store, caller: Caller, proposal_id: str, commit: Commit, now: datetime | None = None
+    store: OfferStore,
+    caller: Caller,
+    proposal_id: str,
+    commit: Commit,
+    now: datetime | None = None,
 ) -> CommitResult:
     """Answers a `commit` (§ 5.6.1). This seller accepts every commit that passes the checks."""
     if not isinstance(caller, ResolvedCaller):
@@ -222,60 +225,54 @@ def commit(
     key = commitment_key(commit.entry)
     rejection: OfferError | None = None
     with store.transaction():
-        document = _issued_to(store, caller, proposal_id)
+        issued = _issued_to(store, caller, proposal_id)
+        document = issued.document
 
         # A replay returns the result as it now stands, and writes nothing (§ 5.6.1).
-        processed = store.processed_commit(caller.principal.id, key)
+        processed = store.processed(caller.principal.id, key)
         if processed is not None:
-            if processed["canonical"] != request or processed["proposal_id"] != proposal_id:
+            if processed.canonical != request or processed.proposal_id != proposal_id:
                 raise OfferError(
                     "idempotency_conflict",
                     "the idempotency_key names another commit",
                     retry="none",
-                    version=document["version"],
+                    version=Proposal.model_validate(document).version,
                 )
-            if processed["errors"] is not None:
-                raise OfferError.stored(processed["errors"])
+            if processed.error is not None:
+                raise OfferError.stored(processed.error)
             return _result(store, proposal_id, key)
 
-        assent = _assent(store, proposal_id)
+        assent = store.assent(proposal_id)
         try:
             composed, data = _checks(document, assent, commit, now)
         except OfferError as e:
             rejection = e
             if e.error["retry"] != "same":  # a rejection that is a stored result
-                store.record_commit(caller.principal.id, key, proposal_id, request, e.stored_form())
+                store.record(caller.principal.id, key, proposal_id, request, e.error_object())
         else:
-            _accept(store, caller, document, composed, data, commit, now)
-            store.record_commit(caller.principal.id, key, proposal_id, request)
+            _accept(store, caller, issued, composed, data, commit, now)
+            store.record(caller.principal.id, key, proposal_id, request, None)
     if rejection is not None:
         raise rejection
     return _result(store, proposal_id, key)
 
 
 def _accept(
-    store: Store,
+    store: OfferRepository,
     caller: ResolvedCaller,
-    document: dict[str, Any],
-    composed: dict[str, Any],
+    issued: StoredProposal,
+    composed: JsonObject,
     data: bytes,
     commit: Commit,
     now: datetime,
 ) -> None:
     """Writes the buyer's entry and the seller's matching `acceptance` (§ 4.1.2)."""
-    # The boundary's credential record goes to storage with the entry, unread here.
-    proposal_id = document["proposal_id"]
-    store.append_assent(
-        proposal_id,
-        dump(commit.entry),
-        principal_id=caller.principal.id,
-        credential=caller.credential,
-    )
+    # The boundary's provenance goes to storage with the entry, unread here.
+    document, proposal_id = issued.document, issued.proposal_id
+    store.append_assent(proposal_id, commit.entry, provenance_of(caller))
     acceptance = acceptance_for(commit.entry, now)
-    store.append_assent(proposal_id, dump(acceptance))
-    store.add_agreed_record(
-        proposal_id, acceptance.record_digest, data, [dump(commit.entry), dump(acceptance)]
-    )
+    store.append_assent(proposal_id, acceptance, None)
+    store.save_agreed(proposal_id, acceptance.record_digest, data, [commit.entry, acceptance])
 
     # The stored line items now hold the commit's writes, and they are agreed. `document`
     # is this transaction's own copy, read from storage, so it is updated in place.
@@ -287,4 +284,4 @@ def _accept(
             item.update(composed_items[name], status=LineItemStatuses.AGREED)
     agreed = proposal_items(Proposal.model_validate(document))
     document["status"] = proposal_status([i.status for i in agreed.values()])
-    store.save_proposal(document)
+    store.save_proposal(issued)

@@ -39,7 +39,7 @@ def _read(web) -> dict:
 def _last_signed_by_buyer(seller_db) -> str:
     """The keyid of the last request the seller verified from the buyer's origin."""
     return seller_db.execute(
-        "SELECT keyid FROM evidence WHERE origin = ? ORDER BY id DESC LIMIT 1", (BUYER,)
+        "SELECT keyid FROM signed_requests WHERE origin = ? ORDER BY id DESC LIMIT 1", (BUYER,)
     ).fetchone()["keyid"]
 
 

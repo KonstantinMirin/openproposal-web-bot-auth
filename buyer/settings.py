@@ -16,7 +16,7 @@
 
 In production, the rotation wait is the directory's max-age (300 s) plus the
 library's default max_cache_age (300 s), and signatures last the profile's 300 s
-maximum (buyer/keyring.py).
+maximum (shared/keyring.py).
 """
 
 from __future__ import annotations

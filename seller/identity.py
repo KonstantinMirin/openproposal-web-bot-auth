@@ -30,10 +30,13 @@ from iab_agentic_primitives.web_bot_auth import HTTPRequest, WebBotAuthError, ac
 from iab_agentic_primitives.web_bot_auth.asgi import request_url
 from pydantic import BaseModel, ConfigDict
 
+from persistence.evidence import StoredRequest
 from protocol.attribution import attributes
+from shared.wba import AuthMethod
 
 from .errors import Refused
-from .resources import IdentityDep, StoreDep, VerifierDep
+from .ports import PrincipalRecord, Provenance
+from .resources import BoundaryRecordsDep, IdentityDep, VerifierDep
 
 
 class Frozen(BaseModel):
@@ -52,7 +55,7 @@ class Principal(Frozen):
 class Credential(Frozen):
     """The confirmed credential: how the caller authenticated, and what the boundary kept."""
 
-    method: Literal["web_bot_auth", "bearer"]
+    method: AuthMethod
     #: The verified origin and its host, for a signed request.
     origin: str | None = None
     host: str | None = None
@@ -106,13 +109,31 @@ def _bearer(value: str | None) -> str | None:
     return token.strip()
 
 
+def _principal(record: PrincipalRecord) -> Principal:
+    return Principal(id=record.id, kind="buyer", legal_name=record.legal_name, domain=record.domain)
+
+
+def provenance_of(caller: ResolvedCaller) -> Provenance:
+    """What storage keeps with the caller's entry: how it authenticated, and its evidence.
+
+    The offer logic passes the caller here and never reads the credential itself.
+    """
+    credential = caller.credential
+    return Provenance(
+        principal_id=caller.principal.id,
+        method=credential.method,
+        evidence_id=credential.evidence_id,
+        attributed=credential.attributes_entries,
+    )
+
+
 async def resolve_caller(
-    request: Request, store: StoreDep, verifier: VerifierDep, identity: IdentityDep
+    request: Request, records: BoundaryRecordsDep, verifier: VerifierDep, identity: IdentityDep
 ) -> ResolvedCaller | PublicCaller:
     """Confirms the presented credential and resolves it to this seller's principal.
 
-    The store, the verifier, and the seller's identity come from the same typed
-    providers the handlers use (seller/resources.py).
+    The records (principals and the evidence log), the verifier, and the
+    seller's identity come from the typed providers in seller/resources.py.
     """
     headers = [(k.decode("latin-1"), v.decode("latin-1")) for k, v in request.headers.raw]
     body = await request.body()
@@ -125,20 +146,14 @@ async def resolve_caller(
 
     if signed:
         # 2. Confirm the signature. The library fetches the origin's directory as needed.
-        url = request_url(request.scope, identity)
+        received = HTTPRequest(request.method, request_url(request.scope, identity), headers, body)
         try:
-            verified = await verifier.verify(HTTPRequest(request.method, url, headers, body))
+            verified = await verifier.verify(received)
         except WebBotAuthError as e:
             raise Refused(e.status, e.reason, str(e), headers=_hint(e.status, bool(body))) from e
         origin = str(verified.origin)
-        evidence_id = store.record_evidence(
-            origin=origin,
-            keyid=verified.keyid,
-            method=request.method,
-            url=url,
-            headers=headers,
-            body=body,
-            directory=verified.directory,
+        evidence_id = records.keep_request(
+            StoredRequest(received, origin, verified.keyid, verified.directory)
         )
         signed_by = {
             "method": "web_bot_auth",
@@ -148,20 +163,20 @@ async def resolve_caller(
             "evidence_id": evidence_id,
         }
         # 3. Resolve it in this seller's own records.
-        principal = store.principal_for_origin(origin)
+        principal = records.for_origin(origin)
         if principal is None:
             return PublicCaller(credential=Credential(**signed_by))
         attributes_entries = attributes(
-            verified.origin.host, principal["domain"], body_covered=verified.body_covered
+            verified.origin.host, principal.domain, body_covered=verified.body_covered
         )
         return ResolvedCaller(
-            principal=Principal(**principal),
+            principal=_principal(principal),
             credential=Credential(**signed_by, attributes_entries=attributes_entries),
         )
 
     if token is not None:
         # 2 and 3. A token is confirmed and resolved by the same lookup.
-        principal = store.principal_for_token(token)
+        principal = records.for_token(token)
         if principal is None:
             raise Refused(
                 401,
@@ -170,7 +185,7 @@ async def resolve_caller(
                 headers={"WWW-Authenticate": 'Bearer error="invalid_token"'},
             )
         return ResolvedCaller(
-            principal=Principal(**principal), credential=Credential(method="bearer")
+            principal=_principal(principal), credential=Credential(method="bearer")
         )
 
     return PublicCaller()

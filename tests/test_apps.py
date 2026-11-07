@@ -143,23 +143,37 @@ def test_a_seller_without_an_operator_key_refuses_every_operator_call(tmp_path: 
         assert response.status_code == 403
 
 
+def _closed(db: sqlite3.Connection) -> bool:
+    """Whether `db` is closed. Readable from any thread, unlike a query on the connection."""
+    try:
+        _ = db.total_changes
+    except sqlite3.ProgrammingError:
+        return True
+    return False
+
+
 def test_the_seller_lifespan_closes_the_client_and_the_store(tmp_path: Path) -> None:
     with TestClient(seller_app(tmp_path), base_url=SELLER) as client:
         resources = client.app_state["resources"]
         assert isinstance(resources, SellerResources)
-        assert not resources.client.is_closed
-        assert resources.store.is_empty() is False  # seeded at startup
-    assert resources.client.is_closed
-    with pytest.raises(sqlite3.ProgrammingError):
-        resources.store.is_empty()
+        assert not resources.client.is_closed and not _closed(resources.store.db)
+    assert resources.client.is_closed and _closed(resources.store.db)
+
+
+def test_the_store_refuses_a_thread_other_than_the_one_that_opened_it(tmp_path: Path) -> None:
+    """The concurrency model (persistence/sqlite.py): one connection, on the loop's thread."""
+    with TestClient(seller_app(tmp_path), base_url=SELLER) as client:
+        resources = client.app_state["resources"]
+        assert isinstance(resources, SellerResources)
+        with pytest.raises(sqlite3.ProgrammingError, match="same thread"):
+            resources.store.is_empty()
 
 
 def test_a_restart_keeps_the_seeded_records(tmp_path: Path) -> None:
-    for _ in range(2):
+    for _ in range(2):  # the second start finds the records and seeds nothing
         with TestClient(seller_app(tmp_path), base_url=SELLER) as client:
-            resources = client.app_state["resources"]
-            assert isinstance(resources, SellerResources)
-            assert resources.store.principal("buyer-wba") is not None
+            caller = client.get("/whoami", headers={"Authorization": f"Bearer {TOKEN}"}).json()
+            assert caller["principal"]["id"] == "buyer-bearer"
 
 
 # The fault switch (TEST ONLY)
@@ -290,9 +304,6 @@ def test_the_buyer_lifespan_closes_the_client_and_the_store(tmp_path: Path) -> N
         assert client.get("/health").json() == {"ok": True}
         resources = client.app_state["resources"]
         assert isinstance(resources, BuyerResources)
-        assert not resources.client.is_closed
-        assert resources.store.seller(SELLER) is not None
-    assert resources.client.is_closed
-    with pytest.raises(sqlite3.ProgrammingError):
-        resources.store.seller(SELLER)
+        assert not resources.client.is_closed and not _closed(resources.store.db)
+    assert resources.client.is_closed and _closed(resources.store.db)
     assert {p.name for p in tmp_path.iterdir()} == {"keys", "buyer.db"}

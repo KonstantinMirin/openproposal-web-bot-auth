@@ -14,8 +14,6 @@ select = ["TID251"]
 [lint.per-file-ignores]
 # The sanctioned canonicalizer and hasher.
 "protocol/**" = ["TID251"]
-# Not a record digest: the seller stores a bearer token's hash, never the token.
-"seller/store.py" = ["TID251"]
 # The e2e keeps its own digest oracle on purpose, independent of protocol/.
 "e2e/scenarios/test_01_first_contact.py" = ["TID251"]
 

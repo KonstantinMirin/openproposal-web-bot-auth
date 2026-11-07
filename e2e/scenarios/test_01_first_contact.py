@@ -19,6 +19,8 @@ from iab_agentic_primitives.web_bot_auth import (
     ResponseVerifier,
 )
 
+from persistence.evidence import RESPONSE_WITH_REQUEST
+
 
 def test_first_contact_by_signature(web, seller_db, buyer_db):
     # Neither side holds a key or a directory of the other yet.
@@ -63,7 +65,7 @@ def test_first_contact_by_signature(web, seller_db, buyer_db):
     ).fetchone()
     assert bought["state"] == "agreed"
     evidence = seller_db.execute(
-        "SELECT * FROM evidence WHERE id = ?", (entry["evidence_id"],)
+        "SELECT * FROM signed_requests WHERE id = ?", (entry["evidence_id"],)
     ).fetchone()
     assert evidence["origin"] == BUYER and evidence["method"] == "POST"
     assert evidence["body"] == bought["body"]  # the exact bytes the buyer signed and sent
@@ -82,9 +84,7 @@ def test_first_contact_by_signature(web, seller_db, buyer_db):
     assert str(again.origin) == BUYER and again.keyid == evidence["keyid"] and again.body_covered
 
     # The buyer kept the seller's signed answer as received, bound to its request.
-    answer = buyer_db.execute(
-        "SELECT * FROM evidence WHERE id = ?", (outcome["evidence_id"],)
-    ).fetchone()
+    answer = buyer_db.execute(RESPONSE_WITH_REQUEST, (outcome["evidence_id"],)).fetchone()
     assert answer["origin"] == SELLER and answer["status"] == 200
     assert answer["request_body"] == bought["body"]
     assert json.loads(answer["body"])["entries"] == outcome["entries"]

@@ -8,10 +8,16 @@ from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any
 
-from iab_agentic_primitives.web_bot_auth import KeyResolver, RequestSigner, WebBotAuthError
-from openproposal import LineItemWrites, Proposal, dump, dump_json
-from pydantic import BaseModel
+from iab_agentic_primitives.web_bot_auth import (
+    HTTPResponse,
+    KeyResolver,
+    RequestSigner,
+    WebBotAuthError,
+)
+from openproposal import ErrorObject, LineItemWrites, Proposal, dump
+from pydantic import BaseModel, ValidationError
 
+from persistence.evidence import StoredRequest, StoredResponse
 from protocol.attribution import attributes
 from protocol.operations import (
     RECEIVE,
@@ -19,13 +25,14 @@ from protocol.operations import (
     check_result,
     compose_commit,
     parse_commit,
+    parse_errors,
     parse_result,
 )
-from protocol.values import JsonObject, commitment_key
+from protocol.values import JsonObject
+from shared.keyring import Keyring
 
 from .client import Credential, Exchange, HTTPClient, call_seller
-from .keyring import Keyring
-from .store import Store
+from .repository import BuyerRepository, CommitKey, Counterparty
 
 
 class Outcome(BaseModel):
@@ -51,7 +58,7 @@ class Refusal(Exception):
 class Buyer:
     def __init__(
         self,
-        store: Store,
+        store: BuyerRepository,
         resolver: KeyResolver,
         keyring: Keyring,
         origin: str,
@@ -69,28 +76,34 @@ class Buyer:
         return RequestSigner(self.keyring.active(), self.origin, lifetime=self.signature_lifetime)
 
     async def _call(
-        self, seller: dict, credential: Credential, method: str, path: str, body: bytes = b""
+        self,
+        seller: Counterparty,
+        credential: Credential,
+        method: str,
+        path: str,
+        body: bytes = b"",
     ) -> Exchange:
+        token = seller.bearer_token.get_secret_value() if seller.bearer_token else None
         try:
             exchange = await call_seller(
                 self.client,
                 method,
-                seller["origin"] + path,
-                seller_origin=seller["origin"],
+                f"{seller.origin}{path}",
+                seller_origin=str(seller.origin),
                 resolver=self.resolver,
                 signer=self.signer if credential == "web_bot_auth" else None,
-                token=seller["bearer_token"],
+                token=token,
                 body=body,
             )
         except WebBotAuthError as e:
             raise Refusal(f"the seller's response is refused: {e.reason}: {e}") from e
         # The seller is whoever the verified origin is in this buyer's own records.
-        if self.store.seller(str(exchange.verified.origin)) is None:
+        if self.store.counterparty(str(exchange.verified.origin)) is None:
             raise Refusal(f"{exchange.verified.origin} is not a seller this buyer deals with")
         return exchange
 
-    def _seller(self, origin: str) -> dict:
-        seller = self.store.seller(origin)
+    def _seller(self, origin: str) -> Counterparty:
+        seller = self.store.counterparty(origin)
         if seller is None:
             raise Refusal(f"{origin} is not a seller this buyer deals with")
         return seller
@@ -131,12 +144,13 @@ class Buyer:
         # The typed value decides; the raw JSON, unknown members and all, is the digest input.
         proposal = Proposal.model_validate_json(read.body, context=RECEIVE)
         raw: JsonObject = json.loads(read.body)
-        if proposal.seller.domain != seller["domain"]:
+        if proposal.seller.domain != seller.domain:
             raise Refusal(f"{proposal_id} names seller {proposal.seller.domain}")
 
         # 2. Compose the Commit, or re-send the pending one whole (§ 4.1.2, § 5.6.1).
-        row = self.store.pending_commit(seller_origin, proposal_id, line_item_ids)
-        if row is None:
+        key = CommitKey(seller_origin, proposal_id, tuple(line_item_ids))
+        pending = self.store.pending(key)
+        if pending is None:
             composed = compose_commit(
                 proposal,
                 raw,
@@ -144,74 +158,73 @@ class Buyer:
                 at=datetime.now(UTC),
                 key=str(uuid.uuid4()),
             )
-            row = self.store.add_commit(
-                seller_origin,
-                proposal_id,
-                line_item_ids,
-                commitment_key(composed.commit.entry),
-                dump_json(composed.commit).encode(),
-                composed.digest_input,
-            )
-        commit = parse_commit(row["body"])
+            pending = self.store.add_pending(key, composed.commit, composed.digest_input)
+        commit = parse_commit(pending.body)
 
         # 3. Send it, signed or with the bearer token.
         answer = await self._call(
-            seller, credential, "POST", f"/proposals/{proposal_id}/commit", row["body"]
+            seller, credential, "POST", f"/proposals/{proposal_id}/commit", pending.body
         )
         if answer.status != 200:
             errors = json.loads(answer.body).get("errors")
-            if errors and all(e.get("retry") != "same" for e in errors):
-                self.store.settle_commit(row["id"], "rejected", errors=errors)
+            stored = _stored_errors(answer.body)
+            if stored and all(e.retry != "same" for e in stored):
+                self.store.settle_rejected(pending.id, stored)
             return Outcome(
                 state="rejected",
                 errors=errors,
                 detail=answer.body.decode(),
                 seller=_party(seller),
                 authentication_method=credential,
-                commit_id=row["id"],
+                commit_id=pending.id,
             )
 
         # 4. Check the matching pair from the agreed record (§ 4.1.2).
         try:
             result = parse_result(answer.body)
-            acceptance = check_result(commit, result, row["digest_input"])
+            acceptance = check_result(commit, result, pending.digest_input)
         except ProtocolViolation as e:
             raise Refusal(f"the seller's CommitResult is refused: {e}") from e
 
-        # 5. Keep the agreed record and the signed answer as evidence.
+        # 5. Keep the signed answer as evidence and settle the commit, in one transaction.
         verified = answer.verified
         attributed = attributes(
             verified.origin.host, proposal.seller.domain, body_covered=verified.body_covered
         )
-        entries = [dump(e) for e in result.entries]
-        evidence_id = self.store.record_evidence(
-            commit_id=row["id"],
+        kept = StoredResponse(
+            response=HTTPResponse(answer.status, answer.headers, answer.body, answer.request),
+            request=StoredRequest(answer.request, self.origin, answer.keyid),
             origin=str(verified.origin),
             keyid=verified.keyid,
-            attributed=attributed,
-            request=answer.request_record(),
-            status=answer.status,
-            headers=answer.headers,
-            body=answer.body,
             directory=verified.directory,
         )
-        self.store.settle_commit(row["id"], "agreed", entries=entries)
+        evidence_id = self.store.keep_agreement(
+            pending.id, kept, result.entries, attributed=attributed
+        )
         return Outcome(
             state="agreed",
             seller=_party(seller),
             authentication_method=credential,
             keyid=answer.keyid,
             record_digest=acceptance.record_digest,
-            entries=entries,
+            entries=[dump(e) for e in result.entries],
             attributed=attributed,
             evidence_id=evidence_id,
-            commit_id=row["id"],
+            commit_id=pending.id,
         )
 
 
-def _party(seller: dict) -> dict:
+def _stored_errors(body: bytes) -> list[ErrorObject]:
+    """The seller's § 2.4 errors, or none when the body isn't a well-formed errors[] envelope."""
+    try:
+        return parse_errors(body)
+    except (ValidationError, ProtocolViolation):
+        return []
+
+
+def _party(seller: Counterparty) -> dict[str, str]:
     return {
-        "origin": seller["origin"],
-        "domain": seller["domain"],
-        "legal_name": seller["legal_name"],
+        "origin": str(seller.origin),
+        "domain": seller.domain,
+        "legal_name": seller.legal_name,
     }

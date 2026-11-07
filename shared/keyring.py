@@ -1,4 +1,4 @@
-"""The buyer's signing keys: one private JWK file each, `keys/<kid>.jwk`.
+"""A party's signing keys: one private JWK file each, `keys/<kid>.jwk`.
 
 Each key is minted here and never shared.
 
@@ -17,33 +17,55 @@ signs. A rotation follows standard practice, and the keyring enforces its waits:
    moves to `keys/retired/`.
 
 Files are named by kid, so a published key never reuses a retired key's name.
+`state.json` holds a `KeyringState`, written whole to a temporary file and moved
+into place, so a reader never sees half of it. `key(kid)` is how anyone else
+reads a key, the e2e scenarios included.
 """
 
 from __future__ import annotations
 
-import json
 import time
 from collections.abc import Callable
 from pathlib import Path
-from typing import TypedDict
 
 from iab_agentic_primitives.web_bot_auth import Ed25519Key
-from pydantic import TypeAdapter
+from pydantic import BaseModel, ConfigDict
 
 
-class _State(TypedDict):
+class KeyringState(BaseModel):
     """`state.json`: the active kid, and when each key was published and stopped signing."""
 
+    model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
+
     active: str
+    #: Unix time each key was published. The first key counts as published at 0.0.
     published: dict[str, float]
+    #: Unix time each key stopped signing.
     stopped: dict[str, float]
-
-
-_STATE = TypeAdapter(_State)
 
 
 class RotationError(Exception):
     """A rotation step asked for before its wait has passed, or on the wrong key."""
+
+
+class NotPublishedError(RotationError):
+    def __init__(self, kid: str) -> None:
+        super().__init__(f"no published key {kid}")
+
+
+class TooEarlyError(RotationError):
+    def __init__(self, kid: str, step: str, seconds: float) -> None:
+        super().__init__(f"{kid}: {step} for {seconds:.0f} s more")
+
+
+class StillSigningError(RotationError):
+    def __init__(self, kid: str) -> None:
+        super().__init__(f"{kid} still signs")
+
+
+class RetiredExistsError(RotationError):
+    def __init__(self, path: Path) -> None:
+        super().__init__(f"{path} exists; refusing to overwrite a retired key")
 
 
 class Keyring:
@@ -55,6 +77,7 @@ class Keyring:
         signature_lifetime: float,
         clock: Callable[[], float] = time.time,
     ) -> None:
+        """Opens the keyring in `directory`, minting a first key when it holds none."""
         self.directory = directory
         self.rotation_wait = rotation_wait
         self.signature_lifetime = signature_lifetime
@@ -62,7 +85,7 @@ class Keyring:
         self._state_file = directory / "state.json"
         if not self._files():
             kid = self._mint().kid
-            self._save({"active": kid, "published": {kid: 0}, "stopped": {}})
+            self._save(KeyringState(active=kid, published={kid: 0.0}, stopped={}))
 
     def _files(self) -> list[Path]:
         return sorted(self.directory.glob("*.jwk"))
@@ -74,58 +97,64 @@ class Keyring:
         pending.rename(self.directory / f"{key.kid}.jwk")
         return key
 
-    def _state(self) -> _State:
-        return _STATE.validate_json(self._state_file.read_text())
+    def state(self) -> KeyringState:
+        return KeyringState.model_validate_json(self._state_file.read_text())
 
-    def _save(self, state: _State) -> None:
-        self._state_file.write_text(json.dumps(state))
+    def _save(self, state: KeyringState) -> None:
+        partial = self._state_file.with_suffix(".json.new")
+        partial.write_text(state.model_dump_json())
+        partial.replace(self._state_file)
 
     def _published(self, kid: str) -> Path:
         path = self.directory / f"{kid}.jwk"
         if not path.exists():
-            raise RotationError(f"no published key {kid}")
+            raise NotPublishedError(kid)
         return path
+
+    def key(self, kid: str, *, include_retired: bool = False) -> Ed25519Key:
+        """The key `kid`, if published; or also if retired, when `include_retired`."""
+        retired = self.directory / "retired" / f"{kid}.jwk"
+        if include_retired and not (self.directory / f"{kid}.jwk").exists() and retired.exists():
+            return Ed25519Key.load_or_create(retired)
+        return Ed25519Key.load_or_create(self._published(kid))
 
     def published(self) -> list[Ed25519Key]:
         return [Ed25519Key.load_or_create(f) for f in self._files()]
 
     def active(self) -> Ed25519Key:
-        return Ed25519Key.load_or_create(self._published(self._state()["active"]))
+        return self.key(self.state().active)
 
     def publish(self) -> Ed25519Key:
         """Step 1: a new key in the directory. It doesn't sign yet."""
         key = self._mint()
-        state = self._state()
-        state["published"][key.kid] = self._clock()
-        self._save(state)
+        state = self.state()
+        self._save(
+            state.model_copy(update={"published": {**state.published, key.kid: self._clock()}})
+        )
         return key
 
     def activate(self, kid: str) -> Ed25519Key:
         """Step 2: sign with `kid`, once every verifier's cached directory lists it."""
         self._published(kid)
-        state = self._state()
-        ready = state["published"].get(kid, 0) + self.rotation_wait
+        state = self.state()
+        ready = state.published.get(kid, 0.0) + self.rotation_wait
         if self._clock() < ready:
-            raise RotationError(
-                f"{kid} is published; verifiers may not list it for "
-                f"{ready - self._clock():.0f} s more"
-            )
-        if kid != state["active"]:
-            state["stopped"][state["active"]] = self._clock()
-            state["active"] = kid
-            self._save(state)
+            raise TooEarlyError(kid, "verifiers may not list it", ready - self._clock())
+        if kid != state.active:
+            stopped = {**state.stopped, state.active: self._clock()}
+            self._save(state.model_copy(update={"active": kid, "stopped": stopped}))
         return self.active()
 
     def retire(self, kid: str) -> None:
         """Step 3: take `kid` out of the directory, once every signature it made has expired."""
-        path, state = self._published(kid), self._state()
-        if kid == state["active"]:
-            raise RotationError(f"{kid} still signs")
-        expired = state["stopped"].get(kid, 0) + self.signature_lifetime
+        path, state = self._published(kid), self.state()
+        if kid == state.active:
+            raise StillSigningError(kid)
+        expired = state.stopped.get(kid, 0.0) + self.signature_lifetime
         if self._clock() < expired:
-            raise RotationError(f"signatures by {kid} last {expired - self._clock():.0f} s more")
+            raise TooEarlyError(kid, "its signatures last", expired - self._clock())
         target = self.directory / "retired" / path.name
         if target.exists():
-            raise RotationError(f"{target} exists; refusing to overwrite a retired key")
+            raise RetiredExistsError(target)
         target.parent.mkdir(exist_ok=True)
         path.rename(target)

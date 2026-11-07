@@ -8,9 +8,13 @@ from __future__ import annotations
 
 import ssl
 from pathlib import Path
+from typing import Literal
 
 import httpx
 from iab_agentic_primitives.web_bot_auth import DirectoryResolver, FetchPolicy
+
+#: How a caller authenticated: a Web Bot Auth signature, or a bearer token the seller issued.
+AuthMethod = Literal["web_bot_auth", "bearer"]
 
 #: What answers a client's requests: the network by default, a stand-in in tests.
 Transport = httpx.AsyncBaseTransport

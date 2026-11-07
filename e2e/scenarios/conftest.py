@@ -27,20 +27,22 @@ from iab_agentic_primitives.web_bot_auth import (
 )
 from settings import BUYER, CFBOT, OPERATOR_KEY, SELLER
 
+from shared.keyring import Keyring
+
 __all__ = ["BUYER", "CFBOT", "SELLER"]  # the stack's addresses, re-exported for the scenarios
 # Operator and test controls, reached inside the network, not through the TLS front.
 BUYER_OPERATOR = "http://buyer:8000/operator"
 SELLER_FAULTS = "http://seller:8000/test/fault"
 CFBOT_RUN = "http://cfbot:8000/run"
 
-BUYER_KEYS = Path("/buyer-data/keys")
+#: The buyer's keyring, read through its own API from a read-only mount. The waits
+#: only govern rotation steps, which the scenarios ask the buyer for, never this copy.
+BUYER_KEYS = Keyring(Path("/buyer-data/keys"), rotation_wait=0, signature_lifetime=0)
 
 
 def buyer_key(kid: str | None = None) -> Ed25519Key:
-    """The buyer's active key, or its key `kid`, published or retired (buyer/keyring.py)."""
-    kid = kid or json.loads((BUYER_KEYS / "state.json").read_text())["active"]
-    path = BUYER_KEYS / f"{kid}.jwk"
-    return Ed25519Key.load_or_create(path if path.exists() else BUYER_KEYS / "retired" / path.name)
+    """The buyer's active key, or its key `kid`, published or retired (shared/keyring.py)."""
+    return BUYER_KEYS.active() if kid is None else BUYER_KEYS.key(kid, include_retired=True)
 
 
 def signed(

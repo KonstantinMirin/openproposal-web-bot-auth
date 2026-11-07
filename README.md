@@ -78,21 +78,22 @@ The code path, in order:
 3. A signature goes to the library's `RequestVerifier.verify`, which fetches
    the origin's directory through the resolver in
    [`shared/wba.py`](shared/wba.py) and checks `Content-Digest` against the
-   body. The boundary stores the verified request with the directory it
-   verified against (`Store.record_evidence` in
-   [`seller/store.py`](seller/store.py)), then resolves the origin with
-   `Store.principal_for_origin`.
-4. A token is confirmed and resolved by one lookup, `Store.principal_for_token`,
-   which matches its SHA-256. The seller never stores the token.
+   body. The boundary keeps the verified request with the directory it
+   verified against (`keep_request`, through the one evidence schema in
+   [`persistence/evidence.py`](persistence/evidence.py)), then resolves the
+   origin with `for_origin` (the ports in [`seller/ports.py`](seller/ports.py),
+   stored by [`seller/sqlite_store.py`](seller/sqlite_store.py)).
+4. A token is confirmed and resolved by one lookup, `for_token`, which matches
+   its SHA-256. The seller never stores the token.
 5. The boundary returns a frozen `ResolvedCaller` (a principal and a
    `Credential`) or a `PublicCaller`. A verified origin with no row is an
    established identity with no principal: a `PublicCaller` that carries the
    origin.
 6. The offer logic ([`seller/offers.py`](seller/offers.py)) takes that value.
    It checks only `isinstance(caller, ResolvedCaller)` and
-   `caller.principal.id`. It hands `caller.credential` to storage with the
-   entry it writes (`_accept`) and never reads it, so no offer decision depends
-   on the credential.
+   `caller.principal.id`. It hands the caller to the boundary's
+   `provenance_of`, and stores the result with the entry it writes (`_accept`)
+   without reading it, so no offer decision depends on the credential.
 
 A credential that fails is refused at the boundary, before anything reads the
 body. It's never downgraded to "no credential", and the refusal is a transport

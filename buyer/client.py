@@ -11,10 +11,10 @@ Every call goes through the client the buyer's lifespan owns (buyer/app.py).
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
 
 import httpx
 from iab_agentic_primitives.web_bot_auth import (
+    HTTPRequest,
     KeyResolver,
     Origin,
     RequestSigner,
@@ -23,7 +23,10 @@ from iab_agentic_primitives.web_bot_auth import (
 )
 from iab_agentic_primitives.web_bot_auth.httpx import WebBotAuth
 
-Credential = Literal["web_bot_auth", "bearer"]
+from shared.wba import AuthMethod
+
+#: How the buyer authenticates a request to a seller.
+Credential = AuthMethod
 
 #: The client every call goes through. The rest of the buyer holds one and passes it
 #: here; only this module sends requests with it.
@@ -34,21 +37,20 @@ HTTPClient = httpx.AsyncClient
 class Exchange:
     """One request and the verified response to it, as sent and received."""
 
-    method: str
-    url: str
-    request_headers: list[tuple[str, str]]
-    request_body: bytes
+    #: The request as sent, which the response is bound to. A bearer token is left out.
+    request: HTTPRequest
     status: int
+    #: The response's header lines as received, in order and with their own case.
     headers: list[tuple[str, str]]
     body: bytes
     verified: VerifiedSignature
     #: The key that signed the request, or None for a bearer request.
     keyid: str | None
 
-    def request_record(self) -> tuple[str, str, list[tuple[str, str]], bytes]:
-        """The request as sent, which the response is bound to. A bearer token is left out."""
-        headers = [(k, v) for k, v in self.request_headers if k.lower() != "authorization"]
-        return self.method, self.url, headers, self.request_body
+
+def _lines(headers: httpx.Headers) -> list[tuple[str, str]]:
+    """Header lines exactly as sent or received: `raw` keeps each name's case."""
+    return [(k.decode("latin-1"), v.decode("latin-1")) for k, v in headers.raw]
 
 
 async def call_seller(
@@ -79,13 +81,11 @@ async def call_seller(
         auth = WebBotAuth.verify_only(verifier, expected_origin=Origin.parse(seller_origin))
     response = await client.request(method, url, content=body, headers=headers, auth=auth)
     verified = response.extensions["web_bot_auth"]
+    sent = [(k, v) for k, v in _lines(response.request.headers) if k.lower() != "authorization"]
     return Exchange(
-        method=method,
-        url=url,
-        request_headers=response.request.headers.multi_items(),
-        request_body=body,
+        request=HTTPRequest(method, url, sent, body),
         status=response.status_code,
-        headers=response.headers.multi_items(),
+        headers=_lines(response.headers),
         body=response.content,
         verified=verified,
         keyid=signer.key.kid if signer else None,

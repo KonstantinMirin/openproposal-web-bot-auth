@@ -17,6 +17,7 @@ COPY vendor vendor
 RUN uv sync --no-install-project
 
 COPY protocol protocol
+COPY persistence persistence
 COPY shared shared
 COPY seller seller
 COPY buyer buyer
