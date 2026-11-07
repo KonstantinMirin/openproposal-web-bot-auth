@@ -1,8 +1,7 @@
 """The buyer agent: its signed key directory, and an operator trigger that runs the flow.
 
 Agents reach `buyer.wba-demo.noetis.dev` only for the directory, which
-`DirectoryMiddleware` serves from the keyring on every fetch, so a rotation
-takes effect on the next fetch. The
+`DirectoryMiddleware` serves from the keyring on every fetch. The
 `/operator/` routes are the buyer's own controls: the TLS front doesn't route
 them, so they are reachable only inside the network.
 """
@@ -23,23 +22,25 @@ from shared.wba import directory_resolver
 
 from .client import call_signed
 from .flow import Buyer, Outcome
-from .keyring import Keyring
+from .keyring import Keyring, RotationError
 from .store import Store
 
 ORIGIN = os.environ.get("BUYER_ORIGIN", "https://buyer.wba-demo.noetis.dev")
 DATA = Path(os.environ.get("BUYER_DATA", "/data"))
-# How long a fetched directory stays valid in a verifier's cache, in seconds.
-DIRECTORY_LIFETIME = int(os.environ.get("WBA_DIRECTORY_LIFETIME", "86400"))
 CFBOT_ORIGIN = os.environ.get("CFBOT_ORIGIN", "https://cfbot.wba-demo.noetis.dev")
+# Rotation waits (buyer/keyring.py). In production, ROTATION_WAIT is the library's
+# default max_cache_age, 300 s, and signatures last the profile's 300 s maximum.
+ROTATION_WAIT = float(os.environ.get("WBA_ROTATION_WAIT", "300"))
+SIGNATURE_LIFETIME = int(os.environ.get("WBA_SIGNATURE_LIFETIME", "300"))
 
-keyring = Keyring(DATA / "keys")
+keyring = Keyring(DATA / "keys", rotation_wait=ROTATION_WAIT, signature_lifetime=SIGNATURE_LIFETIME)
 store = Store(DATA / "buyer.db")
 # The buyer knows the seller by its origin only. The token is the bearer flow's credential.
 store.add_seller(os.environ.get("DEMO_SELLER_ORIGIN", "https://seller.wba-demo.noetis.dev"),
                  "seller.wba-demo.noetis.dev", "Demo Seller Inc.",
                  os.environ.get("DEMO_BEARER_TOKEN"))
 buyer = Buyer(store, directory_resolver(), keyring, ORIGIN,
-              load_yaml(Path(__file__).parent / "plan.yaml"))
+              load_yaml(Path(__file__).parent / "plan.yaml"), signature_lifetime=SIGNATURE_LIFETIME)
 
 api = FastAPI(title="Demo buyer")
 
@@ -77,17 +78,28 @@ async def list_keys() -> dict:
 
 
 @api.post("/operator/keys")
-async def add_key() -> dict:
-    """Rotation, step 1: publish a new key. The newest key signs from now on."""
-    keyring.add()
+async def publish_key() -> dict:
+    """Rotation, step 1: publish a new key next to the old one, which keeps signing."""
+    return {"published_kid": keyring.publish().kid, **await list_keys()}
+
+
+@api.post("/operator/keys/{kid}/activate")
+async def activate_key(kid: str) -> dict:
+    """Rotation, step 2: sign with the new key, once verifiers' caches list it."""
+    try:
+        keyring.activate(kid)
+    except RotationError as e:
+        raise HTTPException(409, str(e)) from e
     return await list_keys()
 
 
 @api.delete("/operator/keys/{kid}")
 async def retire_key(kid: str) -> dict:
-    """Rotation, step 2: take an old key out of the directory."""
-    if not keyring.retire(kid):
-        raise HTTPException(404, f"no retirable key {kid}")
+    """Rotation, step 3: take the old key out of the directory, once its signatures expired."""
+    try:
+        keyring.retire(kid)
+    except RotationError as e:
+        raise HTTPException(409, str(e)) from e
     return await list_keys()
 
 
@@ -100,4 +112,4 @@ async def cloudflare_check() -> dict:
 
 
 # A live key source: the middleware reads the keyring on every directory fetch.
-app = DirectoryMiddleware(api, keyring.published, base_url=ORIGIN, lifetime=DIRECTORY_LIFETIME)
+app = DirectoryMiddleware(api, keyring.published, base_url=ORIGIN)

@@ -42,14 +42,14 @@ class Refusal(Exception):
 
 class Buyer:
     def __init__(self, store: Store, resolver: DirectoryResolver, keyring: Keyring, origin: str,
-                 plan: dict[str, dict[str, Any]]) -> None:
+                 plan: dict[str, dict[str, Any]], *, signature_lifetime: int = 300) -> None:
         self.store, self.resolver, self.keyring, self.origin = store, resolver, keyring, origin
-        self.plan = plan
+        self.plan, self.signature_lifetime = plan, signature_lifetime
 
     @property
     def signer(self) -> RequestSigner:
-        """Signs as this buyer's origin with its newest key."""
-        return RequestSigner(self.keyring.active(), self.origin)
+        """Signs as this buyer's origin with its active key."""
+        return RequestSigner(self.keyring.active(), self.origin, lifetime=self.signature_lifetime)
 
     async def _call(self, seller: dict, credential: Credential, method: str, path: str,
                     body: bytes = b"") -> Exchange:
