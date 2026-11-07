@@ -17,7 +17,7 @@ from .store import Store
 TEMPLATE = Path(__file__).parent / "seed" / "proposal.yaml"
 
 
-def _issue(store: Store, principal_id: str, proposal_id: str, legal_name: str, domain: str) -> None:
+def issue(store: Store, principal_id: str, proposal_id: str, legal_name: str, domain: str) -> None:
     document = copy.deepcopy(load_yaml(TEMPLATE))
     document["proposal_id"] = proposal_id
     document["buyer"] = {"domain": domain, "legal_name": legal_name}
@@ -35,11 +35,11 @@ def seed(store: Store, *, buyer_origin: str, bearer_token: str | None) -> None:
         store.add_principal("buyer-wba", "Demo Buyer Agency LLC", host)
         store.add_origin_credential("buyer-wba", buyer_origin)
         for n in (1, 2):
-            _issue(store, "buyer-wba", f"demo-wba-{n}", "Demo Buyer Agency LLC", host)
+            issue(store, "buyer-wba", f"demo-wba-{n}", "Demo Buyer Agency LLC", host)
 
         # A buyer that presents a bearer token the seller issued it.
         if bearer_token:
             domain = "bearer-buyer.wba-demo.noetis.dev"
             store.add_principal("buyer-bearer", "Bearer Agency LLC", domain)
             store.add_token_credential("buyer-bearer", bearer_token)
-            _issue(store, "buyer-bearer", "demo-bearer-1", "Bearer Agency LLC", domain)
+            issue(store, "buyer-bearer", "demo-bearer-1", "Bearer Agency LLC", domain)

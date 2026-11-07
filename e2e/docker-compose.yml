@@ -58,6 +58,7 @@ services:
   cfbot:
     build: ../cfbot
     image: wba-demo-cfbot:local
+    env_file: generated/demo.env
     environment:
       NODE_EXTRA_CA_CERTS: /certs/ca.pem
       CFBOT_ORIGIN: https://cfbot.wba-demo.noetis.dev

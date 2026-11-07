@@ -1,16 +1,20 @@
 """The seller agent: issued proposals, offer acceptance, and its signed key directory.
 
 Every agent-facing route takes the caller from `resolve_caller` and nothing
-else. `ResponseSigningMiddleware` signs every response, refusals included, and
-binds it to the request it answers.
+else. The `/operator/` routes are the seller's own controls, outside the
+boundary: no front routes them, and each call carries the operator key
+(shared/operator.py). `ResponseSigningMiddleware` signs every response,
+refusals included, and binds it to the request it answers.
 """
 
 from __future__ import annotations
 
 import os
+import secrets
+from datetime import UTC, datetime
 from pathlib import Path
 
-from fastapi import FastAPI, Request
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from iab_agentic_primitives.web_bot_auth import (
@@ -23,18 +27,21 @@ from iab_agentic_primitives.web_bot_auth.asgi import DirectoryMiddleware, Respon
 from openproposal import dump
 from pydantic import BaseModel
 
+from shared.operator import require_operator
 from shared.wba import directory_resolver
 
 from . import offers
 from .errors import OfferError, Refused
 from .faults import MODES, FaultInjection
 from .identity import CallerDep
-from .seed import seed
+from .seed import issue, seed
 from .store import Store
 
 ORIGIN = os.environ.get("SELLER_ORIGIN", "https://seller.wba-demo.noetis.dev")
 DATA = Path(os.environ.get("SELLER_DATA", "/data"))
 FAULTS = os.environ.get("DEMO_FAULT_INJECTION") == "1"
+# How long a cache may hold the directory: its Cache-Control max-age, 300 s by default.
+DIRECTORY_MAX_AGE = int(os.environ.get("WBA_DIRECTORY_MAX_AGE", "300"))
 
 # The seller mints its key on first boot. No buyer is ever configured with it.
 key = Ed25519Key.load_or_create(DATA / "wba-key.jwk")
@@ -81,6 +88,33 @@ async def health() -> dict:
     return {"ok": True}
 
 
+class Issue(BaseModel):
+    principal_id: str
+
+
+operator = APIRouter(prefix="/operator", dependencies=[Depends(require_operator)])
+
+
+@operator.post("/issue")
+async def issue_proposal(body: Issue) -> dict:
+    """Issues a fresh copy of the seed proposal to a buyer this seller knows (§ 4.3).
+
+    The live runner (runner/live.py) commits to a fresh proposal on every run,
+    because an agreed line item can't be committed to again.
+    """
+    principal = store.principal(body.principal_id)
+    if principal is None:
+        raise HTTPException(404, f"no principal {body.principal_id}")
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    proposal_id = f"live-{body.principal_id}-{stamp}-{secrets.token_hex(2)}"
+    with store.transaction():
+        issue(store, principal["id"], proposal_id, principal["legal_name"], principal["domain"])
+    return {"proposal_id": proposal_id, "principal_id": principal["id"]}
+
+
+api.include_router(operator)
+
+
 class FaultMode(BaseModel):
     mode: str
 
@@ -100,4 +134,4 @@ app = ResponseSigningMiddleware(api, signer, base_url=ORIGIN)
 if FAULTS:
     app = FaultInjection(app, signer, ORIGIN)
 # The signed key directory at the well-known path, for buyers to find the seller's key.
-app = DirectoryMiddleware(app, [key], base_url=ORIGIN)
+app = DirectoryMiddleware(app, [key], base_url=ORIGIN, max_age=DIRECTORY_MAX_AGE)

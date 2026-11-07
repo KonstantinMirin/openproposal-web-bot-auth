@@ -2,8 +2,9 @@
 
 Agents reach `buyer.wba-demo.noetis.dev` only for the directory, which
 `DirectoryMiddleware` serves from the keyring on every fetch. The
-`/operator/` routes are the buyer's own controls: the TLS front doesn't route
-them, so they are reachable only inside the network.
+`/operator/` routes are the buyer's own controls: no front routes them, so they
+are reachable only inside the network, and each call carries the operator key
+(shared/operator.py).
 """
 
 from __future__ import annotations
@@ -13,11 +14,12 @@ import os
 from pathlib import Path
 from typing import Literal
 
-from fastapi import FastAPI, HTTPException
+from fastapi import APIRouter, Depends, FastAPI, HTTPException
 from iab_agentic_primitives.web_bot_auth.asgi import DirectoryMiddleware
 from pydantic import BaseModel
 
 from shared.documents import load_yaml
+from shared.operator import require_operator
 from shared.wba import directory_resolver
 
 from .client import call_signed
@@ -46,6 +48,7 @@ buyer = Buyer(store, directory_resolver(), keyring, ORIGIN,
               load_yaml(Path(__file__).parent / "plan.yaml"), signature_lifetime=SIGNATURE_LIFETIME)
 
 api = FastAPI(title="Demo buyer")
+operator = APIRouter(prefix="/operator", dependencies=[Depends(require_operator)])
 
 
 @api.get("/health")
@@ -60,7 +63,7 @@ class Trigger(BaseModel):
     credential: Literal["web_bot_auth", "bearer"] = "web_bot_auth"
 
 
-@api.post("/operator/commit")
+@operator.post("/commit")
 async def operator_commit(trigger: Trigger) -> Outcome:
     """Runs the whole flow: read, commit, verify the signed answer, keep the evidence."""
     if not trigger.line_item_ids:
@@ -69,24 +72,24 @@ async def operator_commit(trigger: Trigger) -> Outcome:
                               trigger.credential)
 
 
-@api.post("/operator/read")
+@operator.post("/read")
 async def operator_read(trigger: Trigger) -> Outcome:
     """Reads the proposal and verifies the seller's signed response."""
     return await buyer.read(trigger.seller, trigger.proposal_id, trigger.credential)
 
 
-@api.get("/operator/keys")
+@operator.get("/keys")
 async def list_keys() -> dict:
     return {"published": [k.kid for k in keyring.published()], "active": keyring.active().kid}
 
 
-@api.post("/operator/keys")
+@operator.post("/keys")
 async def publish_key() -> dict:
     """Rotation, step 1: publish a new key next to the old one, which keeps signing."""
     return {"published_kid": keyring.publish().kid, **await list_keys()}
 
 
-@api.post("/operator/keys/{kid}/activate")
+@operator.post("/keys/{kid}/activate")
 async def activate_key(kid: str) -> dict:
     """Rotation, step 2: sign with the new key, once verifiers' caches list it."""
     try:
@@ -96,7 +99,7 @@ async def activate_key(kid: str) -> dict:
     return await list_keys()
 
 
-@api.delete("/operator/keys/{kid}")
+@operator.delete("/keys/{kid}")
 async def retire_key(kid: str) -> dict:
     """Rotation, step 3: take the old key out of the directory, once its signatures expired."""
     try:
@@ -106,13 +109,15 @@ async def retire_key(kid: str) -> dict:
     return await list_keys()
 
 
-@api.post("/operator/cloudflare-check")
+@operator.post("/cloudflare-check")
 async def cloudflare_check() -> dict:
     """Signs a request to cfbot, whose verifier is Cloudflare's library, and returns its verdict."""
     body = json.dumps({"from": ORIGIN, "says": "verify me"}).encode()
     response = await call_signed("POST", f"{CFBOT_ORIGIN}/verify", signer=buyer.signer, body=body)
     return {"status": response.status_code, "verdict": response.json()}
 
+
+api.include_router(operator)
 
 # A live key source: the middleware reads the keyring on every directory fetch.
 app = DirectoryMiddleware(api, keyring.published, base_url=ORIGIN, max_age=DIRECTORY_MAX_AGE)

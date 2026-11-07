@@ -8,6 +8,7 @@ never would: a tampered body, a replay, a key the directory doesn't list.
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import ssl
 import uuid
@@ -59,10 +60,17 @@ def commit_body(amount: float) -> bytes:
     }).encode()
 
 
+def _operator_key(request: httpx.Request) -> None:
+    """Adds the operator key to the agents' own controls, which the runner reaches over plain http."""
+    if request.url.scheme == "http":
+        request.headers["X-Operator-Key"] = os.environ["OPERATOR_KEY"]
+
+
 @pytest.fixture
 def web():
     """A client that trusts the public roots plus the demo CA, as every container does."""
-    with httpx.Client(verify=ssl.create_default_context(), timeout=30) as client:
+    with httpx.Client(verify=ssl.create_default_context(), timeout=30,
+                      event_hooks={"request": [_operator_key]}) as client:
         yield client
 
 

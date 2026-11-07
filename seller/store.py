@@ -126,6 +126,12 @@ class Store:
         ).fetchone()
         return dict(row) if row else None
 
+    def principal(self, principal_id: str) -> dict[str, Any] | None:
+        row = self.db.execute(
+            "SELECT id, kind, legal_name, domain FROM principals WHERE id = ?", (principal_id,)
+        ).fetchone()
+        return dict(row) if row else None
+
     def principal_for_origin(self, origin: str) -> dict[str, Any] | None:
         return self._principal_where("origin", origin)
 

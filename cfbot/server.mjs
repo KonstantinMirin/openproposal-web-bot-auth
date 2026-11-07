@@ -8,10 +8,10 @@
  * - POST /verify checks the caller's signature with Cloudflare's verify(),
  *   after fetching and checking the caller's key directory.
  *
- * The /run/ routes are this agent's operator controls; the TLS front doesn't
- * route them.
+ * The /run/ routes are this agent's operator controls. No front routes them,
+ * and each call carries X-Operator-Key, which must equal OPERATOR_KEY.
  */
-import { createHash, generateKeyPairSync } from 'node:crypto';
+import { createHash, generateKeyPairSync, timingSafeEqual } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { dirname } from 'node:path';
@@ -25,6 +25,7 @@ const SELLER = process.env.SELLER_ORIGIN ?? 'https://seller.wba-demo.noetis.dev'
 const KEY_PATH = process.env.CFBOT_KEY ?? '/data/cfbot-key.jwk';
 const DIRECTORY_MEDIA_TYPE = 'application/http-message-signatures-directory+json';
 const LIFETIME = 300;
+const OPERATOR_KEY = process.env.OPERATOR_KEY ?? '';
 
 // The key is minted on first boot. No other party is configured with it.
 function loadOrCreateKey(path) {
@@ -37,6 +38,13 @@ function loadOrCreateKey(path) {
 const key = loadOrCreateKey(KEY_PATH);
 const signer = await signerFromJWK(key);
 const { d, ...publicKey } = key;
+
+// An agent without OPERATOR_KEY refuses every operator call.
+function isOperator(req) {
+  const sent = Buffer.from(String(req.headers['x-operator-key'] ?? ''));
+  const expected = Buffer.from(OPERATOR_KEY);
+  return expected.length > 0 && sent.length === expected.length && timingSafeEqual(sent, expected);
+}
 
 const digest = body => `sha-256=:${createHash('sha256').update(body).digest('base64')}:`;
 const fieldsOf = headers => Object.entries(headers).map(([name, value]) => ({ name: name.toLowerCase(), value }));
@@ -173,6 +181,7 @@ createServer(async (req, res) => {
       const verdict = await verifyRequest(req, body);
       return json(res, verdict.ok ? 200 : 403, verdict);
     }
+    if (pathname.startsWith('/run/') && !isOperator(req)) return json(res, 403, { error: 'operator key required' });
     const proposal = searchParams.get('proposal_id') ?? 'demo-wba-1';
     if (req.method === 'POST' && pathname === '/run/whoami') return json(res, 200, await signedFetch('GET', `${SELLER}/whoami`));
     if (req.method === 'POST' && pathname === '/run/read') return json(res, 200, await signedFetch('GET', `${SELLER}/proposals/${proposal}`));
