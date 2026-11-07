@@ -1,0 +1,47 @@
+[project]
+name = "openproposal-web-bot-auth"
+version = "0.1.0"
+description = "Demo: bearer tokens and Web Bot Auth signatures as credentials at one identity boundary, in front of OpenProposal offer acceptance"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+dependencies = [
+    # The Web Bot Auth module: signing, verification, the key directory, fetches.
+    "iab-agentic-primitives[wba]",
+    # The generated OpenProposal types.
+    "openproposal-sdk",
+    "fastapi>=0.115",
+    "uvicorn>=0.32",
+    "httpx>=0.28.1,<1",
+    "pydantic>=2.11,<3",
+    # RFC 8785 canonical JSON, the record_digest input (OpenProposal § 4.1.1).
+    "rfc8785>=0.1.4",
+    # The Public Suffix List, read offline, for the attribution rule (§ 4.1.2).
+    "tldextract>=5.1",
+    "idna>=3.7,<4",
+    # YAML 1.2, the schema § 4.1.1 names for a document carried as YAML.
+    "ruamel.yaml>=0.18",
+]
+
+[dependency-groups]
+dev = ["pytest>=8", "ruff>=0.8"]
+
+[tool.uv.sources]
+# A path dependency on the library checkout next to this repository. The same
+# relative layout holds inside the Docker build (see e2e/Dockerfile).
+iab-agentic-primitives = { path = "../iab-agentic-primitives", editable = true }
+openproposal-sdk = { path = "vendor/openproposal-sdk", editable = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["demo_types", "shared", "seller", "buyer"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = ["vendor"]

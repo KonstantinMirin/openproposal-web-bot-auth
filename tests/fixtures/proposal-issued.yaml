@@ -1,0 +1,194 @@
+# OpenProposal 3.0 — Example: Issued proposal, partly agreed (spec § 6.12)
+# Illustrative only. Seller names and rates are fictional. The seller issues this
+# proposal to Agency A from version 2 of the shared proposal in examples/proposal.yaml.
+# One line item is agreed at version 1. The seller then revises the other, so the
+# proposal is at version 2 and the entries still name version 1. A party verifies them
+# over version 1, restricted to their line_item_ids (§ 4.1.2).
+proposal_id:       "examplepub-agencya-q4-2026-omni"
+version:           2
+spec_version:      "3.0"
+seller:            { domain: "examplepub.example", legal_name: "Example Publisher US",
+                     registry_id: "reg:examplepub-digital" }
+buyer:             { domain: "agency-a.example", legal_name: "Agency A LLC" }
+type:              standard
+issued_from:       { proposal_id: "examplepub-us-q4-2026-omni", version: 2 }
+status:            published           # derived: one line item remains offered (§ 4.3.3)
+offer_window:      { start: "2026-10-01T00:00:00Z", end: "2026-12-31T23:59:59Z" }
+
+description: >
+  Display and CTV line items for Agency A, issued from the Q4 omnichannel proposal.
+
+assent:
+  - { role: commitment, version: 1,
+      record_digest: "sha256:72e0993149a037d841e7b6611abd5abd7cff810151c211ce04653862f1f05aed",
+      line_item_ids: ["business-daily-display"],
+      at: "2026-10-05T10:14:03Z",
+      idempotency_key: "agency-a-camp1-business-daily-display-8f42c1a9" }
+  - { role: acceptance, version: 1,
+      record_digest: "sha256:72e0993149a037d841e7b6611abd5abd7cff810151c211ce04653862f1f05aed",
+      line_item_ids: ["business-daily-display"],
+      at: "2026-10-05T10:31:47Z" }
+
+negotiation_history:
+  - { version: 1, actor: seller, action: published, paths: [],
+      at: "2026-10-04T09:00:00Z" }
+  - { version: 2, actor: seller, action: published,
+      paths: [{ line_item_id: "weather-app-ctv", pointer: "/materials_due" }],
+      at: "2026-10-06T16:20:00Z" }
+
+# Outside record_digest; the terms stay as agreed. The buyer gives notice under the
+# option in effect, so the effective date is the later of 2026-11-30 and 2026-10-22.
+change_requests:
+  - { id: "agency-a-cancel-0001",
+      baseline: { proposal_id: "examplepub-agencya-q4-2026-omni", version: 1,
+                  line_item_id: "business-daily-display" },
+      actor: buyer, at: "2026-10-15T15:20:00Z",
+      accountid: "23873345", orderid: "345301", lineid: "778412", requesterid: "7987654",
+      cancellation: { option_id: "notice-7d", notice_received_at: "2026-10-15T15:20:00Z",
+                      requested_effective_at: "2026-11-30T23:59:59Z", cancelled_share: 0.5 },
+      comments: "Cancel half of what remains from the end of November." }
+
+line_items:
+  - line_item_id:   "business-daily-display"
+    status:         agreed
+    channel:        display
+    properties:
+      available:    [{ id: "business-daily", domains: ["business-daily.example"],
+                       child_audience: general, seller_relationship: owner,
+                       seller_accounts: [{ asi: "ssp-a.example", sid: "pub-1001" }] }]
+      included:     ["business-daily"]
+    buyer_supplied:
+      suppression_allowed: true
+      suppression_list:    { list_id: "agency-a-suppress-q4", source: "advertiser_crm", size: 340000,
+                             match_method: hashed_email }
+    accepted_exclusions:
+      types:
+        domains:  { enforcement: pre_serve, max_entries: 5000 }
+        keywords: { enforcement: best_effort, max_entries: 500 }
+    exclusions:                        # supplied by the buyer
+      domains:  ["example-gambling.example"]
+      keywords: { url: "https://agency-a.example/lists/keywords-2026-10.json",
+                  digest: "sha256:ca833e169e39bcaae9fc5b74f8dd3cfddf5b1c4158b6bc19bb3ae9112a347b06" }
+    formats:
+      available:    ["display/300x250", "display/970x250"]
+      included:     ["display/300x250"]
+      deltas:       { "display/970x250": { delta_cpm: 3.00 } }
+      selected:     ["display/300x250", "display/970x250"]   # the buyer's write
+    format_specs:
+      "display/300x250":
+        spec_ref: "registry.example/display/300x250@1"
+        spec:         { w: 300, h: 250 }
+      "display/970x250":
+        spec_ref: "registry.example/display/970x250@1"
+        spec:         { w: 970, h: 250 }
+    creative_delivery: { method: buyer_hosted, other_protocols: [javascript_tag], secure_required: true }
+    geo:
+      allowed:      ["US"]
+      default:      { include: ["US"] }
+      value:        { include: ["US"], exclude: ["US-TX"] }  # the buyer's write
+    frequency_cap:  { count: { min: 1, max: 5, default: 3, value: 4 }, period: day, per: device }
+    time_zone:      "America/New_York"
+    pricing:
+      # agreed_rate: (24.00 + 3.00) x (1 + 0.02) = 27.54 (§ 5.6)
+      - { pricing_id: "bd-cpm-usd", cost_method: CPM, list_rate: 24.00, agreed_rate: 27.54,
+          price_valid_until: "2026-11-15T23:59:59Z", currency: USD, price_type: 3 }
+      - { pricing_id: "bd-cpm-eur", cost_method: CPM, list_rate: 22.00,
+          price_valid_until: "2026-11-15T23:59:59Z", currency: EUR, price_type: 3 }
+    commitment_bounds: { spend: { min: 10000.00, max: 500000.00 },
+                         earliest_start: "2026-10-05T00:00:00Z", latest_end: "2026-12-31T23:59:59Z" }
+    cancellation_policy:
+      available:
+        - { id: "notice-14d", notice_duration: "P14D", max_share: 1, fees: [{ calculation: none }] }
+        - { id: "notice-7d", notice_duration: "P7D", max_share: 1, fees: [{ calculation: none }] }
+      included:     ["notice-14d"]
+      deltas:       { "notice-7d": { delta_fraction: 0.02 } }
+      max_select:   1
+      selected:     ["notice-7d"]                            # the buyer's write
+    controlling_measurement:
+      available:    [{ id: seller-count, counted_by: seller,
+                       discrepancy_threshold: 0.10, final_after: "P10D" }]
+      included:     ["seller-count"]
+      max_select:   1
+    commitment:
+      pricing_id:      "bd-cpm-usd"
+      basis:           spend
+      amount:          80000.00
+      flight: { start: "2026-10-12T00:00:00Z", end: "2026-12-21T23:59:59Z" }
+      advertisers:     [{ domain: "brand-a.example" }]
+      derived_units:   2904865             # derived: 80000.00 / 27.54 × 1000
+    hold_terms:     { available: true, duration: "P7D" }
+    transaction_mechanism:
+      available:  [{ id: programmatic_guaranteed, delivery_type: guaranteed }]
+      included:   ["programmatic_guaranteed"]
+      max_select: 1
+    deal_origin:   "adserver.example"
+    buyer_requirements:
+      seats_expected: true
+      allowed_dsps:  ["dsp-a.example", "dsp-b.example"]
+      seats:         { dsp: "dsp-a.example", ids: ["seat-99812", "seat-99813"] }   # the buyer's write
+      seat_owner:    { domain: "agency-a.example", legal_name: "Agency A LLC" }      # the buyer's write
+    visibility:    named
+    eligible_buyers: ["agency-a.example"]
+    external_references:
+      - { system: "orders.examplepub.example", id: "345301", reference_type: order }
+      - { system: "orders.examplepub.example", id: "778412", reference_type: line }
+      - { system: "adserver.example", id: "ep-agency-a-bd-q4", reference_type: deal }
+
+  - line_item_id:   "weather-app-ctv"
+    status:         published
+    channel:        ctv
+    properties:
+      available:    [{ id: "weather-app",
+                       apps: [{ store: roku_channel_store, bundle: "000000",
+                                developer_domain: "weather-app.example" }],
+                       child_audience: general, seller_relationship: owner,
+                       seller_accounts: [{ asi: "ssp-a.example", sid: "pub-1001" }] }]
+      included:     ["weather-app"]
+    placement:      { plcmt: 1 }          # Instream (1) (§ 5.2)
+    formats:
+      available:    ["ctv/instream-15s"]
+      included:     ["ctv/instream-15s"]
+    format_specs:
+      "ctv/instream-15s":
+        spec_ref: "registry.example/ctv/instream-15s@1"
+        spec:                               # copied from version 1; values illustrative
+          duration:    { nominal_s: 15, tolerance_ms: 500 }
+          source:      vast_mezzanine
+          mezzanine:   { required_for: [ssai], min_resolution: "1920x1080" }
+          loudness:    { standard: atsc_a85, target: -24, tolerance_db: 2 }
+          creative_id: { universal_ad_id: required }
+    creative_delivery: { method: seller_hosted, protocols: [13], secure_required: true }   # VAST 4.2 (13)
+    materials_due:  { at: "2026-10-20T23:59:59Z" }   # version 1 had "2026-10-13T23:59:59Z"
+    pricing:
+      - { pricing_id: "ctv-pg-cpm-usd", cost_method: CPM, list_rate: 45.00,
+          price_valid_until: "2026-12-01T23:59:59Z", currency: USD,
+          price_type: 3 }                  # Fixed Price
+    commitment_bounds: { spend: { min: 25000.00 } }
+    controlling_measurement:
+      available:    [{ id: seller-count, counted_by: seller,
+                       discrepancy_threshold: 0.10, final_after: "P10D" }]
+      included:     ["seller-count"]
+      max_select:   1
+    hold_terms:     { available: true, duration: "P14D" }
+    hold:                                # granted on version 1, re-offered at version 2
+      status:       held
+      version:      2
+      requested_terms:
+        commitment:
+          basis:    spend
+          amount:   160000.00
+          flight:   { start: "2026-11-02T00:00:00Z", end: "2026-12-21T23:59:59Z" }
+          advertisers: [{ domain: "brand-a.example" }]
+        properties: { selected: ["weather-app"] }
+      held_availability: { unit: impressions, computed_at: "2026-10-06T16:20:00Z",
+                           window: { start: "2026-11-02T00:00:00Z", end: "2026-12-21T23:59:59Z" },
+                           certainty: reservable, quantity: 3555555 }
+      position:     1
+      valid_until:  "2026-10-20T00:00:00Z"
+    transaction_mechanism:
+      available:  [{ id: programmatic_guaranteed, delivery_type: guaranteed }]
+      included:   ["programmatic_guaranteed"]
+      max_select: 1
+    deal_origin:   "ssp-a.example"
+    visibility:    named
+    eligible_buyers: ["agency-a.example"]

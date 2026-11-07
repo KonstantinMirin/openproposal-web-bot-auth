@@ -1,0 +1,169 @@
+# OpenProposal 3.0 — Example: Agreed proposal (spec § 6.8)
+# Illustrative only. Seller names and rates are fictional. Both line items are
+# agreed at version 2, after the seller countered a later materials_due.
+# record_digest recomputes from this document under § 4.1.1, and it covers the
+# digest of each document in terms_refs[], so the entries bind those exact bytes.
+proposal_id:       "examplepub-agencya-custom-q4-2026"
+version:           2
+spec_version:      "3.0"
+seller:            { domain: "examplepub.example", legal_name: "Example Publisher US",
+                     registry_id: "reg:examplepub-digital" }
+buyer:             { domain: "agency-a.example", legal_name: "Agency A LLC" }
+type:              custom
+brief_id:          "agency-a-brief-q4-2026"
+status:            agreed              # derived: no line item remains offered (§ 4.3.3)
+offer_window:      { start: "2026-09-14T00:00:00Z", end: "2026-12-31T23:59:59Z" }
+
+description: >
+  Display and CTV package for Agency A, built from its brief.
+
+assent:
+  - { role: commitment, version: 2,
+      record_digest: "sha256:a9290958d7f148d212b552b51b6cc3ccca86edbc817f2058252b3ee9d7d3a10a",
+      line_item_ids: ["business-daily-display", "weather-app-ctv"],
+      at: "2026-09-22T10:14:03Z",
+      idempotency_key: "agency-a-camp1-q4-2026-5d10e2c7" }
+  - { role: acceptance, version: 2,
+      record_digest: "sha256:a9290958d7f148d212b552b51b6cc3ccca86edbc817f2058252b3ee9d7d3a10a",
+      line_item_ids: ["business-daily-display", "weather-app-ctv"],
+      at: "2026-09-22T10:31:47Z" }
+
+negotiation_history:
+  - { version: 1, actor: seller, action: published, paths: [],
+      at: "2026-09-14T09:00:00Z" }
+  - { version: 1, actor: buyer, action: requested,
+      paths: [{ line_item_id: "business-daily-display", pointer: "/materials_due",
+                requested_value: { materials_due: { at: "2026-10-01T23:59:59Z" } } }],
+      at: "2026-09-14T09:02:11Z" }
+  - { version: 2, actor: seller, action: countered,     # another value, version 2
+      paths: [{ line_item_id: "business-daily-display", pointer: "/materials_due" }],
+      at: "2026-09-14T09:40:05Z" }
+
+# Changes requested after agreed. Outside record_digest; the terms stay as agreed.
+# The first line item has an OpenDirect reservation. The second is a deal with no
+# Order, so its entry has no Order keys.
+change_requests:
+  - { id: "67853",
+      baseline: { proposal_id: "examplepub-agencya-custom-q4-2026", version: 2,
+                  line_item_id: "business-daily-display" },
+      actor: buyer, at: "2026-11-02T15:20:00Z",
+      accountid: "23873345", orderid: "345233", lineid: "778120",
+      requesterid: "7987654", status: PENDING,
+      comments: "Shorten the flight to end on 2026-12-07." }
+  - { id: "agency-a-change-0002",
+      baseline: { proposal_id: "examplepub-agencya-custom-q4-2026", version: 2,
+                  line_item_id: "weather-app-ctv" },
+      actor: buyer, at: "2026-11-03T09:05:00Z",
+      comments: "Shorten the flight to end on 2026-12-14." }
+
+line_items:
+  - line_item_id:   "business-daily-display"
+    status:         agreed
+    channel:        display
+    properties:
+      available:    [{ id: "business-daily", domains: ["business-daily.example"],
+                       child_audience: general, seller_relationship: owner,
+                       seller_accounts: [{ asi: "ssp-a.example", sid: "pub-1001" }] }]
+      included:     ["business-daily"]
+    formats:
+      available:    ["display/300x250"]
+      included:     ["display/300x250"]
+    format_specs:
+      "display/300x250":
+        spec_ref: "registry.example/display/300x250@1"
+        spec:         { w: 300, h: 250 }
+    creative_delivery: { method: buyer_hosted, other_protocols: [javascript_tag], secure_required: true }
+    materials_due:  { at: "2026-09-28T23:59:59Z" }   # version 1 had "2026-09-24T23:59:59Z"
+    pricing:
+      - { pricing_id: "bd-cpm-usd", cost_method: CPM, list_rate: 24.00, agreed_rate: 24.00,
+          min_rate: 21.00, price_valid_until: "2026-11-15T23:59:59Z", currency: USD,
+          price_type: 3 }
+    commitment_bounds: { spend: { min: 10000.00, max: 500000.00 },
+                         earliest_start: "2026-10-05T00:00:00Z", latest_end: "2026-12-31T23:59:59Z" }
+    controlling_measurement:
+      available:    [{ id: seller-count, counted_by: seller,
+                       discrepancy_threshold: 0.10, final_after: "P10D" }]
+      included:     ["seller-count"]
+      max_select:   1
+    commitment:
+      basis:           spend
+      amount:          80000.00
+      flight: { start: "2026-10-06T00:00:00Z", end: "2026-12-21T23:59:59Z" }
+      advertisers:     [{ domain: "brand-a.example" }]
+      derived_units:   3333333
+    hold_terms:     { available: true, duration: "P7D" }
+    transaction_mechanism:
+      available:  [{ id: programmatic_guaranteed, delivery_type: guaranteed }]
+      included:   ["programmatic_guaranteed"]
+      max_select: 1
+    deal_origin:   "adserver.example"
+    buyer_requirements:
+      seats: { dsp: "dsp-a.example", ids: ["seat-99812", "seat-99813"] }   # the buyer's write
+    visibility:    named
+    eligible_buyers: ["agency-a.example"]
+    terms_refs:
+      - { url: "https://examplepub.example/legal/io-terms-2026.pdf",
+          digest: "sha256:83e44f6fa723c35fef1b3528b16cc13a8a19ee34a32b658f6d3cc243ce12592e", version: "2026.1" }
+      - { url: "https://examplepub.example/legal/agency-a-q4-addendum.pdf",
+          digest: "sha256:ab4cac3cb240b5c6eec3d0bf40e8c0b0f21c2026837865d88a5c941702f2eeca" }
+    external_references:
+      - { system: "orders.examplepub.example", id: "345233", reference_type: order }
+      - { system: "orders.examplepub.example", id: "778120", reference_type: line }
+      - { system: "adserver.example", id: "ep-agency-a-display-q4", reference_type: deal }
+
+  - line_item_id:   "weather-app-ctv"
+    status:         agreed
+    channel:        ctv
+    properties:
+      available:    [{ id: "weather-app",
+                       apps: [{ store: roku_channel_store, bundle: "000000",
+                                developer_domain: "weather-app.example" }],
+                       child_audience: general, seller_relationship: owner,
+                       seller_accounts: [{ asi: "ssp-a.example", sid: "pub-1001" }] }]
+      included:     ["weather-app"]
+    placement:      { plcmt: 1 }          # Instream (1) (§ 5.2)
+    formats:
+      available:    ["ctv/instream-15s"]
+      included:     ["ctv/instream-15s"]
+    format_specs:
+      "ctv/instream-15s":
+        spec_ref: "registry.example/ctv/instream-15s@1"
+        spec:                               # copied from version 1; values illustrative
+          duration:    { nominal_s: 15, tolerance_ms: 500 }
+          source:      vast_mezzanine
+          mezzanine:   { required_for: [ssai], min_resolution: "1920x1080" }
+          loudness:    { standard: atsc_a85, target: -24, tolerance_db: 2 }
+          creative_id: { universal_ad_id: required }
+    creative_delivery: { method: seller_hosted, protocols: [13], secure_required: true }   # VAST 4.2 (13)
+    pricing:
+      - { pricing_id: "ctv-pa-cpm-usd", cost_method: CPM, list_rate: 45.00, agreed_rate: 45.00, min_rate: 39.60,
+          price_valid_until: "2026-12-01T23:59:59Z", currency: USD,
+          price_type: 1 }                  # First Price
+    commitment_bounds: { spend: { min: 25000.00 } }
+    controlling_measurement:
+      available:    [{ id: seller-count, counted_by: seller,
+                       discrepancy_threshold: 0.10, final_after: "P10D" }]
+      included:     ["seller-count"]
+      max_select:   1
+    commitment:
+      basis:           spend
+      amount:          160000.00
+      flight: { start: "2026-10-06T00:00:00Z", end: "2026-12-21T23:59:59Z" }
+      advertisers:     [{ domain: "brand-a.example" }]
+    hold_terms:     { available: false }   # private_auction: no inventory reserved
+    transaction_mechanism:
+      available:  [{ id: private_auction, delivery_type: non_guaranteed }]
+      included:   ["private_auction"]
+      max_select: 1
+    deal_origin:   "ssp-a.example"
+    buyer_requirements:
+      seats: { dsp: "dsp-a.example", ids: ["seat-99812", "seat-99813"] }   # the buyer's write
+    visibility:    named
+    eligible_buyers: ["agency-a.example"]
+    terms_refs:
+      - { url: "https://examplepub.example/legal/io-terms-2026.pdf",
+          digest: "sha256:83e44f6fa723c35fef1b3528b16cc13a8a19ee34a32b658f6d3cc243ce12592e", version: "2026.1" }
+      - { url: "https://examplepub.example/legal/agency-a-q4-addendum.pdf",
+          digest: "sha256:ab4cac3cb240b5c6eec3d0bf40e8c0b0f21c2026837865d88a5c941702f2eeca" }
+    external_references:
+      - { system: "ssp-a.example", id: "ep-agency-a-ctv-q4", reference_type: deal }
