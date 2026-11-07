@@ -21,7 +21,9 @@ HEADER = "X-Operator-Key"
 def require_operator(x_operator_key: Annotated[str | None, Header()] = None) -> None:
     """A FastAPI dependency: `403` unless the call carries this agent's operator key."""
     expected = os.environ.get("OPERATOR_KEY", "")
-    if not expected or x_operator_key is None or not hmac.compare_digest(
-        x_operator_key.encode(), expected.encode()
+    if (
+        not expected
+        or x_operator_key is None
+        or not hmac.compare_digest(x_operator_key.encode(), expected.encode())
     ):
         raise HTTPException(403, "operator key required")

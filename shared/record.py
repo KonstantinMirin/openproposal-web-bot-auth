@@ -89,9 +89,13 @@ def binding_record(doc: dict[str, Any], line_item_ids: list[str]) -> dict[str, A
             for key in ("line_items", "add_ons"):
                 if key in package:
                     package[key] = [i for i in package[key] if i["line_item_id"] in named]
-        record["packages"] = [p for p in record["packages"] if p.get("line_items") or p.get("add_ons")]
+        record["packages"] = [
+            p for p in record["packages"] if p.get("line_items") or p.get("add_ons")
+        ]
     else:
-        record["line_items"] = [i for i in record.get("line_items", []) if i["line_item_id"] in named]
+        record["line_items"] = [
+            i for i in record.get("line_items", []) if i["line_item_id"] in named
+        ]
     for path in REMOVED_PATHS:
         parts = path.removeprefix("$.").split(".")
         _remove(record, parts)
@@ -150,7 +154,9 @@ def agreed_rate(item: dict[str, Any], entry: dict[str, Any]) -> float:
     return float(rate.quantize(Decimal("0.000001"), rounding=ROUND_HALF_UP))
 
 
-def _write_leaves(writes: dict[str, Any], item: dict[str, Any]) -> list[tuple[tuple[str, ...], Any]]:
+def _write_leaves(
+    writes: dict[str, Any], item: dict[str, Any]
+) -> list[tuple[tuple[str, ...], Any]]:
     """The (path, value) pairs a `LineItemWrites` sets; raises `WriteError` for any other path."""
     leaves: list[tuple[tuple[str, ...], Any]] = []
 

@@ -48,11 +48,23 @@ def main() -> None:
         .not_valid_before(now)
         .not_valid_after(now + dt.timedelta(days=30))
         .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
-        .add_extension(x509.KeyUsage(digital_signature=True, key_cert_sign=True, crl_sign=True,
-                                     content_commitment=False, key_encipherment=False,
-                                     data_encipherment=False, key_agreement=False,
-                                     encipher_only=False, decipher_only=False), critical=True)
-        .add_extension(x509.SubjectKeyIdentifier.from_public_key(ca_key.public_key()), critical=False)
+        .add_extension(
+            x509.KeyUsage(
+                digital_signature=True,
+                key_cert_sign=True,
+                crl_sign=True,
+                content_commitment=False,
+                key_encipherment=False,
+                data_encipherment=False,
+                key_agreement=False,
+                encipher_only=False,
+                decipher_only=False,
+            ),
+            critical=True,
+        )
+        .add_extension(
+            x509.SubjectKeyIdentifier.from_public_key(ca_key.public_key()), critical=False
+        )
         .sign(ca_key, hashes.SHA256())
     )
     leaf_key = ec.generate_private_key(ec.SECP256R1())
@@ -64,22 +76,28 @@ def main() -> None:
         .serial_number(x509.random_serial_number())
         .not_valid_before(now)
         .not_valid_after(now + dt.timedelta(days=30))
-        .add_extension(x509.SubjectAlternativeName([x509.DNSName(WILDCARD), x509.DNSName(APEX)]), critical=False)
+        .add_extension(
+            x509.SubjectAlternativeName([x509.DNSName(WILDCARD), x509.DNSName(APEX)]),
+            critical=False,
+        )
         .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
         .add_extension(x509.ExtendedKeyUsage([ExtendedKeyUsageOID.SERVER_AUTH]), critical=False)
-        .add_extension(x509.AuthorityKeyIdentifier.from_issuer_public_key(ca_key.public_key()),
-                       critical=False)
+        .add_extension(
+            x509.AuthorityKeyIdentifier.from_issuer_public_key(ca_key.public_key()), critical=False
+        )
         .sign(ca_key, hashes.SHA256())
     )
     pem = serialization.Encoding.PEM
     ca_pem = ca.public_bytes(pem)
     (OUT / "ca.pem").write_bytes(ca_pem)
     (OUT / "front.pem").write_bytes(leaf.public_bytes(pem) + ca_pem)
-    (OUT / "front.key").write_bytes(leaf_key.private_bytes(
-        pem, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()))
+    (OUT / "front.key").write_bytes(
+        leaf_key.private_bytes(pem, serialization.PrivateFormat.PKCS8, serialization.NoEncryption())
+    )
     (OUT / "bundle.pem").write_bytes(Path(certifi.where()).read_bytes() + b"\n" + ca_pem)
-    (OUT / "demo.env").write_text(f"DEMO_BEARER_TOKEN={secrets.token_urlsafe(32)}\n"
-                                  f"OPERATOR_KEY={secrets.token_urlsafe(32)}\n")
+    (OUT / "demo.env").write_text(
+        f"DEMO_BEARER_TOKEN={secrets.token_urlsafe(32)}\nOPERATOR_KEY={secrets.token_urlsafe(32)}\n"
+    )
     print(f"wrote {OUT}")
 
 

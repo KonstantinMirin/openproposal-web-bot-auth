@@ -55,7 +55,6 @@ CREATE TABLE IF NOT EXISTS evidence (
 """
 
 
-
 class Store:
     def __init__(self, path: str | Path) -> None:
         Path(path).parent.mkdir(parents=True, exist_ok=True)
@@ -64,7 +63,9 @@ class Store:
         self.db.execute("PRAGMA foreign_keys = ON")
         self.db.executescript(DIRECTORIES_SCHEMA + SCHEMA)
 
-    def add_seller(self, origin: str, domain: str, legal_name: str, bearer_token: str | None) -> None:
+    def add_seller(
+        self, origin: str, domain: str, legal_name: str, bearer_token: str | None
+    ) -> None:
         self.db.execute(
             "INSERT OR IGNORE INTO sellers (origin, domain, legal_name, bearer_token) VALUES (?, ?, ?, ?)",
             (origin, domain, legal_name, bearer_token),
@@ -81,28 +82,55 @@ class Store:
             (seller_origin, proposal_id, json.dumps(sorted(line_item_ids))),
         ).fetchone()
 
-    def add_commit(self, seller_origin: str, proposal_id: str, line_item_ids: list[str],
-                   idempotency_key: str, body: bytes, digest_input: bytes) -> sqlite3.Row:
+    def add_commit(
+        self,
+        seller_origin: str,
+        proposal_id: str,
+        line_item_ids: list[str],
+        idempotency_key: str,
+        body: bytes,
+        digest_input: bytes,
+    ) -> sqlite3.Row:
         cursor = self.db.execute(
             "INSERT INTO commits (seller_origin, proposal_id, line_item_ids, idempotency_key, body,"
             " digest_input, state) VALUES (?, ?, ?, ?, ?, ?, 'pending')",
-            (seller_origin, proposal_id, json.dumps(sorted(line_item_ids)), idempotency_key, body,
-             digest_input),
+            (
+                seller_origin,
+                proposal_id,
+                json.dumps(sorted(line_item_ids)),
+                idempotency_key,
+                body,
+                digest_input,
+            ),
         )
         return self.db.execute("SELECT * FROM commits WHERE id = ?", (cursor.lastrowid,)).fetchone()
 
-    def settle_commit(self, commit_id: int, state: str, *, entries: list | None = None,
-                      errors: list | None = None) -> None:
+    def settle_commit(
+        self, commit_id: int, state: str, *, entries: list | None = None, errors: list | None = None
+    ) -> None:
         self.db.execute(
             "UPDATE commits SET state = ?, entries = ?, errors = ? WHERE id = ?",
-            (state, json.dumps(entries) if entries else None, json.dumps(errors) if errors else None,
-             commit_id),
+            (
+                state,
+                json.dumps(entries) if entries else None,
+                json.dumps(errors) if errors else None,
+                commit_id,
+            ),
         )
 
-    def record_evidence(self, *, commit_id: int, origin: str, keyid: str, attributed: bool,
-                        request: tuple[str, str, list[tuple[str, str]], bytes], status: int,
-                        headers: list[tuple[str, str]], body: bytes,
-                        directory: VerifiedDirectory | None) -> int:
+    def record_evidence(
+        self,
+        *,
+        commit_id: int,
+        origin: str,
+        keyid: str,
+        attributed: bool,
+        request: tuple[str, str, list[tuple[str, str]], bytes],
+        status: int,
+        headers: list[tuple[str, str]],
+        body: bytes,
+        directory: VerifiedDirectory | None,
+    ) -> int:
         """Stores the seller's signed answer as received, with the request it is bound to."""
         method, url, request_headers, request_body = request
         digest = save_directory(self.db, directory)
@@ -110,7 +138,19 @@ class Store:
             "INSERT INTO evidence (commit_id, origin, keyid, attributed, request_method, request_url,"
             " request_headers, request_body, status, headers, body, directory_digest)"
             " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (commit_id, origin, keyid, int(attributed), method, url, json.dumps(request_headers),
-             request_body, status, json.dumps(headers), body, digest),
+            (
+                commit_id,
+                origin,
+                keyid,
+                int(attributed),
+                method,
+                url,
+                json.dumps(request_headers),
+                request_body,
+                status,
+                json.dumps(headers),
+                body,
+                digest,
+            ),
         )
         return cursor.lastrowid

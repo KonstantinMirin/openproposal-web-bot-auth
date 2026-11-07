@@ -46,8 +46,11 @@ DIRECTORY_MAX_AGE = int(os.environ.get("WBA_DIRECTORY_MAX_AGE", "300"))
 # The seller mints its key on first boot. No buyer is ever configured with it.
 key = Ed25519Key.load_or_create(DATA / "wba-key.jwk")
 store = Store(DATA / "seller.db")
-seed(store, buyer_origin=os.environ.get("DEMO_BUYER_ORIGIN", "https://buyer.wba-demo.noetis.dev"),
-     bearer_token=os.environ.get("DEMO_BEARER_TOKEN"))
+seed(
+    store,
+    buyer_origin=os.environ.get("DEMO_BUYER_ORIGIN", "https://buyer.wba-demo.noetis.dev"),
+    bearer_token=os.environ.get("DEMO_BEARER_TOKEN"),
+)
 
 api = FastAPI(title="Demo seller")
 api.state.store = store
@@ -120,6 +123,7 @@ class FaultMode(BaseModel):
 
 
 if FAULTS:
+
     @api.put("/test/fault")
     async def set_fault(body: FaultMode) -> dict:
         """TEST ONLY: see seller/faults.py."""

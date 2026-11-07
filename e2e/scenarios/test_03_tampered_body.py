@@ -16,12 +16,21 @@ def test_tampered_body_is_refused_before_the_handler(web, seller_db):
 
     response = web.post(url, content=tampered, headers=headers)
     assert response.status_code == 403
-    assert response.json() == {"refused_at": "identity-boundary", "reason": "content-digest",
-                               "detail": response.json()["detail"]}
+    assert response.json() == {
+        "refused_at": "identity-boundary",
+        "reason": "content-digest",
+        "detail": response.json()["detail"],
+    }
     assert "signature" in response.headers  # refusals are signed too
     assert "accept-signature" in response.headers
 
-    assert seller_db.execute(
-        "SELECT COUNT(*) FROM assent WHERE proposal_id = 'demo-wba-2'").fetchone()[0] == 0
-    assert seller_db.execute(
-        "SELECT COUNT(*) FROM evidence WHERE body = ?", (tampered,)).fetchone()[0] == 0
+    assert (
+        seller_db.execute(
+            "SELECT COUNT(*) FROM assent WHERE proposal_id = 'demo-wba-2'"
+        ).fetchone()[0]
+        == 0
+    )
+    assert (
+        seller_db.execute("SELECT COUNT(*) FROM evidence WHERE body = ?", (tampered,)).fetchone()[0]
+        == 0
+    )

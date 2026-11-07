@@ -28,21 +28,26 @@ def _seller_state(seller_db) -> tuple[list[tuple[str, str]], list[str]]:
         "SELECT role, idempotency_key FROM assent WHERE proposal_id = 'demo-wba-2' ORDER BY id"
     ).fetchall()
     processed = seller_db.execute(
-        "SELECT idempotency_key FROM commits WHERE proposal_id = 'demo-wba-2'").fetchall()
+        "SELECT idempotency_key FROM commits WHERE proposal_id = 'demo-wba-2'"
+    ).fetchall()
     return [(e["role"], e["idempotency_key"]) for e in entries], [p[0] for p in processed]
 
 
 def test_buyer_refuses_unverifiable_responses(web, fault, seller_db, buyer_db):
     accepted = None
-    for mode, reason in [("strip", "response-unsigned"), ("unbound", "response-not-bound"),
-                         ("rebound", "signature-invalid")]:
+    for mode, reason in [
+        ("strip", "response-unsigned"),
+        ("unbound", "response-not-bound"),
+        ("rebound", "signature-invalid"),
+    ]:
         fault(mode)
         outcome = web.post(f"{BUYER_OPERATOR}/commit", json=COMMIT).json()
         assert outcome["state"] == "refused", (mode, outcome)
         assert reason in outcome["detail"], (mode, outcome)
 
         pending = buyer_db.execute(
-            "SELECT * FROM commits WHERE proposal_id = 'demo-wba-2'").fetchall()
+            "SELECT * FROM commits WHERE proposal_id = 'demo-wba-2'"
+        ).fetchall()
         assert [p["state"] for p in pending] == ["pending"]  # one Commit, still unconfirmed
         key = pending[0]["idempotency_key"]
         state = _seller_state(seller_db)

@@ -75,16 +75,28 @@ async def call_seller(
         response = await client.request(method, url, content=body, headers=headers, auth=auth)
     verified = response.extensions["web_bot_auth"]
     return Exchange(
-        method=method, url=url, request_headers=response.request.headers.multi_items(),
-        request_body=body, status=response.status_code, headers=response.headers.multi_items(),
-        body=response.content, verified=verified, keyid=signer.key.kid if signer else None,
+        method=method,
+        url=url,
+        request_headers=response.request.headers.multi_items(),
+        request_body=body,
+        status=response.status_code,
+        headers=response.headers.multi_items(),
+        body=response.content,
+        verified=verified,
+        keyid=signer.key.kid if signer else None,
     )
 
 
-async def call_signed(method: str, url: str, *, signer: RequestSigner, body: bytes = b"",
-                      ) -> httpx.Response:
+async def call_signed(
+    method: str,
+    url: str,
+    *,
+    signer: RequestSigner,
+    body: bytes = b"",
+) -> httpx.Response:
     """A signed request to a peer that doesn't sign its responses, such as cfbot."""
     headers = {"Content-Type": "application/json"} if body else {}
     async with http_client() as client:
-        return await client.request(method, url, content=body, headers=headers,
-                                    auth=WebBotAuth(signer))
+        return await client.request(
+            method, url, content=body, headers=headers, auth=WebBotAuth(signer)
+        )

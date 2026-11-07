@@ -86,7 +86,8 @@ class Commit(Closed):
             if not isinstance(writes.get("commitment"), dict):
                 # ValueError, not TypeError: pydantic turns only ValueError into a validation error.
                 raise ValueError(  # noqa: TRY004
-                    f"writes for {name} carry a commitment object (§ 3.4 LineItemWrites)")
+                    f"writes for {name} carry a commitment object (§ 3.4 LineItemWrites)"
+                )
         return self
 
 

@@ -19,8 +19,14 @@ FIXTURES = Path(__file__).parent / "fixtures"
 @pytest.mark.parametrize(
     ("name", "expected"),
     [
-        ("proposal-issued.yaml", "sha256:72e0993149a037d841e7b6611abd5abd7cff810151c211ce04653862f1f05aed"),
-        ("proposal-agreed.yaml", "sha256:a9290958d7f148d212b552b51b6cc3ccca86edbc817f2058252b3ee9d7d3a10a"),
+        (
+            "proposal-issued.yaml",
+            "sha256:72e0993149a037d841e7b6611abd5abd7cff810151c211ce04653862f1f05aed",
+        ),
+        (
+            "proposal-agreed.yaml",
+            "sha256:a9290958d7f148d212b552b51b6cc3ccca86edbc817f2058252b3ee9d7d3a10a",
+        ),
     ],
 )
 def test_record_digest_reproduces_the_examples(name, expected):

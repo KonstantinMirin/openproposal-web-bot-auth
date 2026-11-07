@@ -41,11 +41,20 @@ SIGNATURE_LIFETIME = int(os.environ.get("WBA_SIGNATURE_LIFETIME", "300"))
 keyring = Keyring(DATA / "keys", rotation_wait=ROTATION_WAIT, signature_lifetime=SIGNATURE_LIFETIME)
 store = Store(DATA / "buyer.db")
 # The buyer knows the seller by its origin only. The token is the bearer flow's credential.
-store.add_seller(os.environ.get("DEMO_SELLER_ORIGIN", "https://seller.wba-demo.noetis.dev"),
-                 "seller.wba-demo.noetis.dev", "Demo Seller Inc.",
-                 os.environ.get("DEMO_BEARER_TOKEN"))
-buyer = Buyer(store, directory_resolver(), keyring, ORIGIN,
-              load_yaml(Path(__file__).parent / "plan.yaml"), signature_lifetime=SIGNATURE_LIFETIME)
+store.add_seller(
+    os.environ.get("DEMO_SELLER_ORIGIN", "https://seller.wba-demo.noetis.dev"),
+    "seller.wba-demo.noetis.dev",
+    "Demo Seller Inc.",
+    os.environ.get("DEMO_BEARER_TOKEN"),
+)
+buyer = Buyer(
+    store,
+    directory_resolver(),
+    keyring,
+    ORIGIN,
+    load_yaml(Path(__file__).parent / "plan.yaml"),
+    signature_lifetime=SIGNATURE_LIFETIME,
+)
 
 api = FastAPI(title="Demo buyer")
 operator = APIRouter(prefix="/operator", dependencies=[Depends(require_operator)])
@@ -68,8 +77,9 @@ async def operator_commit(trigger: Trigger) -> Outcome:
     """Runs the whole flow: read, commit, verify the signed answer, keep the evidence."""
     if not trigger.line_item_ids:
         raise HTTPException(400, "name the line items to commit")
-    return await buyer.commit(trigger.seller, trigger.proposal_id, trigger.line_item_ids,
-                              trigger.credential)
+    return await buyer.commit(
+        trigger.seller, trigger.proposal_id, trigger.line_item_ids, trigger.credential
+    )
 
 
 @operator.post("/read")

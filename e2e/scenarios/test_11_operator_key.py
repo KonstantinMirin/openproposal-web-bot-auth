@@ -26,14 +26,17 @@ def test_operator_controls_refuse_a_call_without_the_key(method, url, key):
     assert response.status_code == 403, response.text
 
 
-@pytest.mark.parametrize("url", [f"{BUYER}/operator/keys", f"{SELLER}/operator/issue",
-                                 f"{CFBOT}/run/whoami"])
+@pytest.mark.parametrize(
+    "url", [f"{BUYER}/operator/keys", f"{SELLER}/operator/issue", f"{CFBOT}/run/whoami"]
+)
 def test_the_front_never_routes_operator_controls(web, url):
     assert web.post(url).status_code == 404
 
 
 def test_the_seller_issues_a_fresh_proposal_with_the_key(web):
-    issued = web.post("http://seller:8000/operator/issue", json={"principal_id": "buyer-wba"}).json()
+    issued = web.post(
+        "http://seller:8000/operator/issue", json={"principal_id": "buyer-wba"}
+    ).json()
     assert issued["proposal_id"].startswith("live-buyer-wba-")
     read = web.post(f"{BUYER_OPERATOR}/read", json={"proposal_id": issued["proposal_id"]}).json()
     assert read["state"] == "read", read

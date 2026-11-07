@@ -58,6 +58,8 @@ class FaultInjection:
             request = HTTPRequest(scope["method"], request_url(scope, self.base_url), fields)
             text = [(k.decode("latin-1"), v.decode("latin-1")) for k, v in headers]
             added = self.signer.sign(start["status"], text, body, request)
-            headers += [(k.lower().encode("latin-1"), v.encode("latin-1")) for k, v in added.items()]
+            headers += [
+                (k.lower().encode("latin-1"), v.encode("latin-1")) for k, v in added.items()
+            ]
         await send({**start, "headers": headers})
         await send({"type": "http.response.body", "body": body})

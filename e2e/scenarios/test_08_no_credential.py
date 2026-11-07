@@ -8,12 +8,19 @@ from conftest import SELLER, commit_body, signed
 
 
 def test_commit_without_a_credential_is_refused(web, seller_db):
-    response = web.post(f"{SELLER}/proposals/demo-wba-2/commit", content=commit_body(160000.0),
-                        headers={"Content-Type": "application/json"})
+    response = web.post(
+        f"{SELLER}/proposals/demo-wba-2/commit",
+        content=commit_body(160000.0),
+        headers={"Content-Type": "application/json"},
+    )
     assert response.status_code == 403
     assert response.json()["errors"][0]["code"] == "not_eligible"
-    assert seller_db.execute(
-        "SELECT COUNT(*) FROM assent WHERE proposal_id = 'demo-wba-2'").fetchone()[0] == 0
+    assert (
+        seller_db.execute(
+            "SELECT COUNT(*) FROM assent WHERE proposal_id = 'demo-wba-2'"
+        ).fetchone()[0]
+        == 0
+    )
 
 
 def test_an_invalid_token_is_refused_not_downgraded(web):
@@ -32,10 +39,15 @@ def test_a_failing_credential_is_refused_before_the_body_is_read(web):
     assert by_token.status_code == 401
     assert by_token.json()["refused_at"] == "identity-boundary"
 
-    by_signature = web.post(url, content=broken, headers=json_type | {"Signature-Input": "garbage("})
+    by_signature = web.post(
+        url, content=broken, headers=json_type | {"Signature-Input": "garbage("}
+    )
     assert by_signature.status_code == 400
     assert by_signature.json() | {"detail": ""} == {
-        "refused_at": "identity-boundary", "reason": "parse", "detail": ""}
+        "refused_at": "identity-boundary",
+        "reason": "parse",
+        "detail": "",
+    }
 
     # With a credential that verifies, the offer logic reads the body and rejects it.
     rejected = web.post(url, content=broken, headers=signed("POST", url, broken))

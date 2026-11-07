@@ -32,8 +32,14 @@ class RotationError(Exception):
 
 
 class Keyring:
-    def __init__(self, directory: Path, *, rotation_wait: float, signature_lifetime: float,
-                 clock: Callable[[], float] = time.time) -> None:
+    def __init__(
+        self,
+        directory: Path,
+        *,
+        rotation_wait: float,
+        signature_lifetime: float,
+        clock: Callable[[], float] = time.time,
+    ) -> None:
         self.directory = directory
         self.rotation_wait = rotation_wait
         self.signature_lifetime = signature_lifetime
@@ -85,8 +91,10 @@ class Keyring:
         state = self._state()
         ready = state["published"].get(kid, 0) + self.rotation_wait
         if self._clock() < ready:
-            raise RotationError(f"{kid} is published; verifiers may not list it for "
-                                f"{ready - self._clock():.0f} s more")
+            raise RotationError(
+                f"{kid} is published; verifiers may not list it for "
+                f"{ready - self._clock():.0f} s more"
+            )
         if kid != state["active"]:
             state["stopped"][state["active"]] = self._clock()
             state["active"] = kid

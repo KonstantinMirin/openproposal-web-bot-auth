@@ -96,8 +96,12 @@ def _bearer(value: str | None) -> str | None:
         return None
     scheme, _, token = value.partition(" ")
     if scheme.lower() != "bearer" or not token.strip():
-        raise Refused(401, "invalid-authorization", "Authorization is not a Bearer token",
-                      headers={"WWW-Authenticate": 'Bearer error="invalid_request"'})
+        raise Refused(
+            401,
+            "invalid-authorization",
+            "Authorization is not a Bearer token",
+            headers={"WWW-Authenticate": 'Bearer error="invalid_request"'},
+        )
     return token.strip()
 
 
@@ -125,27 +129,46 @@ async def resolve_caller(request: Request) -> ResolvedCaller | PublicCaller:
         except WebBotAuthError as e:
             raise Refused(e.status, e.reason, str(e), headers=_hint(e.status, bool(body))) from e
         evidence_id = store.record_evidence(
-            origin=verified.origin, keyid=verified.keyid, method=request.method, url=url,
-            headers=headers, body=body, directory=verified.directory,
+            origin=verified.origin,
+            keyid=verified.keyid,
+            method=request.method,
+            url=url,
+            headers=headers,
+            body=body,
+            directory=verified.directory,
         )
-        signed_by = {"method": "web_bot_auth", "origin": verified.origin, "host": verified.host,
-                     "body_covered": verified.body_covered, "evidence_id": evidence_id}
+        signed_by = {
+            "method": "web_bot_auth",
+            "origin": verified.origin,
+            "host": verified.host,
+            "body_covered": verified.body_covered,
+            "evidence_id": evidence_id,
+        }
         # 3. Resolve it in this seller's own records.
         principal = store.principal_for_origin(verified.origin)
         if principal is None:
             return PublicCaller(credential=Credential(**signed_by))
-        attributes_entries = attributes(verified.host, principal["domain"],
-                                        body_covered=verified.body_covered)
-        return ResolvedCaller(principal=Principal(**principal),
-                              credential=Credential(**signed_by, attributes_entries=attributes_entries))
+        attributes_entries = attributes(
+            verified.host, principal["domain"], body_covered=verified.body_covered
+        )
+        return ResolvedCaller(
+            principal=Principal(**principal),
+            credential=Credential(**signed_by, attributes_entries=attributes_entries),
+        )
 
     if token is not None:
         # 2 and 3. A token is confirmed and resolved by the same lookup.
         principal = store.principal_for_token(token)
         if principal is None:
-            raise Refused(401, "invalid-token", "the bearer token is not valid",
-                          headers={"WWW-Authenticate": 'Bearer error="invalid_token"'})
-        return ResolvedCaller(principal=Principal(**principal), credential=Credential(method="bearer"))
+            raise Refused(
+                401,
+                "invalid-token",
+                "the bearer token is not valid",
+                headers={"WWW-Authenticate": 'Bearer error="invalid_token"'},
+            )
+        return ResolvedCaller(
+            principal=Principal(**principal), credential=Credential(method="bearer")
+        )
 
     return PublicCaller()
 

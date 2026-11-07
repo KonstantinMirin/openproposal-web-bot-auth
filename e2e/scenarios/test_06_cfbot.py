@@ -19,7 +19,8 @@ def test_cfbot_is_identity_established_only(web, seller_db):
 
     # The seller kept the verified request, and the directory it verified against.
     evidence = seller_db.execute(
-        "SELECT * FROM evidence WHERE id = ?", (credential["evidence_id"],)).fetchone()
+        "SELECT * FROM evidence WHERE id = ?", (credential["evidence_id"],)
+    ).fetchone()
     assert evidence["origin"] == CFBOT and evidence["directory_digest"] is not None
 
 
@@ -33,5 +34,9 @@ def test_cfbot_cannot_commit(web, seller_db):
     attempt = web.post(f"{CFBOT_RUN}/commit?proposal_id=demo-wba-2").json()
     assert attempt["status"] == 403
     assert attempt["body"]["errors"][0]["code"] == "not_eligible"
-    assert seller_db.execute(
-        "SELECT COUNT(*) FROM assent WHERE proposal_id = 'demo-wba-2'").fetchone()[0] == 0
+    assert (
+        seller_db.execute(
+            "SELECT COUNT(*) FROM assent WHERE proposal_id = 'demo-wba-2'"
+        ).fetchone()[0]
+        == 0
+    )

@@ -49,11 +49,7 @@ def parse_commit(body: bytes) -> Commit:
 def _issued_to(store: Store, caller: Caller, proposal_id: str) -> dict[str, Any]:
     """The stored proposal, when it is issued to the caller's principal (§ 4.3)."""
     found = store.proposal(proposal_id)
-    if (
-        found is None
-        or not isinstance(caller, ResolvedCaller)
-        or found[0] != caller.principal.id
-    ):
+    if found is None or not isinstance(caller, ResolvedCaller) or found[0] != caller.principal.id:
         # An issued proposal exists only for its buyer (§ 2.4 `not_found`).
         raise OfferError("not_found", f"no proposal {proposal_id} for this caller", retry="none")
     return found[1]
@@ -83,10 +79,13 @@ def proposal_status(document: dict[str, Any]) -> str:
 def _result(store: Store, proposal_id: str, idempotency_key: str) -> CommitResult:
     """§ 5.6.1: the buyer's entry, then each matching entry written after it."""
     entries = [AssentEntry.model_validate(e) for e in store.assent(proposal_id)]
-    start = next(i for i, e in enumerate(entries)
-                 if e.role == "commitment" and e.idempotency_key == idempotency_key)
+    start = next(
+        i
+        for i, e in enumerate(entries)
+        if e.role == "commitment" and e.idempotency_key == idempotency_key
+    )
     first = entries[start]
-    later = [e for e in entries[start + 1:] if e.role != "commitment" and e.matches(first)]
+    later = [e for e in entries[start + 1 :] if e.role != "commitment" and e.matches(first)]
     return CommitResult(entries=[first, *later])
 
 
@@ -99,14 +98,15 @@ def _live_names(assent: list[AssentEntry]) -> set[str]:
     names: set[str] = set()
     for i, entry in enumerate(assent):
         if entry.role == "commitment" and not any(
-            e.role in ("withdrawal", "decline") and e.matches(entry) for e in assent[i + 1:]
+            e.role in ("withdrawal", "decline") and e.matches(entry) for e in assent[i + 1 :]
         ):
             names.update(entry.line_item_ids)
     return names
 
 
-def _checks(document: dict[str, Any], assent: list[AssentEntry], commit: Commit,
-            now: datetime) -> tuple[dict[str, Any], bytes]:
+def _checks(
+    document: dict[str, Any], assent: list[AssentEntry], commit: Commit, now: datetime
+) -> tuple[dict[str, Any], bytes]:
     """The § 5.6.1 checks of a new `commit`. Returns the composed record and the digest input.
 
     The order follows § 5.6.1: "The rejection MUST carry `expired` when
@@ -127,15 +127,25 @@ def _checks(document: dict[str, Any], assent: list[AssentEntry], commit: Commit,
         raise OfferError("expired", "offer_window.end has passed", retry="none", version=version)
     for name in entry.line_item_ids:
         if name in items:
-            priced = committed_entry({**items[name], "commitment": commit.writes[name].get("commitment")})
+            priced = committed_entry(
+                {**items[name], "commitment": commit.writes[name].get("commitment")}
+            )
             if priced is not None and stamp > priced.get("price_valid_until", stamp):
-                raise OfferError("expired", f"{name}: price_valid_until has passed",
-                                 retry="none", version=version)
+                raise OfferError(
+                    "expired",
+                    f"{name}: price_valid_until has passed",
+                    retry="none",
+                    version=version,
+                )
 
     # 2. stale_version. The seller keeps one version per proposal, so another is stale (§ 4.1.3).
     if entry.version != version:
-        raise OfferError("stale_version", f"the commit names version {entry.version}",
-                         retry="refetch", version=version)
+        raise OfferError(
+            "stale_version",
+            f"the commit names version {entry.version}",
+            retry="refetch",
+            version=version,
+        )
 
     # The commit names line items of this version and writes only § 3.4 paths.
     for name in entry.line_item_ids:
@@ -148,31 +158,49 @@ def _checks(document: dict[str, Any], assent: list[AssentEntry], commit: Commit,
     composed_items = {i["line_item_id"]: i for i in line_items_of(composed)}
     for name in entry.line_item_ids:
         if committed_entry(composed_items[name]) is None:
-            raise OfferError("validation", f"{name}: the commitment names no pricing[] entry",
-                             retry="none", version=version)
+            raise OfferError(
+                "validation",
+                f"{name}: the commitment names no pricing[] entry",
+                retry="none",
+                version=version,
+            )
 
     # 3. not_committable.
     for name in entry.line_item_ids:
         if items[name]["status"] not in COMMITTABLE:
-            raise OfferError("not_committable", f"{name} is {items[name]['status']}",
-                             retry="none", version=version)
+            raise OfferError(
+                "not_committable",
+                f"{name} is {items[name]['status']}",
+                retry="none",
+                version=version,
+            )
     if "start" in window and stamp < window["start"]:
-        raise OfferError("not_committable", "offer_window.start is in the future",
-                         retry="same", version=version)
+        raise OfferError(
+            "not_committable", "offer_window.start is in the future", retry="same", version=version
+        )
     if _live_names(assent) & set(entry.line_item_ids):
-        raise OfferError("not_committable", "a live commitment already names a line item",
-                         retry="same", version=version)
+        raise OfferError(
+            "not_committable",
+            "a live commitment already names a line item",
+            retry="same",
+            version=version,
+        )
 
     # 4. Otherwise record_mismatch.
     data = digest_input(composed, entry.line_item_ids)
     if digest_of(data) != entry.record_digest:
-        raise OfferError("record_mismatch", "record_digest differs from the seller's",
-                         retry="refetch", version=version)
+        raise OfferError(
+            "record_mismatch",
+            "record_digest differs from the seller's",
+            retry="refetch",
+            version=version,
+        )
     return composed, data
 
 
-def commit(store: Store, caller: Caller, proposal_id: str, commit: Commit,
-           now: datetime | None = None) -> CommitResult:
+def commit(
+    store: Store, caller: Caller, proposal_id: str, commit: Commit, now: datetime | None = None
+) -> CommitResult:
     """Answers a `commit` (§ 5.6.1). This seller accepts every commit that passes the checks."""
     if not isinstance(caller, ResolvedCaller):
         raise OfferError("not_eligible", "a commit needs a buyer this seller knows", retry="none")
@@ -187,8 +215,12 @@ def commit(store: Store, caller: Caller, proposal_id: str, commit: Commit,
         processed = store.processed_commit(caller.principal.id, key)
         if processed is not None:
             if processed["canonical"] != canonical or processed["proposal_id"] != proposal_id:
-                raise OfferError("idempotency_conflict", "the idempotency_key names another commit",
-                                 retry="none", version=document["version"])
+                raise OfferError(
+                    "idempotency_conflict",
+                    "the idempotency_key names another commit",
+                    retry="none",
+                    version=document["version"],
+                )
             if processed["errors"] is not None:
                 raise OfferError.stored(processed["errors"])
             return _result(store, proposal_id, key)
@@ -199,7 +231,9 @@ def commit(store: Store, caller: Caller, proposal_id: str, commit: Commit,
         except OfferError as e:
             rejection = e
             if e.error["retry"] != "same":  # a rejection that is a stored result
-                store.record_commit(caller.principal.id, key, proposal_id, canonical, e.stored_form())
+                store.record_commit(
+                    caller.principal.id, key, proposal_id, canonical, e.stored_form()
+                )
         else:
             _accept(store, caller, document, composed, data, commit, now)
             store.record_commit(caller.principal.id, key, proposal_id, canonical)
@@ -208,19 +242,37 @@ def commit(store: Store, caller: Caller, proposal_id: str, commit: Commit,
     return _result(store, proposal_id, key)
 
 
-def _accept(store: Store, caller: ResolvedCaller, document: dict[str, Any],
-            composed: dict[str, Any], data: bytes, commit: Commit, now: datetime) -> None:
+def _accept(
+    store: Store,
+    caller: ResolvedCaller,
+    document: dict[str, Any],
+    composed: dict[str, Any],
+    data: bytes,
+    commit: Commit,
+    now: datetime,
+) -> None:
     """Writes the buyer's entry and the seller's matching `acceptance` (§ 4.1.2)."""
     # The boundary's credential record goes to storage with the entry, unread here.
-    store.append_assent(document["proposal_id"], commit.entry.wire(),
-                        principal_id=caller.principal.id, credential=caller.credential)
+    store.append_assent(
+        document["proposal_id"],
+        commit.entry.wire(),
+        principal_id=caller.principal.id,
+        credential=caller.credential,
+    )
     acceptance = AssentEntry(
-        role="acceptance", version=commit.entry.version, record_digest=commit.entry.record_digest,
-        line_item_ids=list(commit.entry.line_item_ids), at=instant(now),
+        role="acceptance",
+        version=commit.entry.version,
+        record_digest=commit.entry.record_digest,
+        line_item_ids=list(commit.entry.line_item_ids),
+        at=instant(now),
     )
     store.append_assent(document["proposal_id"], acceptance.wire())
-    store.add_agreed_record(document["proposal_id"], acceptance.record_digest, data,
-                            [commit.entry.wire(), acceptance.wire()])
+    store.add_agreed_record(
+        document["proposal_id"],
+        acceptance.record_digest,
+        data,
+        [commit.entry.wire(), acceptance.wire()],
+    )
 
     # The stored line items now hold the commit's writes, and they are agreed.
     stored = copy.deepcopy(document)

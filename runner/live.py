@@ -56,10 +56,21 @@ HISTORY = 20
 LINE_ITEM = "business-daily-display"
 
 #: Header fields a report never shows: credentials, and what the TLS proxy adds.
-WITHHELD = frozenset({
-    "authorization", "cookie", "set-cookie", "proxy-authorization", OPERATOR_HEADER.lower(),
-    "x-forwarded-for", "x-forwarded-host", "x-forwarded-proto", "x-real-ip", "forwarded", "via",
-})
+WITHHELD = frozenset(
+    {
+        "authorization",
+        "cookie",
+        "set-cookie",
+        "proxy-authorization",
+        OPERATOR_HEADER.lower(),
+        "x-forwarded-for",
+        "x-forwarded-host",
+        "x-forwarded-proto",
+        "x-real-ip",
+        "forwarded",
+        "via",
+    }
+)
 #: Environment variables whose values must never reach a report.
 SECRET_VARIABLES = ("OPERATOR_KEY", "DEMO_BEARER_TOKEN")
 
@@ -134,7 +145,8 @@ def _directory_view(row: sqlite3.Row | None) -> dict[str, Any] | None:
         return None
     body = _body(row["body"])
     return {
-        "url": row["url"], "status": row["status"],
+        "url": row["url"],
+        "status": row["status"],
         "fetched_at": _instant(row["fetched_at"]) if row["fetched_at"] else None,
         "headers": public_headers(json.loads(row["headers"])),
         "keys": [_public_key(k) for k in body.get("keys", [])] if isinstance(body, dict) else [],
@@ -160,14 +172,27 @@ class Run:
         self.steps: list[dict[str, Any]] = []
         self.failed: set[str] = set()
 
-    async def step(self, id: str, title: str, action: Callable[[], Awaitable[Any]],
-                   *, needs: tuple[str, ...] = ()) -> Any:
+    async def step(
+        self,
+        id: str,
+        title: str,
+        action: Callable[[], Awaitable[Any]],
+        *,
+        needs: tuple[str, ...] = (),
+    ) -> Any:
         """Runs `action` unless a step it needs failed; records the outcome either way."""
         blocked = [n for n in needs if n in self.failed]
         if blocked:
             self.failed.add(id)
-            self.steps.append({"id": id, "title": title, "ok": False, "ms": 0,
-                               "detail": f"skipped: {', '.join(blocked)} failed"})
+            self.steps.append(
+                {
+                    "id": id,
+                    "title": title,
+                    "ok": False,
+                    "ms": 0,
+                    "detail": f"skipped: {', '.join(blocked)} failed",
+                }
+            )
             return None
         start = time.perf_counter()
         try:
@@ -178,8 +203,9 @@ class Run:
         else:
             detail = result.pop("detail", None) if isinstance(result, dict) else None
         ms = round((time.perf_counter() - start) * 1000)
-        self.steps.append({"id": id, "title": title, "ok": id not in self.failed, "ms": ms,
-                           "detail": detail})
+        self.steps.append(
+            {"id": id, "title": title, "ok": id not in self.failed, "ms": ms, "detail": detail}
+        )
         return result
 
 
@@ -207,8 +233,9 @@ def _stored_keys(db: sqlite3.Connection, digest: str, origin: str) -> StaticKeyR
     """The keys of a stored directory, after the library verifies the stored bytes again."""
     row = db.execute("SELECT * FROM directories WHERE digest = ?", (digest,)).fetchone()
     headers = [tuple(line) for line in json.loads(row["headers"])]
-    directory = parse_directory_response(row["status"], headers, row["body"],
-                                         urlsplit(origin).hostname, int(row["fetched_at"]))
+    directory = parse_directory_response(
+        row["status"], headers, row["body"], urlsplit(origin).hostname, int(row["fetched_at"])
+    )
     return StaticKeyResolver({origin: list(directory.values())})
 
 
@@ -224,29 +251,47 @@ class Flow:
         async with http_client(timeout=10) as client:
             response = await client.get(url, headers={"Accept-Encoding": "identity"})
         lines = response.headers.multi_items()
-        keys = parse_directory_response(response.status_code, lines, response.content,
-                                        urlsplit(origin).hostname, int(time.time()), url=url)
+        keys = parse_directory_response(
+            response.status_code,
+            lines,
+            response.content,
+            urlsplit(origin).hostname,
+            int(time.time()),
+            url=url,
+        )
         body = _body(response.content)
         return {
             "detail": f"{len(keys)} key(s), signed by each: {', '.join(keys)}",
-            "url": url, "status": response.status_code, "headers": public_headers(lines),
+            "url": url,
+            "status": response.status_code,
+            "headers": public_headers(lines),
             "keys": [_public_key(k) for k in body.get("keys", [])],
             "expires": _instant(keys.expires),
         }
 
     async def issue(self, principal_id: str) -> dict[str, Any]:
-        response = await self.control.post(f"{self.config.seller_control}/operator/issue",
-                                           json={"principal_id": principal_id})
-        expect(response.status_code == 200, f"issue returned {response.status_code}: {response.text}")
+        response = await self.control.post(
+            f"{self.config.seller_control}/operator/issue", json={"principal_id": principal_id}
+        )
+        expect(
+            response.status_code == 200, f"issue returned {response.status_code}: {response.text}"
+        )
         issued = response.json()
         return {"detail": issued["proposal_id"], **issued}
 
     async def commit(self, proposal_id: str, credential: str) -> dict[str, Any]:
-        response = await self.control.post(f"{self.config.buyer_control}/operator/commit", json={
-            "seller": self.config.seller, "proposal_id": proposal_id,
-            "line_item_ids": [LINE_ITEM], "credential": credential,
-        })
-        expect(response.status_code == 200, f"commit returned {response.status_code}: {response.text}")
+        response = await self.control.post(
+            f"{self.config.buyer_control}/operator/commit",
+            json={
+                "seller": self.config.seller,
+                "proposal_id": proposal_id,
+                "line_item_ids": [LINE_ITEM],
+                "credential": credential,
+            },
+        )
+        expect(
+            response.status_code == 200, f"commit returned {response.status_code}: {response.text}"
+        )
         outcome = response.json()
         expect(outcome["state"] == "agreed", f"{outcome['state']}: {outcome.get('detail')}")
         expect(outcome["authentication_method"] == credential, "the buyer used another credential")
@@ -255,63 +300,87 @@ class Flow:
     async def seller_view(self, proposal_id: str, credential: str, principal_id: str) -> dict:
         """What the seller's boundary resolved, and the signed request it kept."""
         with _database(self.config.seller_db) as db:
-            entry = db.execute("SELECT * FROM assent WHERE proposal_id = ? AND role = 'commitment'",
-                               (proposal_id,)).fetchone()
+            entry = db.execute(
+                "SELECT * FROM assent WHERE proposal_id = ? AND role = 'commitment'", (proposal_id,)
+            ).fetchone()
             expect(entry is not None, "the seller holds no commitment entry")
-            expect(entry["principal_id"] == principal_id,
-                   f"the seller resolved {entry['principal_id']}, not {principal_id}")
-            expect(entry["authentication_method"] == credential,
-                   f"the seller recorded {entry['authentication_method']}")
+            expect(
+                entry["principal_id"] == principal_id,
+                f"the seller resolved {entry['principal_id']}, not {principal_id}",
+            )
+            expect(
+                entry["authentication_method"] == credential,
+                f"the seller recorded {entry['authentication_method']}",
+            )
             view: dict[str, Any] = {
                 "principal_id": entry["principal_id"],
                 "authentication_method": entry["authentication_method"],
-                "attributed": bool(entry["attributed"]), "request": None, "directory": None,
+                "attributed": bool(entry["attributed"]),
+                "request": None,
+                "directory": None,
             }
             if credential == "bearer":
                 expect(entry["evidence_id"] is None, "a bearer commit has no signature evidence")
                 view["detail"] = f"resolved {principal_id} by token hash; no signature evidence"
                 return view
-            evidence = db.execute("SELECT * FROM evidence WHERE id = ?",
-                                  (entry["evidence_id"],)).fetchone()
+            evidence = db.execute(
+                "SELECT * FROM evidence WHERE id = ?", (entry["evidence_id"],)
+            ).fetchone()
             expect(evidence["origin"] == self.config.buyer, f"evidence from {evidence['origin']}")
             view["request"] = {
-                "method": evidence["method"], "url": evidence["url"], "keyid": evidence["keyid"],
+                "method": evidence["method"],
+                "url": evidence["url"],
+                "keyid": evidence["keyid"],
                 "headers": public_headers(json.loads(evidence["headers"])),
                 "body": _body(evidence["body"]),
             }
-            view["directory"] = _directory_view(db.execute(
-                "SELECT * FROM directories WHERE digest = ?",
-                (evidence["directory_digest"],)).fetchone())
-            view["evidence_id"], view["directory_digest"] = evidence["id"], evidence["directory_digest"]
-            view["detail"] = (f"resolved {principal_id} from origin {evidence['origin']}, "
-                              f"keyid {evidence['keyid']}")
+            view["directory"] = _directory_view(
+                db.execute(
+                    "SELECT * FROM directories WHERE digest = ?", (evidence["directory_digest"],)
+                ).fetchone()
+            )
+            view["evidence_id"], view["directory_digest"] = (
+                evidence["id"],
+                evidence["directory_digest"],
+            )
+            view["detail"] = (
+                f"resolved {principal_id} from origin {evidence['origin']}, "
+                f"keyid {evidence['keyid']}"
+            )
             return view
 
     async def buyer_view(self, outcome: dict[str, Any]) -> dict[str, Any]:
         """The request as the buyer sent it, and the seller's signed answer as it arrived."""
         with _database(self.config.buyer_db) as db:
-            evidence = db.execute("SELECT * FROM evidence WHERE id = ?",
-                                  (outcome["evidence_id"],)).fetchone()
+            evidence = db.execute(
+                "SELECT * FROM evidence WHERE id = ?", (outcome["evidence_id"],)
+            ).fetchone()
             expect(evidence is not None, "the buyer kept no evidence")
             expect(evidence["origin"] == self.config.seller, f"answer from {evidence['origin']}")
-            directory = _directory_view(db.execute(
-                "SELECT * FROM directories WHERE digest = ?",
-                (evidence["directory_digest"],)).fetchone())
+            directory = _directory_view(
+                db.execute(
+                    "SELECT * FROM directories WHERE digest = ?", (evidence["directory_digest"],)
+                ).fetchone()
+            )
             request_headers = public_headers(json.loads(evidence["request_headers"]))
             if outcome["authentication_method"] == "bearer":
                 # The request carried the token; the buyer's evidence never stores it.
-                request_headers["withheld"] = sorted({*request_headers["withheld"], "authorization"})
+                request_headers["withheld"] = sorted(
+                    {*request_headers["withheld"], "authorization"}
+                )
             return {
                 "detail": f"kept the seller's signed answer, keyid {evidence['keyid']}",
                 "evidence_id": evidence["id"],
                 "request": {
-                    "method": evidence["request_method"], "url": evidence["request_url"],
+                    "method": evidence["request_method"],
+                    "url": evidence["request_url"],
                     "keyid": outcome.get("keyid"),
                     "headers": request_headers,
                     "body": _body(evidence["request_body"]),
                 },
                 "response": {
-                    "status": evidence["status"], "keyid": evidence["keyid"],
+                    "status": evidence["status"],
+                    "keyid": evidence["keyid"],
                     "headers": public_headers(json.loads(evidence["headers"])),
                     "body": _body(evidence["body"]),
                 },
@@ -321,45 +390,74 @@ class Flow:
     async def same_digest(self, proposal_id: str, outcome: dict[str, Any]) -> dict[str, Any]:
         """Both parties hold the same digest input, and it hashes to the agreed record_digest."""
         with _database(self.config.seller_db) as seller, _database(self.config.buyer_db) as buyer:
-            agreed = seller.execute("SELECT * FROM agreed_records WHERE proposal_id = ?",
-                                    (proposal_id,)).fetchone()
-            bought = buyer.execute("SELECT * FROM commits WHERE id = ?",
-                                   (outcome["commit_id"],)).fetchone()
+            agreed = seller.execute(
+                "SELECT * FROM agreed_records WHERE proposal_id = ?", (proposal_id,)
+            ).fetchone()
+            bought = buyer.execute(
+                "SELECT * FROM commits WHERE id = ?", (outcome["commit_id"],)
+            ).fetchone()
         expect(agreed is not None, "the seller holds no agreed record")
-        expect(bytes(agreed["digest_input"]) == bytes(bought["digest_input"]),
-               "the parties' digest inputs differ")
+        expect(
+            bytes(agreed["digest_input"]) == bytes(bought["digest_input"]),
+            "the parties' digest inputs differ",
+        )
         digest = "sha256:" + hashlib.sha256(bought["digest_input"]).hexdigest()
-        expect(digest == agreed["record_digest"] == outcome["record_digest"],
-               "record_digest doesn't recompute from the digest input")
-        return {"detail": f"both sides: {digest}", "record_digest": digest,
-                "digest_input_bytes": len(bought["digest_input"])}
+        expect(
+            digest == agreed["record_digest"] == outcome["record_digest"],
+            "record_digest doesn't recompute from the digest input",
+        )
+        return {
+            "detail": f"both sides: {digest}",
+            "record_digest": digest,
+            "digest_input_bytes": len(bought["digest_input"]),
+        }
 
     async def reverify(self, seller: dict[str, Any], buyer: dict[str, Any]) -> dict[str, Any]:
         """Verifies both kept messages again, offline, against the directory bytes each side kept."""
         with _database(self.config.seller_db) as db:
-            row = db.execute("SELECT * FROM evidence WHERE id = ?",
-                             (seller["evidence_id"],)).fetchone()
-            again = RequestVerifier(_stored_keys(db, row["directory_digest"], self.config.buyer)
-                                    ).verify_sync(row["method"], row["url"],
-                                                  [tuple(x) for x in json.loads(row["headers"])],
-                                                  row["body"])
-        expect(again.origin == self.config.buyer and again.body_covered,
-               "the seller's evidence doesn't verify again")
+            row = db.execute(
+                "SELECT * FROM evidence WHERE id = ?", (seller["evidence_id"],)
+            ).fetchone()
+            again = RequestVerifier(
+                _stored_keys(db, row["directory_digest"], self.config.buyer)
+            ).verify_sync(
+                row["method"],
+                row["url"],
+                [tuple(x) for x in json.loads(row["headers"])],
+                row["body"],
+            )
+        expect(
+            again.origin == self.config.buyer and again.body_covered,
+            "the seller's evidence doesn't verify again",
+        )
         with _database(self.config.buyer_db) as db:
-            row = db.execute("SELECT * FROM evidence WHERE id = ?",
-                             (buyer["evidence_id"],)).fetchone()
-            sent = HTTPRequest(row["request_method"], row["request_url"],
-                               [tuple(x) for x in json.loads(row["request_headers"])],
-                               row["request_body"])
-            answered = ResponseVerifier(_stored_keys(db, row["directory_digest"], self.config.seller)
-                                        ).verify_sync(row["status"],
-                                                      [tuple(x) for x in json.loads(row["headers"])],
-                                                      row["body"], sent,
-                                                      expected_origin=self.config.seller)
-        expect(answered.bound and answered.body_covered, "the buyer's evidence doesn't verify again")
-        return {"detail": "the signed request and the bound answer both verify from stored bytes",
-                "request_components": list(again.components),
-                "response_components": list(answered.components), "response_bound": answered.bound}
+            row = db.execute(
+                "SELECT * FROM evidence WHERE id = ?", (buyer["evidence_id"],)
+            ).fetchone()
+            sent = HTTPRequest(
+                row["request_method"],
+                row["request_url"],
+                [tuple(x) for x in json.loads(row["request_headers"])],
+                row["request_body"],
+            )
+            answered = ResponseVerifier(
+                _stored_keys(db, row["directory_digest"], self.config.seller)
+            ).verify_sync(
+                row["status"],
+                [tuple(x) for x in json.loads(row["headers"])],
+                row["body"],
+                sent,
+                expected_origin=self.config.seller,
+            )
+        expect(
+            answered.bound and answered.body_covered, "the buyer's evidence doesn't verify again"
+        )
+        return {
+            "detail": "the signed request and the bound answer both verify from stored bytes",
+            "request_components": list(again.components),
+            "response_components": list(answered.components),
+            "response_bound": answered.bound,
+        }
 
     async def cloudflare(self) -> dict[str, Any]:
         response = await self.control.post(f"{self.config.buyer_control}/operator/cloudflare-check")
@@ -368,59 +466,97 @@ class Flow:
         verdict = check["verdict"]
         expect(check["status"] == 200 and verdict.get("ok") is True, f"cfbot refused: {verdict}")
         expect(verdict["identity"] == self.config.buyer, f"cfbot saw {verdict['identity']}")
-        return {"detail": f"{verdict['verifier']} accepted {verdict['identity']}", "verdict": verdict}
+        return {
+            "detail": f"{verdict['verifier']} accepted {verdict['identity']}",
+            "verdict": verdict,
+        }
 
 
 async def run_once(config: Config) -> dict[str, Any]:
     """One run of every step. Never raises: a failure is a step outcome."""
     run, started = Run(), time.time()
     report: dict[str, Any] = {
-        "format": 1, "started_at": _instant(started),
+        "format": 1,
+        "started_at": _instant(started),
         "origins": {"seller": config.seller, "buyer": config.buyer, "cfbot": config.cfbot},
-        "software": {name: _version(name) for name in ("iab-agentic-primitives", "openproposal-sdk")},
+        "software": {
+            name: _version(name) for name in ("iab-agentic-primitives", "openproposal-sdk")
+        },
         "line_item_ids": [LINE_ITEM],
     }
-    async with httpx.AsyncClient(timeout=60, headers={OPERATOR_HEADER: config.operator_key}) as control:
+    async with httpx.AsyncClient(
+        timeout=60, headers={OPERATOR_HEADER: config.operator_key}
+    ) as control:
         flow = Flow(config, control)
         report["directories"] = {}
-        for party, origin in (("seller", config.seller), ("buyer", config.buyer),
-                              ("cfbot", config.cfbot)):
+        for party, origin in (
+            ("seller", config.seller),
+            ("buyer", config.buyer),
+            ("cfbot", config.cfbot),
+        ):
             report["directories"][party] = await run.step(
-                f"directory-{party}", f"Fetch and verify the {party}'s key directory",
-                lambda origin=origin: flow.directory(origin))
+                f"directory-{party}",
+                f"Fetch and verify the {party}'s key directory",
+                lambda origin=origin: flow.directory(origin),
+            )
 
-        for path, credential, principal in (("signature", "web_bot_auth", "buyer-wba"),
-                                            ("bearer", "bearer", "buyer-bearer")):
+        for path, credential, principal in (
+            ("signature", "web_bot_auth", "buyer-wba"),
+            ("bearer", "bearer", "buyer-bearer"),
+        ):
             label = "a Web Bot Auth signature" if path == "signature" else "a bearer token"
-            issued = await run.step(f"{path}-issue", f"Seller issues a fresh proposal to {principal}",
-                                    lambda principal=principal: flow.issue(principal))
+            issued = await run.step(
+                f"{path}-issue",
+                f"Seller issues a fresh proposal to {principal}",
+                lambda principal=principal: flow.issue(principal),
+            )
             proposal_id = issued["proposal_id"] if issued else None
             committed = await run.step(
-                f"{path}-commit", f"Buyer reads and commits with {label}; both reach agreed",
-                lambda p=proposal_id, c=credential: flow.commit(p, c), needs=(f"{path}-issue",))
+                f"{path}-commit",
+                f"Buyer reads and commits with {label}; both reach agreed",
+                lambda p=proposal_id, c=credential: flow.commit(p, c),
+                needs=(f"{path}-issue",),
+            )
             outcome = committed["outcome"] if committed else None
             seller = await run.step(
-                f"{path}-seller", "Seller's boundary resolved the stored principal",
+                f"{path}-seller",
+                "Seller's boundary resolved the stored principal",
                 lambda p=proposal_id, c=credential, who=principal: flow.seller_view(p, c, who),
-                needs=(f"{path}-commit",))
+                needs=(f"{path}-commit",),
+            )
             buyer = await run.step(
-                f"{path}-buyer", "Buyer verified the seller's signed answer and kept it",
-                lambda o=outcome: flow.buyer_view(o), needs=(f"{path}-commit",))
+                f"{path}-buyer",
+                "Buyer verified the seller's signed answer and kept it",
+                lambda o=outcome: flow.buyer_view(o),
+                needs=(f"{path}-commit",),
+            )
             digest = await run.step(
-                f"{path}-digest", "Both parties computed the same record_digest",
-                lambda p=proposal_id, o=outcome: flow.same_digest(p, o), needs=(f"{path}-commit",))
-            section = {"proposal_id": proposal_id, "outcome": outcome, "seller": seller,
-                       "buyer": buyer, "digest": digest}
+                f"{path}-digest",
+                "Both parties computed the same record_digest",
+                lambda p=proposal_id, o=outcome: flow.same_digest(p, o),
+                needs=(f"{path}-commit",),
+            )
+            section = {
+                "proposal_id": proposal_id,
+                "outcome": outcome,
+                "seller": seller,
+                "buyer": buyer,
+                "digest": digest,
+            }
             if path == "signature":
                 section["reverify"] = await run.step(
-                    "signature-reverify", "Both kept messages verify again, offline",
+                    "signature-reverify",
+                    "Both kept messages verify again, offline",
                     lambda s=seller, b=buyer: flow.reverify(s, b),
-                    needs=("signature-seller", "signature-buyer"))
+                    needs=("signature-seller", "signature-buyer"),
+                )
             report[path] = section
 
         report["cloudflare"] = await run.step(
-            "cloudflare", "cfbot, on Cloudflare's web-bot-auth, verifies the buyer's signature",
-            flow.cloudflare)
+            "cloudflare",
+            "cfbot, on Cloudflare's web-bot-auth, verifies the buyer's signature",
+            flow.cloudflare,
+        )
 
     report["steps"] = run.steps
     report["ok"] = not run.failed
@@ -448,9 +584,12 @@ def _write(path: Path, text: str) -> None:
 
 
 def history_entry(report: dict[str, Any]) -> dict[str, Any]:
-    return {"started_at": report["started_at"], "ok": report["ok"],
-            "duration_ms": report.get("duration_ms"),
-            "failed": [s["id"] for s in report.get("steps", []) if not s["ok"]]}
+    return {
+        "started_at": report["started_at"],
+        "ok": report["ok"],
+        "duration_ms": report.get("duration_ms"),
+        "failed": [s["id"] for s in report.get("steps", []) if not s["ok"]],
+    }
 
 
 def updated_history(previous: list[dict[str, Any]], report: dict[str, Any]) -> list[dict[str, Any]]:
@@ -463,9 +602,20 @@ def publish(config: Config, report: dict[str, Any]) -> None:
     try:
         text = assert_public(report, config.secrets)
     except NotPublic as e:
-        report = {"format": 1, "started_at": report["started_at"], "ok": False,
-                  "steps": [{"id": "publish", "title": "Publish the report", "ok": False, "ms": 0,
-                             "detail": f"withheld: {e}"}]}
+        report = {
+            "format": 1,
+            "started_at": report["started_at"],
+            "ok": False,
+            "steps": [
+                {
+                    "id": "publish",
+                    "title": "Publish the report",
+                    "ok": False,
+                    "ms": 0,
+                    "detail": f"withheld: {e}",
+                }
+            ],
+        }
         text = json.dumps(report, indent=1)
     config.out_dir.mkdir(parents=True, exist_ok=True)
     history_file = config.out_dir / "history.json"
@@ -485,8 +635,11 @@ def main() -> None:
         report = asyncio.run(run_once(config))
         publish(config, report)
         failed = [s["id"] for s in report["steps"] if not s["ok"]]
-        print(f"{report['started_at']} {'pass' if report['ok'] else 'FAIL'} "
-              f"{report.get('duration_ms')} ms {' '.join(failed)}", flush=True)
+        print(
+            f"{report['started_at']} {'pass' if report['ok'] else 'FAIL'} "
+            f"{report.get('duration_ms')} ms {' '.join(failed)}",
+            flush=True,
+        )
         if config.interval <= 0:
             sys.exit(0 if report["ok"] else 1)
         time.sleep(max(1.0, config.interval - report.get("duration_ms", 0) / 1000))

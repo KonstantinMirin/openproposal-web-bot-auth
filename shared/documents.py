@@ -26,9 +26,14 @@ _CORE = (
     ("tag:yaml.org,2002:null", r"^(?:null|Null|NULL|~|)$", ["n", "N", "~", ""]),
     ("tag:yaml.org,2002:bool", r"^(?:true|True|TRUE|false|False|FALSE)$", list("tTfF")),
     ("tag:yaml.org,2002:int", r"^(?:[-+]?[0-9]+|0o[0-7]+|0x[0-9a-fA-F]+)$", list("-+0123456789")),
-    ("tag:yaml.org,2002:float",
-     (r"^(?:[-+]?(?:\.[0-9]+|[0-9]+(?:\.[0-9]*)?)(?:[eE][-+]?[0-9]+)?"
-      r"|[-+]?\.(?:inf|Inf|INF)|\.(?:nan|NaN|NAN))$"), list("-+0123456789.")),
+    (
+        "tag:yaml.org,2002:float",
+        (
+            r"^(?:[-+]?(?:\.[0-9]+|[0-9]+(?:\.[0-9]*)?)(?:[eE][-+]?[0-9]+)?"
+            r"|[-+]?\.(?:inf|Inf|INF)|\.(?:nan|NaN|NAN))$"
+        ),
+        list("-+0123456789."),
+    ),
 )
 #: The largest integer RFC 8785 serializes exactly (an IEEE 754 double).
 _EXACT = 2**53
@@ -51,7 +56,9 @@ def _int(loader: CoreSchemaLoader, node: yaml.ScalarNode) -> int:
     text = node.value
     value = int(text, 0) if text[:2] in ("0o", "0x") else int(text, 10)
     if abs(value) > _EXACT:
-        raise InvalidDocument(f"{text} at line {node.start_mark.line + 1} does not survive RFC 8785")
+        raise InvalidDocument(
+            f"{text} at line {node.start_mark.line + 1} does not survive RFC 8785"
+        )
     return value
 
 
@@ -61,7 +68,9 @@ def _float(loader: CoreSchemaLoader, node: yaml.ScalarNode) -> float:
     value = float(node.value)
     # § 4.1.1: a Number the serialization does not reproduce makes the document invalid.
     if Decimal(node.value) != Decimal(repr(value)):
-        raise InvalidDocument(f"{node.value} at line {node.start_mark.line + 1} does not survive RFC 8785")
+        raise InvalidDocument(
+            f"{node.value} at line {node.start_mark.line + 1} does not survive RFC 8785"
+        )
     return value
 
 

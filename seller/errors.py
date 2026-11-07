@@ -24,9 +24,16 @@ class Refused(Exception):
 
 # The informative HTTP status of each core code (§ 2.4).
 _STATUS = {
-    "validation": 400, "not_offered": 400, "unresolved_reference": 400, "not_eligible": 403,
-    "not_found": 404, "not_committable": 409, "stale_version": 409, "record_mismatch": 409,
-    "expired": 410, "idempotency_conflict": 422,
+    "validation": 400,
+    "not_offered": 400,
+    "unresolved_reference": 400,
+    "not_eligible": 403,
+    "not_found": 404,
+    "not_committable": 409,
+    "stale_version": 409,
+    "record_mismatch": 409,
+    "expired": 410,
+    "idempotency_conflict": 422,
 }
 
 
@@ -60,8 +67,13 @@ class OfferError(Exception):
     def stored(cls, errors_json: str) -> OfferError:
         """The rejection a replay returns: the stored result (§ 5.6.1)."""
         error = json.loads(errors_json)[0]
-        return cls(error["code"], error["detail"], retry=error["retry"],
-                   version=error.get("version"), pointer=error.get("pointer"))
+        return cls(
+            error["code"],
+            error["detail"],
+            retry=error["retry"],
+            version=error.get("version"),
+            pointer=error.get("pointer"),
+        )
 
     def response(self) -> JSONResponse:
         return JSONResponse({"errors": [self.error]}, status_code=self.status, headers=self.headers)

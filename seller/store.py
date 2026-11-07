@@ -85,7 +85,6 @@ CREATE TABLE IF NOT EXISTS agreed_records (
 """
 
 
-
 def token_hash(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
@@ -242,8 +241,14 @@ class Store:
         self.db.execute(
             "INSERT INTO commits (principal_id, idempotency_key, proposal_id, canonical, status, errors)"
             " VALUES (?, ?, ?, ?, ?, ?)",
-            (principal_id, idempotency_key, proposal_id, canonical, status,
-             json.dumps(errors) if errors else None),
+            (
+                principal_id,
+                idempotency_key,
+                proposal_id,
+                canonical,
+                status,
+                json.dumps(errors) if errors else None,
+            ),
         )
 
     def transaction(self):

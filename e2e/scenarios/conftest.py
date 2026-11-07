@@ -41,8 +41,9 @@ def buyer_key(kid: str | None = None) -> Ed25519Key:
     return Ed25519Key.load_or_create(path if path.exists() else BUYER_KEYS / "retired" / path.name)
 
 
-def signed(method: str, url: str, body: bytes = b"", *, key: Ed25519Key | None = None,
-           origin: str = BUYER) -> dict[str, str]:
+def signed(
+    method: str, url: str, body: bytes = b"", *, key: Ed25519Key | None = None, origin: str = BUYER
+) -> dict[str, str]:
     """Headers for a request signed as `origin` with `key` (by default, the buyer's active key)."""
     headers = {"Content-Type": "application/json"} if body else {}
     return headers | RequestSigner(key or buyer_key(), origin).sign(method, url, headers, body)
@@ -50,14 +51,28 @@ def signed(method: str, url: str, body: bytes = b"", *, key: Ed25519Key | None =
 
 def commit_body(amount: float) -> bytes:
     """A well-formed Commit on demo-wba-2's weather-app-ctv, for requests the buyer would never send."""
-    return json.dumps({
-        "entry": {"role": "commitment", "version": 1, "record_digest": "sha256:" + "0" * 64,
-                  "line_item_ids": ["weather-app-ctv"], "at": "2029-01-01T00:00:00Z",
-                  "idempotency_key": str(uuid.uuid4())},
-        "writes": {"weather-app-ctv": {"commitment": {
-            "basis": "spend", "amount": amount, "advertisers": [{"domain": "brand-a.example"}],
-            "flight": {"start": "2029-11-02T00:00:00Z", "end": "2029-12-21T23:59:59Z"}}}},
-    }).encode()
+    return json.dumps(
+        {
+            "entry": {
+                "role": "commitment",
+                "version": 1,
+                "record_digest": "sha256:" + "0" * 64,
+                "line_item_ids": ["weather-app-ctv"],
+                "at": "2029-01-01T00:00:00Z",
+                "idempotency_key": str(uuid.uuid4()),
+            },
+            "writes": {
+                "weather-app-ctv": {
+                    "commitment": {
+                        "basis": "spend",
+                        "amount": amount,
+                        "advertisers": [{"domain": "brand-a.example"}],
+                        "flight": {"start": "2029-11-02T00:00:00Z", "end": "2029-12-21T23:59:59Z"},
+                    }
+                }
+            },
+        }
+    ).encode()
 
 
 def _operator_key(request: httpx.Request) -> None:
@@ -69,8 +84,9 @@ def _operator_key(request: httpx.Request) -> None:
 @pytest.fixture
 def web():
     """A client that trusts the public roots plus the demo CA, as every container does."""
-    with httpx.Client(verify=ssl.create_default_context(), timeout=30,
-                      event_hooks={"request": [_operator_key]}) as client:
+    with httpx.Client(
+        verify=ssl.create_default_context(), timeout=30, event_hooks={"request": [_operator_key]}
+    ) as client:
         yield client
 
 
@@ -78,8 +94,9 @@ def stored_keys(db: sqlite3.Connection, digest: str, origin: str) -> StaticKeyRe
     """The keys of a stored directory, after the library verifies the stored bytes again."""
     row = db.execute("SELECT * FROM directories WHERE digest = ?", (digest,)).fetchone()
     headers = [tuple(line) for line in json.loads(row["headers"])]
-    directory = parse_directory_response(row["status"], headers, row["body"],
-                                         origin.removeprefix("https://"), int(row["fetched_at"]))
+    directory = parse_directory_response(
+        row["status"], headers, row["body"], origin.removeprefix("https://"), int(row["fetched_at"])
+    )
     return StaticKeyResolver({origin: list(directory.values())})
 
 

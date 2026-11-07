@@ -36,13 +36,24 @@ def save_directory(db: sqlite3.Connection, directory: VerifiedDirectory | None) 
     if directory is None:
         return None
     headers = [list(line) for line in directory.headers]
-    fetch = {"url": directory.url, "status": directory.status, "headers": headers,
-             "fetched_at": directory.fetched_at}
+    fetch = {
+        "url": directory.url,
+        "status": directory.status,
+        "headers": headers,
+        "fetched_at": directory.fetched_at,
+    }
     digest = hashlib.sha256(rfc8785.dumps(fetch) + directory.body).hexdigest()
     db.execute(
         "INSERT OR IGNORE INTO directories (digest, url, status, headers, body, fetched_at, evidence)"
         " VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (digest, directory.url, directory.status, json.dumps(headers), directory.body,
-         directory.fetched_at, json.dumps(directory.evidence())),
+        (
+            digest,
+            directory.url,
+            directory.status,
+            json.dumps(headers),
+            directory.body,
+            directory.fetched_at,
+            json.dumps(directory.evidence()),
+        ),
     )
     return digest

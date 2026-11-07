@@ -11,10 +11,13 @@ URL = "https://buyer.wba-demo.noetis.dev/.well-known/http-message-signatures-dir
 
 
 def _fetch(signature: str, fetched_at: float, body: bytes = BODY) -> VerifiedDirectory:
-    headers = (("content-type", "application/http-message-signatures-directory+json"),
-               ("signature", signature))
-    return VerifiedDirectory({}, 0, url=URL, status=200, headers=headers, body=body,
-                             fetched_at=fetched_at)
+    headers = (
+        ("content-type", "application/http-message-signatures-directory+json"),
+        ("signature", signature),
+    )
+    return VerifiedDirectory(
+        {}, 0, url=URL, status=200, headers=headers, body=body, fetched_at=fetched_at
+    )
 
 
 def _rows(*fetches: VerifiedDirectory) -> int:
@@ -43,4 +46,6 @@ def test_the_exact_body_bytes_are_kept():
     db.executescript(DIRECTORIES_SCHEMA)
     body = b'{"keys":[]}\n'  # bytes, not a re-serialization
     digest = save_directory(db, _fetch("key1=:AAAA:", 1.0, body))
-    assert db.execute("SELECT body FROM directories WHERE digest = ?", (digest,)).fetchone()[0] == body
+    assert (
+        db.execute("SELECT body FROM directories WHERE digest = ?", (digest,)).fetchone()[0] == body
+    )

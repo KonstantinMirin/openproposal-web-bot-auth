@@ -11,29 +11,37 @@ from conftest import BUYER_OPERATOR, SELLER, signed
 
 
 def test_bearer_token_resolves_the_same_identity_type(web):
-    by_token = web.get(f"{SELLER}/whoami",
-                       headers={"Authorization": f"Bearer {os.environ['DEMO_BEARER_TOKEN']}"}).json()
+    by_token = web.get(
+        f"{SELLER}/whoami", headers={"Authorization": f"Bearer {os.environ['DEMO_BEARER_TOKEN']}"}
+    ).json()
     by_signature = web.get(f"{SELLER}/whoami", headers=signed("GET", f"{SELLER}/whoami")).json()
 
     assert by_token["kind"] == by_signature["kind"] == "resolved"
     assert by_token.keys() == by_signature.keys() == {"kind", "principal", "credential"}
     assert by_token["principal"]["id"] == "buyer-bearer"
     assert by_token["credential"]["method"] == "bearer"
-    assert by_token["credential"]["origin"] is None and by_token["credential"]["evidence_id"] is None
+    assert (
+        by_token["credential"]["origin"] is None and by_token["credential"]["evidence_id"] is None
+    )
     assert by_signature["principal"]["id"] == "buyer-wba"
     assert by_signature["credential"]["method"] == "web_bot_auth"
 
 
 def test_commit_with_a_bearer_token(web, seller_db):
-    outcome = web.post(f"{BUYER_OPERATOR}/commit", json={
-        "proposal_id": "demo-bearer-1", "line_item_ids": ["business-daily-display"],
-        "credential": "bearer",
-    }).json()
+    outcome = web.post(
+        f"{BUYER_OPERATOR}/commit",
+        json={
+            "proposal_id": "demo-bearer-1",
+            "line_item_ids": ["business-daily-display"],
+            "credential": "bearer",
+        },
+    ).json()
     assert outcome["state"] == "agreed", outcome
     assert outcome["authentication_method"] == "bearer"
 
     entry = seller_db.execute(
-        "SELECT * FROM assent WHERE proposal_id = 'demo-bearer-1' AND role = 'commitment'").fetchone()
+        "SELECT * FROM assent WHERE proposal_id = 'demo-bearer-1' AND role = 'commitment'"
+    ).fetchone()
     assert entry["principal_id"] == "buyer-bearer"
     assert entry["authentication_method"] == "bearer"
     assert entry["evidence_id"] is None  # nothing was signed, so there is no signature evidence
