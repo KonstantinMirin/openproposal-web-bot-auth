@@ -2,7 +2,8 @@
 
 A leaf module. It imports pydantic and the pure values of protocol/values.py and
 persistence/values.py, nothing that reaches HTTP, storage, or the Web Bot Auth
-library, so the offer logic can take a `Caller` without loading any of them.
+library. The offer logic never takes a `Caller`: the seller's HTTP seam
+(seller/http.py) hands it the caller's `Provenance` instead.
 
 The types allow no illegal state. Each is a `Value`: strict, so nothing is
 coerced (`body_covered="yes"` fails); frozen, with unknown members refused; and
@@ -10,23 +11,19 @@ coerced (`body_covered="yes"` fails); frozen, with unknown members refused; and
 credential is either a `SignatureCredential` or a `BearerCredential`, told
 apart by `method`: a bearer credential can't carry an origin, and a
 `PublicCaller` can carry only a signature, the identity a verified origin
-establishes without a principal.
+establishes without a principal. A `ResolvedCaller` carries the `Provenance`
+storage keeps with an entry it writes, which names the same principal, method,
+and attribution.
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Annotated, Literal, NoReturn
+from typing import Annotated, Literal, NoReturn, Self
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
-from persistence.values import (
-    BearerMethod,
-    DirectoryFetch,
-    KeptRequest,
-    Origin,
-    SignatureMethod,
-)
+from persistence.values import BearerMethod, Origin, Provenance, SignatureMethod
 from protocol.values import AmendedValueError, Value
 
 
@@ -35,6 +32,13 @@ class AmendedIdentityError(AmendedValueError):
 
     def __init__(self, kind: str) -> None:
         super().__init__(kind, "only the identity boundary builds one")
+
+
+class ProvenanceMismatchError(ValueError):
+    """A caller whose provenance names another principal, method, or attribution."""
+
+    def __init__(self) -> None:
+        super().__init__("the provenance names another principal, method, or attribution")
 
 
 class _Frozen(Value):
@@ -64,11 +68,6 @@ class SignatureCredential(_Frozen):
     keyid: str
     #: True when the signature covers the body through `Content-Digest`.
     body_covered: bool
-    #: The request itself, kept with the entry it carries; not part of the caller's view.
-    request: KeptRequest = Field(exclude=True)
-    #: The key directory response the signature verified against (§ 4.1.2), when the
-    #: resolver provides it; not part of the caller's view.
-    directory: DirectoryFetch | None = Field(exclude=True)
 
 
 class BearerCredential(_Frozen):
@@ -90,6 +89,20 @@ class ResolvedCaller(_Frozen):
     #: § 4.1.2: the signature attributes the body's entries to the principal: it covers
     #: the body, and the signing host is the principal's domain or a subdomain of it.
     attributed: bool
+    #: What storage keeps with an entry this caller writes, the signed request included;
+    #: not part of the caller's view.
+    provenance: Provenance = Field(exclude=True)
+
+    @model_validator(mode="after")
+    def _provenance_matches(self) -> Self:
+        p = self.provenance
+        if (p.principal_id, p.method, p.attributed) != (
+            self.principal.id,
+            self.credential.method,
+            self.attributed,
+        ):
+            raise ProvenanceMismatchError
+        return self
 
 
 class PublicCaller(_Frozen):

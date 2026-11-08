@@ -1,4 +1,5 @@
-"""The identity values (seller/caller.py) refuse what their config promises.
+"""The identity values (seller/caller.py), and the provenance a caller carries, refuse what
+their config promises.
 
 The boundary's confirmed identity is passed on frozen: no value gives an
 amended copy, and a value the types don't allow never constructs.
@@ -22,6 +23,7 @@ from tests import factories
         factories.bearer_credential(),
         factories.resolved_caller(),
         factories.public_caller(),
+        factories.provenance(),
     ],
     ids=type,
 )
@@ -39,6 +41,11 @@ def test_no_identity_value_gives_an_amended_copy(value: BaseModel) -> None:
         lambda: factories.principal(kind="seller"),
         lambda: factories.resolved_caller(credential={"method": "nope"}),
         lambda: factories.resolved_caller(attributed=1),
+        lambda: factories.provenance(signed=None),
+        lambda: factories.provenance(method="bearer"),
+        lambda: factories.provenance(method="bearer", signed=None, attributed=True),
+        lambda: factories.resolved_caller(provenance=factories.provenance(principal_id="other")),
+        lambda: factories.resolved_caller(provenance=factories.provenance(attributed=True)),
     ],
     ids=[
         "a bearer credential with an origin",
@@ -47,6 +54,11 @@ def test_no_identity_value_gives_an_amended_copy(value: BaseModel) -> None:
         "a principal of another kind",
         "an unknown credential method",
         "a coerced attribution",
+        "a signature provenance without its request",
+        "a bearer provenance with a signed request",
+        "an attributed bearer provenance",
+        "a provenance of another principal",
+        "a provenance of another attribution",
     ],
 )
 def test_an_illegal_identity_does_not_construct(build: Callable[[], BaseModel]) -> None:

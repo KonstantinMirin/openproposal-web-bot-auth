@@ -148,8 +148,9 @@ def test_an_unknown_id_is_no_evidence(agreed: tuple[Stack, dict[str, object]]) -
     with BuyerRecords.open(stack.buyer_dir / "buyer.db") as buyer:
         with pytest.raises(NoEvidenceError):
             buyer.response(999)
-        with pytest.raises(NoEvidenceError):
-            buyer.request(999)
-        with pytest.raises(NoEvidenceError):
-            buyer.directory("sha256:none")
         assert buyer.commit(999) is None
+    with (
+        SellerRecords.open(stack.seller_dir / "seller.db") as seller,
+        pytest.raises(NoEvidenceError),
+    ):
+        seller.request(999)

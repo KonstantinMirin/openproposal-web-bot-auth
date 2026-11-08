@@ -46,7 +46,6 @@ from openproposal import LineItemWrites, Proposal, dump_json
 from pydantic import SecretStr
 from starlette.types import ASGIApp
 
-from persistence.evidence import EvidenceReader
 from persistence.observe import SellerRecords
 from persistence.values import Origin
 from protocol.operations import compose_commit
@@ -347,8 +346,8 @@ def test_a_signed_commit_keeps_its_request_with_the_entry(parties: Parties, tmp_
     )
     assert commitment["attributed"] == 1  # the body is covered, and the host is the domain
     assert acceptance["evidence_id"] is None and acceptance["authentication_method"] is None
-    with EvidenceReader.open(tmp_path / "seller.db") as reader:
-        kept_request = reader.request(commitment["evidence_id"])
+    with SellerRecords.open(tmp_path / "seller.db") as records:
+        kept_request = records.request(commitment["evidence_id"])
     kept, directory = kept_request.request, kept_request.signer.directory
     assert (kept.method, kept.url, kept.body) == ("POST", f"{SELLER}{path}", body)
     # The header lines exactly as the app received them: in order, in case, and every line.

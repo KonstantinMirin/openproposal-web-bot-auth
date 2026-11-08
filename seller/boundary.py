@@ -15,9 +15,11 @@ credential. It treats a Web Bot Auth signature and a bearer token the same way:
 4. Return one frozen value (seller/caller.py). Handlers receive it and never
    read a header, and nothing amends it afterwards.
 
-The boundary writes nothing. A signature's request travels in the credential
-as a `KeptRequest`, with the directory fetch it verified against, and storage
-keeps them only with an entry they carried.
+The boundary writes nothing. A resolved caller carries its `Provenance`: the
+principal, how it authenticated, whether the signature attributes the body,
+and, for a signature, the verified request as a `SignedRequest` with the
+directory fetch it verified against. Storage keeps that only with an entry the
+request carried.
 
 `create_app` (seller/app.py) builds the boundary from its collaborators, and
 seller/http.py binds it to `CallerDep`.
@@ -39,7 +41,7 @@ from iab_agentic_primitives.web_bot_auth import (
 )
 from starlette.requests import Request
 
-from persistence.values import KeptRequest, Origin
+from persistence.values import KeptRequest, Origin, Provenance, SignedRequest, Signer
 from protocol.attribution import attributes
 from transport.wba import fetch_of, is_signed, origin_of, request_of, to_library
 
@@ -156,25 +158,36 @@ class IdentityBoundary:
             return PublicCaller()
         if isinstance(presented, _PresentedBearer):
             return self._resolve_bearer(presented.token)
-        return self._resolve_signed(await self._confirm_signature(kept))
+        return self._resolve_signed(await self._confirm_signature(kept), kept)
 
-    async def _confirm_signature(self, request: KeptRequest) -> SignatureCredential:
+    async def _confirm_signature(self, request: KeptRequest) -> VerifiedRequest:
         """The verified signature; the library fetches the origin's directory as needed."""
         try:
-            verified = await self._verifier.verify(to_library(request))
+            return await self._verifier.verify(to_library(request))
         except WebBotAuthError as e:
             raise _signature_refused(e, has_body=bool(request.body)) from e
-        return _credential(verified, request)
 
-    def _resolve_signed(self, credential: SignatureCredential) -> ResolvedCaller | PublicCaller:
+    def _resolve_signed(
+        self, verified: VerifiedRequest, request: KeptRequest
+    ) -> ResolvedCaller | PublicCaller:
+        credential = _credential(verified)
         record = self._directory.for_origin(credential.origin)
         if record is None:
             return PublicCaller(signature=credential)
         attributed = attributes(
             credential.origin.host, record.domain, body_covered=credential.body_covered
         )
+        provenance = Provenance(
+            principal_id=record.id,
+            method=credential.method,
+            attributed=attributed,
+            signed=_signed(credential, verified, request),
+        )
         return ResolvedCaller(
-            principal=_principal(record), credential=credential, attributed=attributed
+            principal=_principal(record),
+            credential=credential,
+            attributed=attributed,
+            provenance=provenance,
         )
 
     def _resolve_bearer(self, token: str) -> ResolvedCaller:
@@ -187,20 +200,35 @@ class IdentityBoundary:
                 "the bearer token is not valid",
                 headers={"WWW-Authenticate": 'Bearer error="invalid_token"'},
             )
+        provenance = Provenance(
+            principal_id=record.id, method="bearer", attributed=False, signed=None
+        )
         return ResolvedCaller(
             principal=_principal(record),
             credential=BearerCredential(method="bearer"),
             attributed=False,
+            provenance=provenance,
         )
 
 
-def _credential(verified: VerifiedRequest, request: KeptRequest) -> SignatureCredential:
-    directory = verified.directory
+def _credential(verified: VerifiedRequest) -> SignatureCredential:
     return SignatureCredential(
         method="web_bot_auth",
         origin=origin_of(verified.origin),
         keyid=str(verified.keyid),
         body_covered=verified.body_covered,
-        request=request,
+    )
+
+
+def _signed(
+    credential: SignatureCredential, verified: VerifiedRequest, request: KeptRequest
+) -> SignedRequest:
+    """The verified request, with its signer and the directory fetch it verified against
+    (§ 4.1.2), when the resolver provides it."""
+    directory = verified.directory
+    signer = Signer(
+        origin=credential.origin,
+        keyid=credential.keyid,
         directory=None if directory is None else fetch_of(directory.evidence),
     )
+    return SignedRequest(request=request, signer=signer)

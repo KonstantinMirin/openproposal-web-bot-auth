@@ -13,6 +13,8 @@ converts them to and from the library's own types.
   directory response as exact field lines and bytes (§ 4.1.2, Signed messages).
 - `Signer`, `SignedRequest`, `SignedResponse`: who signed a kept message, with
   which key, and the directory fetch that key came from.
+- `Provenance`: who wrote an assent entry and how that was proven, which the
+  seller keeps with the entry.
 """
 
 from __future__ import annotations
@@ -188,3 +190,37 @@ class SignedResponse(Value):
     response: KeptResponse
     signer: Signer
     request_signer: Signer
+
+
+class IllegalProvenanceError(ValueError):
+    """A provenance whose signed request doesn't match how the caller authenticated."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "a provenance carries a signed request exactly when the caller signed,"
+            " and only a signature attributes"
+        )
+
+
+class Provenance(Value):
+    """Who wrote an assent entry and how the boundary confirmed it: what storage keeps with it.
+
+    The identity boundary builds it once, from the caller it confirmed. The
+    offer logic reads only `principal_id` and hands the rest to storage
+    unread. `signed` is present exactly when `method` is the signature method,
+    and only a signature attributes, so no other combination constructs.
+    """
+
+    principal_id: str
+    method: AuthMethod
+    #: § 4.1.2: the signature attributes the body's entries to the principal.
+    attributed: bool
+    #: The verified request that carried the entry, with who signed it.
+    signed: SignedRequest | None
+
+    @model_validator(mode="after")
+    def _signed_exactly_for_a_signature(self) -> Self:
+        signature = self.method == "web_bot_auth"
+        if signature != (self.signed is not None) or (self.attributed and not signature):
+            raise IllegalProvenanceError
+        return self

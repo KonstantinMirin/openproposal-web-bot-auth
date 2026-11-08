@@ -42,6 +42,17 @@ def open_db(path: Path, *schemas: str) -> sqlite3.Connection:
 
 
 @contextmanager
+def open_read_only(path: Path | str) -> Iterator[sqlite3.Connection]:
+    """A party's database, opened read-only, as an observer outside the party opens it."""
+    db = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    db.row_factory = sqlite3.Row
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+@contextmanager
 def transaction(db: sqlite3.Connection) -> Iterator[None]:
     """`with transaction(db):` runs the block as one SQLite transaction.
 

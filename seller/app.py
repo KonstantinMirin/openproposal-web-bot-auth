@@ -5,9 +5,10 @@ at import time. Uvicorn builds the app with `--factory seller.app:app_from_env`,
 the only caller of `SellerSettings.from_env()`.
 
 Every agent-facing route takes the caller from the identity boundary
-(`CallerDep`, seller/http.py) and nothing else. The `/operator/` routes are
-the seller's own controls, outside the boundary: no front routes them, and
-each call carries the operator key (transport/operator.py).
+(`CallerDep`, or `ProvenanceDep` for the offer logic, seller/http.py) and
+nothing else. The `/operator/` routes are the seller's own controls, outside
+the boundary: no front routes them, and each call carries the operator key
+(transport/operator.py).
 `ResponseSigningMiddleware` signs every response, refusals included, and binds
 it to the request it answers.
 """
@@ -43,7 +44,7 @@ from transport.wba import directory_resolver, http_client, tls_context
 from .boundary import IdentityBoundary
 from .errors import Rejected, UnknownPrincipal
 from .faults import FaultInjection
-from .http import CallerDep, RawBodyDep, answer, install_handlers
+from .http import CallerDep, ProvenanceDep, RawBodyDep, answer, install_handlers
 from .offers.acceptance import answer_commit
 from .offers.issuance import issue_fresh
 from .offers.reading import full_representation, parse_commit
@@ -60,20 +61,23 @@ api = APIRouter()
 
 
 @api.get("/proposals/{proposal_id}")
-async def get_proposal(proposal_id: str, caller: CallerDep, store: OfferStoreDep) -> JSONResponse:
-    return answer(full_representation(store, caller, proposal_id))
+async def get_proposal(
+    proposal_id: str, provenance: ProvenanceDep, store: OfferStoreDep
+) -> JSONResponse:
+    principal_id = None if provenance is None else provenance.principal_id
+    return answer(full_representation(store, principal_id, proposal_id))
 
 
 @api.post("/proposals/{proposal_id}/commit")
 async def post_commit(
-    proposal_id: str, caller: CallerDep, store: OfferStoreDep, body: RawBodyDep
+    proposal_id: str, provenance: ProvenanceDep, store: OfferStoreDep, body: RawBodyDep
 ) -> JSONResponse:
     # The route takes the body as bytes, so nothing parses it before the boundary has
     # confirmed the credential: a failing credential is refused even when the JSON is broken.
     request = parse_commit(body)
     if isinstance(request, Rejected):
         return answer(request)
-    return answer(answer_commit(store, caller, proposal_id, request, datetime.now(UTC)))
+    return answer(answer_commit(store, provenance, proposal_id, request, datetime.now(UTC)))
 
 
 @api.get("/whoami")

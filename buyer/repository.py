@@ -95,6 +95,7 @@ class NotPendingError(LookupError):
 class BuyerRepository:
     def __init__(self, path: Path) -> None:
         self.db = open_db(path, evidence.SCHEMA, SCHEMA)
+        self._evidence = evidence.EvidenceStore(self.db)
 
     def close(self) -> None:
         """Closes the connection. The app's lifespan calls it on shutdown."""
@@ -172,7 +173,7 @@ class BuyerRepository:
             ).fetchone()
             if row is not None and row["state"] == "agreed":
                 return int(row["response_id"])
-            response_id = evidence.save_response(self.db, response)
+            response_id = self._evidence.keep_response(response)
             self._settle(commit_id, "agreed", entries=json.dumps([dump(e) for e in entries]))
             self.db.execute(
                 "UPDATE commits SET response_id = ?, attributed = ? WHERE id = ?",

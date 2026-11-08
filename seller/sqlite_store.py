@@ -16,11 +16,10 @@ from openproposal import AssentEntry, AssentEntryRole, ErrorObject, dump, dump_j
 
 from persistence import evidence
 from persistence.sqlite import one_of, open_db, transaction
-from persistence.values import AuthMethod, Origin, SignedRequest, Signer
+from persistence.values import AuthMethod, Origin, Provenance
 from protocol.record import sha256_hex
 from protocol.values import JsonObject
 
-from .caller import ResolvedCaller, SignatureCredential
 from .ports import PrincipalRecord, ProcessedCommit, StoredProposal
 
 SCHEMA = f"""
@@ -105,15 +104,10 @@ def _document(text: str) -> JsonObject:
     return document
 
 
-def _signed_request(signature: SignatureCredential) -> SignedRequest:
-    """The verified request, as the evidence schema keeps it, with who signed it."""
-    signer = Signer(origin=signature.origin, keyid=signature.keyid, directory=signature.directory)
-    return SignedRequest(request=signature.request, signer=signer)
-
-
 class SqliteSellerStore:
     def __init__(self, path: Path) -> None:
         self.db = open_db(path, evidence.SCHEMA, SCHEMA)
+        self._evidence = evidence.EvidenceStore(self.db)
 
     def close(self) -> None:
         """Closes the connection. The app's lifespan calls it on shutdown."""
@@ -189,14 +183,14 @@ class SqliteSellerStore:
         return [AssentEntry.model_validate(json.loads(row["entry"])) for row in rows]
 
     def append_assent(
-        self, proposal_id: str, entry: AssentEntry, by: ResolvedCaller | None
+        self, proposal_id: str, entry: AssentEntry, provenance: Provenance | None
     ) -> None:
-        """Appends an entry. A buyer's entry keeps how its principal authenticated and, for a
-        signature, the signed request that carried it, in the caller's transaction."""
-        method: AuthMethod | None = None if by is None else by.credential.method
+        """Appends an entry. A buyer's entry keeps its provenance and, for a signature, the
+        signed request that carried it, in the caller's transaction."""
+        p = provenance
         evidence_id = None
-        if by is not None and isinstance(by.credential, SignatureCredential):
-            evidence_id = evidence.save_request(self.db, _signed_request(by.credential))
+        if p is not None and p.signed is not None:
+            evidence_id = self._evidence.keep_request(p.signed)
         self.db.execute(
             "INSERT INTO assent (proposal_id, role, entry, idempotency_key, principal_id,"
             " authentication_method, evidence_id, attributed) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -205,10 +199,10 @@ class SqliteSellerStore:
                 entry.role,
                 dump_json(entry),
                 entry.idempotency_key,
-                None if by is None else by.principal.id,
-                method,
+                None if p is None else p.principal_id,
+                None if p is None else p.method,
                 evidence_id,
-                int(by is not None and by.attributed),
+                int(p is not None and p.attributed),
             ),
         )
 

@@ -64,14 +64,16 @@ flowchart LR
         R2 --> R3[3 resolve the stored principal<br/>by verified origin, or by token hash]
         R3 --> R4[4 freeze the result]
     end
-    R4 -- "ResolvedCaller or PublicCaller" --> L[offer logic<br/>seller/offers/]
+    R4 -- "ResolvedCaller or PublicCaller" --> S[HTTP seam<br/>seller/http.py]
+    S -- "principal id and Provenance" --> L[offer logic<br/>seller/offers/]
     R2 -. "failing credential:<br/>400, 401, 403, 429, 503" .-> X["refused, and the handler never runs"]
 ```
 
 The code path, in order:
 
-1. Each route declares `caller: CallerDep`, and a route that reads the body
-   declares `body: RawBodyDep` ([`seller/http.py`](seller/http.py)). FastAPI
+1. Each route declares `caller: CallerDep`, or `provenance: ProvenanceDep`
+   when it calls the offer logic, and a route that reads the body declares
+   `body: RawBodyDep` ([`seller/http.py`](seller/http.py)). FastAPI
    runs the boundary that `create_app` built ([`seller/app.py`](seller/app.py))
    before the handler. No route takes a `Request` or reads a header.
 2. `IdentityBoundary.resolve` ([`seller/boundary.py`](seller/boundary.py))
@@ -80,10 +82,7 @@ The code path, in order:
    the origin's directory through the resolver in
    [`transport/wba.py`](transport/wba.py) and checks `Content-Digest` against the
    body. The boundary then resolves the origin with `for_origin` (stored by
-   [`seller/sqlite_store.py`](seller/sqlite_store.py)). It writes nothing: the
-   verified request travels in the credential as a `KeptRequest`, with the
-   directory fetch it verified against
-   ([`persistence/values.py`](persistence/values.py)).
+   [`seller/sqlite_store.py`](seller/sqlite_store.py)). It writes nothing.
 4. A token is confirmed and resolved by one lookup, `for_token`, which matches
    its SHA-256. The seller never stores the token.
 5. The boundary returns a frozen `ResolvedCaller` (a principal, a
@@ -92,15 +91,19 @@ The code path, in order:
    origin with no row is an established identity with no principal: a
    `PublicCaller` that carries the signature. The types
    ([`seller/caller.py`](seller/caller.py)) are strict, frozen, and
-   discriminated, and refuse an amended copy.
-6. The offer logic ([`seller/offers/`](seller/offers)) takes that value.
-   It checks only `isinstance(caller, ResolvedCaller)` and
-   `caller.principal.id`. It hands the caller to storage with the entry it
-   writes (`answer_commit`), and storage keeps how it authenticated and, for a
-   signature, the signed request with the directory it verified against,
-   through the one evidence schema in
+   discriminated, and refuse an amended copy. A `ResolvedCaller` also carries
+   its `Provenance` ([`persistence/values.py`](persistence/values.py)): the
+   principal id, the method, the attribution, and, for a signature, the
+   verified request with the directory fetch it verified against.
+6. The offer logic ([`seller/offers/`](seller/offers)) never sees the caller.
+   The HTTP seam hands it the principal id to read a proposal, and the
+   `Provenance` (or None, for a caller with no principal) to answer a commit.
+   It decides on the principal id only, and passes the provenance to storage
+   with the entry it writes (`answer_commit`). Storage keeps it and, for a
+   signature, the signed request through the one `EvidenceStore` in
    [`persistence/evidence.py`](persistence/evidence.py), in the same
-   transaction. A request that writes no entry leaves no evidence. No offer
+   transaction. A request that writes no entry leaves no evidence. The offer
+   logic can't import an identity type (`ruff-domain.toml`), so no offer
    decision depends on the credential.
 
 A credential that fails is refused at the boundary, before anything parses the
@@ -127,8 +130,8 @@ with `WebBotAuth(signer, verifier, expect=seller)`, and `Bearer` sends the
 token with `WebBotAuth.verify_only(verifier, expect=seller)`. Either way the
 buyer verifies the seller's signed answer against the origin it knows the
 seller by. On the seller, both reach the same `ResolvedCaller` type and the
-same offer code; only `credential.method` differs, and the offer logic doesn't
-read it.
+same offer code; only the method differs, and the offer logic hands it to
+storage unread.
 
 The buyer mirrors the seller's boundary
 ([`buyer/seller_client.py`](buyer/seller_client.py)). Its one client to a

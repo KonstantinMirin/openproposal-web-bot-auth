@@ -14,10 +14,8 @@ from typing import Protocol
 
 from openproposal import AssentEntry, ErrorObject
 
-from persistence.values import Origin
+from persistence.values import Origin, Provenance
 from protocol.values import JsonObject
-
-from .caller import ResolvedCaller
 
 
 @dataclass(frozen=True)
@@ -58,11 +56,11 @@ class OfferRepository(Protocol):
     def save_proposal(self, proposal: StoredProposal) -> None: ...
     def assent(self, proposal_id: str) -> list[AssentEntry]: ...
     def append_assent(
-        self, proposal_id: str, entry: AssentEntry, by: ResolvedCaller | None
+        self, proposal_id: str, entry: AssentEntry, provenance: Provenance | None
     ) -> None:
-        """Appends `entry`. For a buyer's entry, `by` is the caller that wrote it: storage
-        keeps how it authenticated and, for a signature, the signed request, in the same
-        transaction."""
+        """Appends `entry`. A buyer's entry comes with its `provenance`: storage keeps who
+        wrote it, how they authenticated and, for a signature, the signed request, in the
+        same transaction. The seller's own entry has none."""
 
     def save_agreed(
         self, proposal_id: str, digest: str, digest_input: bytes, entries: Sequence[AssentEntry]

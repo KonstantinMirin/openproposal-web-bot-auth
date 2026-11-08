@@ -1,10 +1,12 @@
 """The seller's HTTP seam: what a route asks for, and how every answer and error is rendered.
 
-A route takes `caller: CallerDep` and, when it reads one, `body: RawBodyDep`,
-never a `Request`, which would hand it the credential headers. `CallerDep` runs
-the identity boundary that `create_app` built, over the same body bytes the
-route then parses, so nothing parses the body before the credential is
-confirmed.
+A route takes `caller: CallerDep`, or `provenance: ProvenanceDep` when it calls
+the offer logic, and, when it reads one, `body: RawBodyDep`, never a `Request`,
+which would hand it the credential headers. `CallerDep` runs the identity
+boundary that `create_app` built, over the same body bytes the route then
+parses, so nothing parses the body before the credential is confirmed.
+`ProvenanceDep` is all the offer logic receives of the caller: its principal
+and the provenance storage keeps, never a credential.
 
 The offer logic returns its answers as values; this module renders them. A
 seller error body has one of two forms:
@@ -32,13 +34,14 @@ from fastapi.responses import JSONResponse
 from openproposal import CommitResult, ErrorObject, dump
 from starlette.exceptions import HTTPException
 
+from persistence.values import Provenance
 from protocol.operations import is_stored_result
 from protocol.values import JsonObject
 from transport.handlers import on_error
 from transport.operator import ControlError, render_control
 
 from .boundary import Refused
-from .caller import Caller
+from .caller import Caller, ResolvedCaller
 from .errors import Rejected, validation_detail
 from .resources import BoundaryDep
 
@@ -58,6 +61,15 @@ async def resolve_caller(request: Request, body: RawBodyDep, boundary: BoundaryD
 
 #: How a route asks for its caller: `caller: CallerDep`.
 CallerDep = Annotated[Caller, Depends(resolve_caller)]
+
+
+async def provenance_of(caller: CallerDep) -> Provenance | None:
+    """What the offer logic takes of the caller: its provenance, or None with no principal."""
+    return caller.provenance if isinstance(caller, ResolvedCaller) else None
+
+
+#: How a route that calls the offer logic asks for its caller: `provenance: ProvenanceDep`.
+ProvenanceDep = Annotated[Provenance | None, Depends(provenance_of)]
 
 
 # § 2.4 errors

@@ -8,7 +8,6 @@ from pydantic import ValidationError
 from protocol.operations import ProtocolViolation
 from protocol.operations import parse_commit as parse_commit_body
 from protocol.values import JsonObject, JsonValue, MalformedJsonError
-from seller.caller import Caller, ResolvedCaller
 from seller.errors import Rejected, validation_detail
 from seller.ports import OfferRepository, StoredProposal
 
@@ -30,14 +29,13 @@ def parse_commit(body: bytes) -> Commit | Rejected:
         return Rejected.of("validation", str(e))
 
 
-def issued_to(store: OfferRepository, caller: Caller, proposal_id: str) -> StoredProposal | None:
-    """The stored proposal, when it is issued to the caller's principal (§ 4.3)."""
+def issued_to(
+    store: OfferRepository, principal_id: str | None, proposal_id: str
+) -> StoredProposal | None:
+    """The stored proposal, when it is issued to `principal_id` (§ 4.3). None names no
+    principal, which no proposal is issued to."""
     found = store.issued(proposal_id)
-    if (
-        found is None
-        or not isinstance(caller, ResolvedCaller)
-        or found.buyer_principal_id != caller.principal.id
-    ):
+    if found is None or principal_id is None or found.buyer_principal_id != principal_id:
         return None
     return found
 
@@ -48,10 +46,10 @@ def not_found(proposal_id: str) -> Rejected:
 
 
 def full_representation(
-    store: OfferRepository, caller: Caller, proposal_id: str
+    store: OfferRepository, principal_id: str | None, proposal_id: str
 ) -> JsonObject | Rejected:
     """The Full Representation (§ 2.1) of an issued proposal, for its buyer only."""
-    issued = issued_to(store, caller, proposal_id)
+    issued = issued_to(store, principal_id, proposal_id)
     if issued is None:
         return not_found(proposal_id)
     assent: list[JsonValue] = [dump(e) for e in store.assent(proposal_id)]

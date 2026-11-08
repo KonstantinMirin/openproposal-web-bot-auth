@@ -2,10 +2,11 @@
 
 Nothing here reads a header or a credential, and nothing imports HTTP, the
 Web Bot Auth library, or a storage engine (the offers-framework-free import
-contract). Each operation takes the frozen caller the identity boundary
-returned and the ports it needs, and returns its answer as a value: a
-`CommitResult`, a document, or a `Rejected` (seller/errors.py). seller/http.py
-renders it.
+contract), nor any identity type, which ruff-domain.toml bans here. Each
+operation takes the caller's principal id, or its `Provenance`
+(persistence/values.py), which it passes to storage unread, and the ports it
+needs. It returns its answer as a value: a `CommitResult`, a document, or a
+`Rejected` (seller/errors.py). seller/http.py renders it.
 
 - `checks`: the § 5.6.1 checks of a new `commit`, in order, as named steps.
 - `ledger`: what a replayed `idempotency_key` gets.

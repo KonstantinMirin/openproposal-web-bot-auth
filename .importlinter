@@ -67,3 +67,14 @@ forbidden_modules =
     starlette
     httpx
     sqlite3
+
+# Storage keeps evidence as pure values and verifies nothing: importing any
+# persistence module loads no Web Bot Auth library, so no verifier, key resolver,
+# or directory parser can sit there. transport/reverify.py verifies kept evidence.
+[importlinter:contract:persistence-verifies-nothing]
+name = Storage imports no signing library
+type = forbidden
+source_modules =
+    persistence
+forbidden_modules =
+    iab_agentic_primitives
