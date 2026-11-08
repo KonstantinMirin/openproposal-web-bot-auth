@@ -48,12 +48,11 @@ from transport.wba import fetch_of, is_signed, origin_of, request_of, to_library
 from .caller import (
     BearerCredential,
     Caller,
-    Principal,
     PublicCaller,
     ResolvedCaller,
     SignatureCredential,
 )
-from .ports import PrincipalRecord
+from .ports import Principal
 
 #: The boundary's own refusals, beside the library's `Refusal` for a signature.
 BoundaryReason = Literal["invalid-authorization", "two-credentials", "invalid-token"]
@@ -85,8 +84,8 @@ class Refused(Exception):
 class PrincipalDirectory(Protocol):
     """The boundary's lookups: a principal by its verified origin, or by its token."""
 
-    def for_origin(self, origin: Origin) -> PrincipalRecord | None: ...
-    def for_token(self, token: str) -> PrincipalRecord | None: ...
+    def for_origin(self, origin: Origin) -> Principal | None: ...
+    def for_token(self, token: str) -> Principal | None: ...
 
 
 @dataclass(frozen=True)
@@ -134,10 +133,6 @@ def _signature_refused(error: WebBotAuthError, *, has_body: bool) -> Refused:
     return Refused(error.status, error.refusal, str(error), headers=hint)
 
 
-def _principal(record: PrincipalRecord) -> Principal:
-    return Principal(id=record.id, kind="buyer", legal_name=record.legal_name, domain=record.domain)
-
-
 class IdentityBoundary:
     """Confirms the presented credential and resolves it to this seller's principal."""
 
@@ -171,20 +166,20 @@ class IdentityBoundary:
         self, verified: VerifiedRequest, request: KeptRequest
     ) -> ResolvedCaller | PublicCaller:
         credential = _credential(verified)
-        record = self._directory.for_origin(credential.origin)
-        if record is None:
+        principal = self._directory.for_origin(credential.origin)
+        if principal is None:
             return PublicCaller(signature=credential)
         attributed = attributes(
-            credential.origin.host, record.domain, body_covered=credential.body_covered
+            credential.origin.host, principal.domain, body_covered=credential.body_covered
         )
         provenance = Provenance(
-            principal_id=record.id,
+            principal_id=principal.id,
             method=credential.method,
             attributed=attributed,
             signed=_signed(credential, verified, request),
         )
         return ResolvedCaller(
-            principal=_principal(record),
+            principal=principal,
             credential=credential,
             attributed=attributed,
             provenance=provenance,
@@ -192,8 +187,8 @@ class IdentityBoundary:
 
     def _resolve_bearer(self, token: str) -> ResolvedCaller:
         # A token is confirmed and resolved by the same lookup.
-        record = self._directory.for_token(token)
-        if record is None:
+        principal = self._directory.for_token(token)
+        if principal is None:
             raise Refused(
                 401,
                 "invalid-token",
@@ -201,10 +196,10 @@ class IdentityBoundary:
                 headers={"WWW-Authenticate": 'Bearer error="invalid_token"'},
             )
         provenance = Provenance(
-            principal_id=record.id, method="bearer", attributed=False, signed=None
+            principal_id=principal.id, method="bearer", attributed=False, signed=None
         )
         return ResolvedCaller(
-            principal=_principal(record),
+            principal=principal,
             credential=BearerCredential(method="bearer"),
             attributed=False,
             provenance=provenance,

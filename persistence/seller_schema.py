@@ -12,7 +12,7 @@ refuses is refused on write too.
 from __future__ import annotations
 
 import sqlite3
-from typing import Annotated, Literal
+from typing import Annotated
 
 from openproposal import AssentEntry, AssentEntryRole, ErrorObject
 from pydantic import Discriminator, Json, Strict, TypeAdapter
@@ -20,10 +20,8 @@ from pydantic import Discriminator, Json, Strict, TypeAdapter
 from protocol.values import JsonObject, Value
 
 from .sqlite import fetch_all, fetch_one, one_of, select
-from .values import AuthMethod, BearerMethod, Origin, SignatureMethod
+from .values import AuthMethod, BearerMethod, Origin, PrincipalKind, SignatureMethod
 
-#: The kinds of principal the seller holds: its buyers.
-PrincipalKind = Literal["buyer"]
 #: An INTEGER column that holds 0 or 1, read as a bool.
 Flag = Annotated[bool, Strict(False)]
 

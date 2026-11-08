@@ -35,6 +35,8 @@ SignatureMethod = Literal["web_bot_auth"]
 BearerMethod = Literal["bearer"]
 #: How a caller authenticated.
 AuthMethod = Literal[SignatureMethod, BearerMethod]
+#: The kinds of principal a seller holds: its buyers.
+PrincipalKind = Literal["buyer"]
 
 #: Where an origin publishes its signed key directory.
 DIRECTORY_PATH = "/.well-known/http-message-signatures-directory"

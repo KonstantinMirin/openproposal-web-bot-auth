@@ -4,7 +4,7 @@
 seller code that serializes for storage. It writes the tables that
 persistence/seller_schema.py defines and reads them through that module, the
 seller's read model's too; a principal row is read straight into the port's
-`PrincipalRecord`, by its fields' names.
+`Principal`, by its fields' names, its `kind` included.
 """
 
 from __future__ import annotations
@@ -21,18 +21,18 @@ from persistence.sqlite import fetch_one, is_closed, json_array, open_db, select
 from persistence.values import Origin, Provenance
 from protocol.record import sha256_hex
 
-from .ports import PrincipalRecord, ProcessedCommit, StoredProposal
+from .ports import Principal, ProcessedCommit, StoredProposal
 
 #: A principal, by id, and by the credential that names it.
-_BY_ID = select("principals", PrincipalRecord, where="id = ?")
+_BY_ID = select("principals", Principal, where="id = ?")
 _BY_ORIGIN = select(
     "principals",
-    PrincipalRecord,
+    Principal,
     where="id = (SELECT principal_id FROM credentials WHERE origin = ?)",
 )
 _BY_TOKEN = select(
     "principals",
-    PrincipalRecord,
+    Principal,
     where="id = (SELECT principal_id FROM credentials WHERE token_hash = ?)",
 )
 
@@ -66,10 +66,10 @@ class SqliteSellerStore:
     def is_empty(self) -> bool:
         return fetch_one(self._db, "SELECT 1 FROM principals LIMIT 1") is None
 
-    def add_principal(self, principal: PrincipalRecord) -> None:
+    def add_principal(self, principal: Principal) -> None:
         self._db.execute(
-            "INSERT INTO principals (id, kind, legal_name, domain) VALUES (?, 'buyer', ?, ?)",
-            (principal.id, principal.legal_name, principal.domain),
+            "INSERT INTO principals (id, kind, legal_name, domain) VALUES (?, ?, ?, ?)",
+            (principal.id, principal.kind, principal.legal_name, principal.domain),
         )
 
     def add_origin_credential(self, principal_id: str, origin: Origin) -> None:
@@ -84,18 +84,18 @@ class SqliteSellerStore:
             (principal_id, token_hash(token)),
         )
 
-    def principal(self, principal_id: str) -> PrincipalRecord | None:
+    def principal(self, principal_id: str) -> Principal | None:
         return self._principal(_BY_ID, principal_id)
 
-    def for_origin(self, origin: Origin) -> PrincipalRecord | None:
+    def for_origin(self, origin: Origin) -> Principal | None:
         return self._principal(_BY_ORIGIN, str(origin))
 
-    def for_token(self, token: str) -> PrincipalRecord | None:
+    def for_token(self, token: str) -> Principal | None:
         return self._principal(_BY_TOKEN, token_hash(token))
 
-    def _principal(self, query: str, key: str) -> PrincipalRecord | None:
+    def _principal(self, query: str, key: str) -> Principal | None:
         row = fetch_one(self._db, query, (key,))
-        return None if row is None else PrincipalRecord.model_validate(row)
+        return None if row is None else Principal.model_validate(row)
 
     # Proposals and assent (OfferRepository)
 

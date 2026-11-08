@@ -3,6 +3,10 @@
 Only domain values cross a port, never rows. seller/sqlite_store.py implements
 every port; the boundary (its `PrincipalDirectory`, in seller/boundary.py), the
 offer logic, and the first-boot records each depend on the ports they use.
+
+A `Principal` is the one value of a party this seller knows. The store builds it
+from its row, and the boundary hands it on, unchanged, in the `ResolvedCaller` it
+returns (seller/caller.py).
 """
 
 from __future__ import annotations
@@ -14,17 +18,18 @@ from typing import Protocol
 
 from openproposal import AssentEntry, ErrorObject
 
-from persistence.values import Origin, Provenance
+from persistence.values import Origin, PrincipalKind, Provenance
 from protocol.values import JsonObject, Value
 
 
-class PrincipalRecord(Value):
-    """A party this seller knows, as its records hold it. The boundary makes it a `Principal`.
+class Principal(Value):
+    """A party this seller knows, as its own database records it.
 
     The store reads a principal row straight into it, by its fields' names.
     """
 
     id: str
+    kind: PrincipalKind
     legal_name: str
     domain: str
 
@@ -91,7 +96,7 @@ class Onboarding(OfferRepository, Protocol):
     """What the first-boot records and the operator's `issue` need."""
 
     def is_empty(self) -> bool: ...
-    def principal(self, principal_id: str) -> PrincipalRecord | None: ...
-    def add_principal(self, principal: PrincipalRecord) -> None: ...
+    def principal(self, principal_id: str) -> Principal | None: ...
+    def add_principal(self, principal: Principal) -> None: ...
     def add_origin_credential(self, principal_id: str, origin: Origin) -> None: ...
     def add_token_credential(self, principal_id: str, token: str) -> None: ...

@@ -9,7 +9,7 @@ from protocol.documents import loads_yaml
 from protocol.values import JsonObject
 from seller.app import TEMPLATE
 from seller.offers.issuance import Issuer, issued
-from seller.ports import PrincipalRecord
+from seller.ports import Principal
 from shared.party import OwnParty
 
 
@@ -33,7 +33,10 @@ def seed_issuer(template: JsonObject | None = None) -> Issuer:
 
 def seed_document() -> JsonObject:
     """The demo's seed proposal as the seller issues it to buyer-wba, as demo-wba-1."""
-    buyer = PrincipalRecord(
-        id="buyer-wba", legal_name="Demo Buyer Agency LLC", domain="buyer.wba-demo.noetis.dev"
+    buyer = Principal(
+        id="buyer-wba",
+        kind="buyer",
+        legal_name="Demo Buyer Agency LLC",
+        domain="buyer.wba-demo.noetis.dev",
     )
     return issued(seed_issuer(), buyer, "demo-wba-1").document

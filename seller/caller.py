@@ -1,7 +1,8 @@
 """Who is calling: the frozen values the identity boundary (seller/boundary.py) returns.
 
-A leaf module. It imports pydantic and the pure values of protocol/values.py and
-persistence/values.py, nothing that reaches HTTP, storage, or the Web Bot Auth
+It imports pydantic, the pure values of protocol/values.py and
+persistence/values.py, and the `Principal` of seller/ports.py, which the store
+builds from its row: nothing that reaches HTTP, storage, or the Web Bot Auth
 library. The offer logic never takes a `Caller`: the seller's HTTP seam
 (seller/http.py) hands it the caller's `Provenance` instead.
 
@@ -25,6 +26,8 @@ from pydantic import Field, model_validator
 
 from persistence.values import BearerMethod, Origin, Provenance, SignatureMethod
 from protocol.values import AmendedValueError, Value
+
+from .ports import Principal
 
 
 class AmendedIdentityError(AmendedValueError):
@@ -50,15 +53,6 @@ class _Frozen(Value):
         raise AmendedIdentityError(type(self).__name__)
 
 
-class Principal(_Frozen):
-    """A party this seller knows, as its own database records it."""
-
-    id: str
-    kind: Literal["buyer"]
-    legal_name: str
-    domain: str
-
-
 class SignatureCredential(_Frozen):
     """A verified Web Bot Auth signature: the origin it establishes and the key that signed."""
 
@@ -81,7 +75,8 @@ Credential = Annotated[SignatureCredential | BearerCredential, Field(discriminat
 
 
 class ResolvedCaller(_Frozen):
-    """A confirmed credential that names a principal in this seller's records."""
+    """A confirmed credential that names a principal in this seller's records, as the store
+    read it."""
 
     kind: Literal["resolved"] = "resolved"
     principal: Principal

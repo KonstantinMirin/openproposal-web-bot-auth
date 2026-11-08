@@ -11,7 +11,7 @@ from pydantic import SecretStr
 from persistence.values import Origin
 
 from .offers.issuance import Issuer, issue
-from .ports import Onboarding, PrincipalRecord
+from .ports import Onboarding, Principal
 
 
 def seed(
@@ -26,8 +26,11 @@ def seed(
         return
     with store.transaction():
         # A buyer that signs: the seller's onboarding recorded its origin, and its domain.
-        signing = PrincipalRecord(
-            id="buyer-wba", legal_name="Demo Buyer Agency LLC", domain=buyer_origin.host
+        signing = Principal(
+            id="buyer-wba",
+            kind="buyer",
+            legal_name="Demo Buyer Agency LLC",
+            domain=buyer_origin.host,
         )
         store.add_principal(signing)
         store.add_origin_credential(signing.id, buyer_origin)
@@ -36,8 +39,9 @@ def seed(
 
         # A buyer that presents a bearer token the seller issued it.
         if bearer_token is not None:
-            bearer = PrincipalRecord(
+            bearer = Principal(
                 id="buyer-bearer",
+                kind="buyer",
                 legal_name="Bearer Agency LLC",
                 domain="bearer-buyer.wba-demo.noetis.dev",
             )

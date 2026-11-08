@@ -2,8 +2,10 @@
 
 Everything else gets a caller from the identity boundary, through the app. The
 ast-grep rule identity-built-only-by-the-boundary exempts this file and
-seller/boundary.py only. Each builder takes the fields to set, so a test can
-also ask for a value the types must refuse.
+seller/boundary.py only. A `Principal` is the store's value (seller/ports.py),
+which the boundary hands on; it is built here to put in a `ResolvedCaller`. Each
+builder takes the fields to set, so a test can also ask for a value the types
+must refuse.
 """
 
 from __future__ import annotations
@@ -11,11 +13,11 @@ from __future__ import annotations
 from persistence.values import KeptRequest, Provenance, SignedRequest, Signer
 from seller.caller import (
     BearerCredential,
-    Principal,
     PublicCaller,
     ResolvedCaller,
     SignatureCredential,
 )
+from seller.ports import Principal
 
 
 def principal(**fields: object) -> Principal:

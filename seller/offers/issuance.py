@@ -15,7 +15,7 @@ from datetime import datetime
 from protocol.record import line_items_of
 from protocol.values import JsonObject, instant
 from seller.errors import UnknownPrincipal
-from seller.ports import Onboarding, PrincipalRecord, StoredProposal
+from seller.ports import Onboarding, Principal, StoredProposal
 from shared.party import OwnParty
 
 
@@ -27,7 +27,7 @@ class Issuer:
     template: JsonObject
 
 
-def issued(issuer: Issuer, principal: PrincipalRecord, proposal_id: str) -> StoredProposal:
+def issued(issuer: Issuer, principal: Principal, proposal_id: str) -> StoredProposal:
     """A copy of the template issued to `principal` as `proposal_id`. Its seller is this
     seller's own party; its buyer, and every line item's `eligible_buyers`, name the
     principal's domain."""
@@ -42,7 +42,7 @@ def issued(issuer: Issuer, principal: PrincipalRecord, proposal_id: str) -> Stor
 
 
 def issue(
-    store: Onboarding, issuer: Issuer, principal: PrincipalRecord, proposal_id: str
+    store: Onboarding, issuer: Issuer, principal: Principal, proposal_id: str
 ) -> StoredProposal:
     """Issues the template to `principal`, inside the caller's transaction."""
     proposal = issued(issuer, principal, proposal_id)
