@@ -1,7 +1,7 @@
 # Deploy the live demo
 
 This directory runs the demo live at `https://wba-demo.noetis.dev` on one host
-that already runs Caddy (hetzner2). It is separate from the local end-to-end
+that already runs Caddy. It is separate from the local end-to-end
 test in `e2e/`: real origins, Let's Encrypt certificates from the host's Caddy,
 public roots only, and production cache and rotation values.
 
@@ -97,7 +97,7 @@ the seller's test-only fault toggle isn't mounted.
 
 ## Deploy
 
-Run these steps in order. The host is `hetzner2`, and the commands that start
+Run these steps in order. `HOST` is the SSH name of the host, and the commands that start
 with `rsync` run on your laptop from the directory that holds the checkout.
 
 1.  Check that no placeholder is left in the tree: run `make placeholders`,
@@ -123,11 +123,11 @@ with `rsync` run on your laptop from the directory that holds the checkout.
 3.  Copy the checkout to the host:
 
     ```bash
-    ssh hetzner2 'mkdir -p /srv/wba-demo'
+    ssh "$HOST" 'mkdir -p /srv/wba-demo'
     rsync -av --delete --exclude .git --exclude .venv --exclude __pycache__ \
         --exclude .pytest_cache --exclude .ruff_cache --exclude node_modules \
         --exclude e2e/generated --exclude deploy/localhost/generated \
-        openproposal-web-bot-auth/ hetzner2:/srv/wba-demo/openproposal-web-bot-auth/
+        openproposal-web-bot-auth/ "$HOST":/srv/wba-demo/openproposal-web-bot-auth/
     ```
 
     `--delete` is safe here: the checkout holds no secrets, keys, or reports.
