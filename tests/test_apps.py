@@ -2,7 +2,8 @@
 
 The lifespan opens the store and the one client and closes both on shutdown,
 and an agent that fails to start, on a CA bundle it can't read, leaves no store
-open. The fault switch belongs to one app instance. The buyer's flow is in
+open, and a buyer whose signature lifetime the library won't sign with stops at
+boot. The fault switch belongs to one app instance. The buyer's flow is in
 tests/test_buyer.py.
 """
 
@@ -48,6 +49,7 @@ from seller.errors import IdentityChanged
 from seller.faults import FAULT_REASONS
 from seller.resources import SellerResources
 from seller.settings import SellerSettings
+from shared.settings import SettingsError
 from tests.stack import (
     BUYER_KEY,
     ELSEWHERE,
@@ -393,3 +395,16 @@ def test_the_buyer_lifespan_closes_the_client_and_the_store(tmp_path: Path) -> N
         assert not resources.client.is_closed and not resources.store.is_closed
     assert resources.client.is_closed and resources.store.is_closed
     assert {p.name for p in tmp_path.iterdir()} == {"keys", "buyer.db"}
+
+
+@pytest.mark.parametrize("lifetime", [0, 301])
+def test_a_signature_lifetime_the_library_wont_sign_with_stops_the_buyer_at_boot(
+    tmp_path: Path, lifetime: int
+) -> None:
+    """The library signs for 1 to 300 s only: any other lifetime stops the boot, naming the
+    variable, before the buyer mints a key or reports healthy."""
+    settings = replace(_buyer_settings(tmp_path), signature_lifetime=lifetime)
+    with pytest.raises(SettingsError) as e:
+        create_buyer(settings)
+    assert e.value.name == "WBA_SIGNATURE_LIFETIME"
+    assert not any(tmp_path.rglob("*.jwk"))

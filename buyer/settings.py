@@ -8,7 +8,7 @@ The buyer reads every `AgentSettings` variable (shared/settings.py), and these:
 | `PEER_SELLER_ORIGIN` | `https://seller.wba-demo.noetis.dev` | the seller it deals with |
 | `PEER_SELLER_LEGAL_NAME` | `Demo Seller Inc.` | that seller's legal name, as the buyer names it |
 | `PEER_CFBOT_ORIGIN` | `https://cfbot.wba-demo.noetis.dev` | Cloudflare's verifier |
-| `WBA_SIGNATURE_LIFETIME` | `300` | how long its signatures last |
+| `WBA_SIGNATURE_LIFETIME` | `300` | how long its signatures last, 1 to 300 s, checked at boot |
 
 Its own party (`own`) is its `SELF_ORIGIN` and its legal name: the buyer
 refuses a proposal that names any other buyer domain than its origin's host.

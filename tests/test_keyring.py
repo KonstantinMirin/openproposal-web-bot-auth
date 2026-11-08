@@ -72,11 +72,9 @@ class Buyer:
         return [str(k.get("kid")) for k in keys]
 
 
-def _buyer(
-    data_dir: Path, clock: Clock, *, max_age: int = 0, lifetime: int = LIFETIME
-) -> TestClient:
+def _buyer(data_dir: Path, clock: Clock, *, max_age: int = 0) -> TestClient:
     settings = replace(
-        buyer_settings(data_dir), directory_max_age=max_age, signature_lifetime=lifetime
+        buyer_settings(data_dir), directory_max_age=max_age, signature_lifetime=LIFETIME
     )
     return TestClient(create_app(settings, clock=clock))
 
@@ -149,7 +147,7 @@ def test_a_rotation_step_out_of_order_is_a_control_error(buyer: Buyer) -> None:
 
 def test_publish_retire_publish_keeps_every_key(tmp_path: Path) -> None:
     clock = Clock()
-    with _buyer(tmp_path, clock, lifetime=0) as client:
+    with _buyer(tmp_path, clock) as client:
         buyer = Buyer(client, clock, tmp_path / "keys")
         original = buyer.keys().active
         first = buyer.publish()
@@ -159,6 +157,7 @@ def test_publish_retire_publish_keeps_every_key(tmp_path: Path) -> None:
         clock.now += WAIT
         assert buyer.step(ACTIVATE, second) == 200
         assert buyer.step(ACTIVATE, original) == 200
+        clock.now += LIFETIME  # every signature the second key made has expired
         assert buyer.step(RETIRE, second) == 200
         assert buyer.directory() == [original]
     # Both retired keys are kept, and neither overwrote the other.
@@ -179,12 +178,13 @@ def test_a_restart_keeps_the_keys_and_the_rotation_state(tmp_path: Path) -> None
 
 def test_the_scenarios_read_any_key_by_kid_published_or_retired(tmp_path: Path) -> None:
     clock = Clock()
-    with _buyer(tmp_path, clock, lifetime=0) as client:
+    with _buyer(tmp_path, clock) as client:
         buyer = Buyer(client, clock, tmp_path / "keys")
         old = buyer.keys().active
         new = buyer.publish()
         clock.now += WAIT
         assert buyer.step(ACTIVATE, new) == 200
+        clock.now += LIFETIME  # every signature the old key made has expired
         assert buyer.step(RETIRE, old) == 200
     # As e2e/scenarios/conftest.py reads the buyer's keys volume.
     keys = KeyStore.open(tmp_path / "keys")
@@ -212,7 +212,7 @@ def test_the_key_store_reads_a_directory_without_keys_and_writes_nothing(tmp_pat
 
 def test_a_deleted_active_key_is_refused_never_minted_again(tmp_path: Path) -> None:
     clock = Clock()
-    with _buyer(tmp_path, clock, lifetime=0) as client:
+    with _buyer(tmp_path, clock) as client:
         buyer = Buyer(client, clock, tmp_path / "keys")
         active = buyer.keys().active
         buyer.publish()

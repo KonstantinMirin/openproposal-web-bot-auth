@@ -22,13 +22,20 @@ from functools import partial
 from http import HTTPStatus
 
 from fastapi import APIRouter, Depends, FastAPI
-from iab_agentic_primitives.web_bot_auth import DirectoryPublisher, KeyResolver, PublishPolicy
+from iab_agentic_primitives.web_bot_auth import (
+    ConfigurationError,
+    DirectoryPublisher,
+    KeyResolver,
+    PublishPolicy,
+)
 from iab_agentic_primitives.web_bot_auth.asgi import DirectoryMiddleware
+from iab_agentic_primitives.web_bot_auth.rules import MESSAGE_WINDOW
 from starlette.types import ASGIApp
 
 from persistence.values import Origin
 from protocol.documents import loads_yaml
 from shared.keyring import Keyring, SigningIdentity
+from shared.settings import SettingsError
 from transport.control import (
     ACTIVATE,
     CLOUDFLARE_CHECK,
@@ -154,8 +161,11 @@ def create_app(
     with. `transport` answers in place of the network, and `clock` tells the keyring
     the time, for tests.
 
-    The result is the FastAPI app inside the library's `DirectoryMiddleware`.
+    The result is the FastAPI app inside the library's `DirectoryMiddleware`. A
+    signature lifetime the library wouldn't sign with stops the boot with
+    `SettingsError`, naming `WBA_SIGNATURE_LIFETIME`, before any key is minted.
     """
+    _check_lifetime(settings.signature_lifetime)
     plan = Plan.of(loads_yaml(settings.plan_file.read_text(encoding="utf-8")))
     # The buyer mints its first key on first boot only. Its signer and its directory read the
     # key store, which each rotation step refreshes.
@@ -182,6 +192,14 @@ def create_app(
             PublishPolicy(max_age=settings.directory_max_age),
         ),
     )
+
+
+def _check_lifetime(lifetime: int) -> None:
+    """Refuses, at boot, a lifetime outside the library's rule for every signer: 1 to 300 s."""
+    try:
+        MESSAGE_WINDOW.checked_lifetime(lifetime)
+    except ConfigurationError as e:
+        raise SettingsError("WBA_SIGNATURE_LIFETIME", str(e)) from e
 
 
 @dataclass(frozen=True)

@@ -78,7 +78,7 @@ set the values the table's last column names.
 | `DEMO_BEARER_TOKEN` | Seller, buyer, runner, scenarios | None: no bearer credential | The token the seller issues its buyer; the runner reads it only to keep it out of reports |
 | `WBA_DIRECTORY_MAX_AGE` | Seller, buyer, scenarios | `300` | The directory's `Cache-Control: max-age` (the e2e buyer: `0`). A buyer key waits this plus 300 s before it signs |
 | `WBA_MAX_CACHE_AGE` | Seller, buyer, scenarios | The library's, `300` | How long a cached directory answers without a fetch (the e2e seller: `20`) |
-| `WBA_SIGNATURE_LIFETIME` | Buyer, scenarios | `300` | How long the buyer's request signatures last (e2e: `10`) |
+| `WBA_SIGNATURE_LIFETIME` | Buyer, scenarios | `300` | How long the buyer's request signatures last, 1 to 300 s (e2e: `10`) |
 | `DEMO_FAULT_INJECTION` | Seller | Off | TEST ONLY: mounts `PUT /test/fault`; `make live-config` keeps it out of production |
 | `SELLER_CONTROL`, `BUYER_CONTROL` | Runner, scenarios | `http://seller:8000`, `http://buyer:8000` | The agents' own controls, inside the network |
 | `CFBOT_CONTROL` | Scenarios | `http://cfbot:8000` | cfbot's own controls, inside the network |
