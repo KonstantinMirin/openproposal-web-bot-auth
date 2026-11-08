@@ -153,6 +153,19 @@ def test_a_proposal_id_the_url_encodes_keeps_evidence_that_verifies(
     assert asyncio.run(reverify_response(answer)).bound
 
 
+@pytest.mark.parametrize("proposal_id", ["a?b", "a#b"])
+def test_a_proposal_id_with_a_query_or_fragment_character_stays_one_segment(
+    tmp_path: Path, proposal_id: str
+) -> None:
+    """The buyer encodes the id as one path segment, so the seller sees the whole id."""
+    with Stack(tmp_path / "agents") as stack:
+        stack.issue(proposal_id)
+        as_state(Agreed, stack.commit(proposal_id, [DISPLAY]))
+        sent = stack.requests[-1]
+    assert sent.url.raw_path.decode().startswith("/proposals/a%")
+    assert sent.url.query == b""
+
+
 @pytest.mark.parametrize(
     "statement",
     [

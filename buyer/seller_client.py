@@ -26,6 +26,7 @@ against the seller's origin, over the network the buyer's lifespan owns
 from __future__ import annotations
 
 from dataclasses import dataclass
+from urllib.parse import quote
 
 import httpx
 from iab_agentic_primitives.web_bot_auth import (
@@ -178,6 +179,15 @@ def _rejection(exchange: Exchange) -> Rejection | Refusal:
     )
 
 
+def _proposal_path(proposal_id: str, *rest: str) -> str:
+    """`/proposals/{id}` and any further segments, with the id encoded as one path segment.
+
+    A `?`, `#` or `/` in an id then stays part of the id instead of starting a query, a
+    fragment or another segment, so the buyer never calls a resource other than the one named.
+    """
+    return "/".join(("/proposals", quote(proposal_id, safe=""), *rest))
+
+
 def _proposal(
     seller: Counterparty, own: OwnParty, proposal_id: str, exchange: Exchange
 ) -> ReadProposal | Refusal:
@@ -224,7 +234,7 @@ class SellerClient:
     ) -> ReadProposal | Rejection | Refusal:
         """`GET /proposals/{id}`: the issued proposal, or the seller's errors."""
         try:
-            exchange = await self._send(seller, credential, "GET", f"/proposals/{proposal_id}")
+            exchange = await self._send(seller, credential, "GET", _proposal_path(proposal_id))
             if exchange.response.status != httpx.codes.OK:
                 return _rejection(exchange)
             return _proposal(seller, self._own, proposal_id, exchange)
@@ -237,7 +247,7 @@ class SellerClient:
         """`POST /proposals/{id}/commit` with the `Commit` body, sent as stored."""
         try:
             exchange = await self._send(
-                seller, credential, "POST", f"/proposals/{proposal_id}/commit", body
+                seller, credential, "POST", _proposal_path(proposal_id, "commit"), body
             )
             if exchange.response.status != httpx.codes.OK:
                 return _rejection(exchange)
