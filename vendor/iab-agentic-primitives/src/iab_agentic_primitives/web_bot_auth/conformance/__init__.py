@@ -10,7 +10,8 @@ package states the adapter protocol.
 
 - ``vectors``: the committed vectors, at each vector's ``reference_now``.
 - ``live``: the adapter signs and this library verifies, then this library
-  signs and the adapter verifies, at the current time.
+  signs and the adapter verifies, at the current time, for the base requests
+  and for a ``GET`` to each URL in ``scenarios.json``'s ``target_uris``.
 - ``scenarios``: this library signs every scenario in ``scenarios.json``, and
   the adapter verifies it.
 
@@ -34,6 +35,7 @@ from typing import Literal
 
 from ..errors import Refusal
 from ..keys import Ed25519Key
+from ..signer import RequestSigner, SignerConfig
 from ..values import UnixSeconds, system_clock
 from .adapter import Adapter, CommandAdapter, LibraryAdapter
 from .models import (
@@ -323,9 +325,37 @@ class _Run:
             self.adapter(op),
         )
 
+    def _live_target_uris(self, now: UnixSeconds, directory: DirectoryDoc) -> None:
+        """Each side signs a GET to each target-URI case's URL, as written; the other verifies."""
+        signer = self.doc.signer
+        origin = signer.identity
+        ok = passing(origin)
+        dirs = {str(origin): directory}
+        authority = self.doc.verifier
+        reference = RequestSigner(SignerConfig(self.keys[signer.kid], origin))
+        for case in self.doc.target_uris:
+            label = f"{case.id} {case.name}"
+            request = RequestDoc(method="GET", url=case.url)
+            signed = self.adapter(
+                SignRequest(key=self.private[signer.kid], origin=origin, request=request, now=now)
+            )
+            got = (
+                self.reference(
+                    VerifyRequest(request=signed, authority=authority, directories=dirs, now=now)
+                )
+                if isinstance(signed, RequestDoc)
+                else signed
+            )
+            self.record("live", f"adapter signs {label}, reference verifies", ok, got)
+            mine = reference.sign(request.message(), now=now)
+            written = replace(RequestDoc.of(mine), url=case.url)
+            op = VerifyRequest(request=written, authority=authority, directories=dirs, now=now)
+            self.record("live", f"reference signs {label}, adapter verifies", ok, self.adapter(op))
+
     def run_live(self, now: UnixSeconds) -> None:
         directory = self._live_directory(now)
         self._live_requests(now, directory)
+        self._live_target_uris(now, directory)
         self._live_response(now)
 
     # ── scenarios ──

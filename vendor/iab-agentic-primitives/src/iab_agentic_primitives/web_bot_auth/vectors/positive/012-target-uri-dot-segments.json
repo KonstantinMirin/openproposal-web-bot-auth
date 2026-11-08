@@ -1,0 +1,47 @@
+{
+  "name": "@target-uri: dot segments in the path, https://seller.example.com/proposals/./x/../prop_7",
+  "tier": "wba",
+  "spec": "OpenProposal 3.0 § 2.8",
+  "spec_reference": "https://github.com/IABTechLab/iab-agentic-primitives/blob/main/WEB_BOT_AUTH.md#the-target-uri",
+  "signing_profile": "web-bot-auth",
+  "reference_now": 1794052810,
+  "operation": {
+    "op": "verify_request",
+    "request": {
+      "method": "GET",
+      "url": "https://seller.example.com/proposals/./x/../prop_7",
+      "headers": [
+        ["Signature-Agent", "sig1=\"https://buyer.example.com/.well-known/http-message-signatures-directory\""],
+        ["Signature-Input", "sig1=(\"@method\" \"@target-uri\" \"@authority\" \"signature-agent\";key=\"sig1\");created=1794052800;keyid=\"T5rd7MzhvzHtrBDE04NVTnFpBFb63tjmy9o0JrtFH84\";alg=\"ed25519\";expires=1794053100;nonce=\"4KEQ-LSY-Jq72KZyaM8KZdJRyCc2osqJKrADiN3MGC5UFaccZaE3ldMv_cFy55cKrl1bkKLi6hx3PrUIte6YCQ\";tag=\"web-bot-auth\""],
+        ["Signature", "sig1=:DUHPmtBKocuTgy/aagSdmXG+T9JPy51BUfAc7r37Mlzvz3xkycJgYs6OSO8Z973hnX1EAoVmf3Hh1BcQWq3pBw==:"]
+      ],
+      "body": ""
+    },
+    "authority": "seller.example.com",
+    "directories": {
+      "https://buyer.example.com": {
+        "url": "https://buyer.example.com/.well-known/http-message-signatures-directory",
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/http-message-signatures-directory+json"],
+          ["Cache-Control", "max-age=300"],
+          ["Content-Digest", "sha-256=:sUHrMjQsBZ1gtBzN6hY0J17RIkyWE9GveUwZ09Yz+KU=:"],
+          ["Signature-Input", "key1=(\"@authority\";req \"content-digest\");created=1794052810;keyid=\"T5rd7MzhvzHtrBDE04NVTnFpBFb63tjmy9o0JrtFH84\";alg=\"ed25519\";expires=1794139210;tag=\"http-message-signatures-directory\""],
+          ["Signature", "key1=:0Bb3wTK5UolNusnjC2jMXxuBGXChENGXKt4OfXRjaWZm+qiRMriBCWrY4WFbsn+GrCOC0OpVrayNRIgcmsEqBw==:"]
+        ],
+        "body": "{\n  \"keys\": [\n    {\n      \"kty\": \"OKP\",\n      \"crv\": \"Ed25519\",\n      \"kid\": \"T5rd7MzhvzHtrBDE04NVTnFpBFb63tjmy9o0JrtFH84\",\n      \"x\": \"eaZpKteR6m0v7GQPeK0Hv4B0DdvqI99SsTPztodAE5w\",\n      \"use\": \"sig\"\n    }\n  ]\n}"
+      }
+    },
+    "now": 1794052810,
+    "prior": []
+  },
+  "replay_cache_entries": [],
+  "expected_signature_base": {
+    "sig1": "\"@method\": GET\n\"@target-uri\": https://seller.example.com/proposals/prop_7\n\"@authority\": seller.example.com\n\"signature-agent\";key=\"sig1\": \"https://buyer.example.com/.well-known/http-message-signatures-directory\"\n\"@signature-params\": (\"@method\" \"@target-uri\" \"@authority\" \"signature-agent\";key=\"sig1\");created=1794052800;keyid=\"T5rd7MzhvzHtrBDE04NVTnFpBFb63tjmy9o0JrtFH84\";alg=\"ed25519\";expires=1794053100;nonce=\"4KEQ-LSY-Jq72KZyaM8KZdJRyCc2osqJKrADiN3MGC5UFaccZaE3ldMv_cFy55cKrl1bkKLi6hx3PrUIte6YCQ\";tag=\"web-bot-auth\""
+  },
+  "expected": {
+    "ok": true,
+    "identity": "https://buyer.example.com"
+  },
+  "$comment": "The buyer signs a GET to https://seller.example.com/proposals/./x/../prop_7, and the request carries that URL as a caller writes it. Its @target-uri is https://seller.example.com/proposals/prop_7: the URL as an HTTP client sends it and a server receives it, the WHATWG URL serialization normalized per RFC 3986 section 6.2.2 (lowercase scheme and host, no default port, no dot segments), with every character a client sends raw left as written. A verifier that parses the URL with a stricter grammar, re-encodes it, or skips the normalization computes another signature base and refuses a valid request."
+}

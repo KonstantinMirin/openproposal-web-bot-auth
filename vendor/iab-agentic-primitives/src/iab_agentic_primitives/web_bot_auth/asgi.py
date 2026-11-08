@@ -4,6 +4,9 @@ opt-in, require a signature.
 These are plain ASGI and import no framework, so they work with Starlette,
 FastAPI, or any ASGI server.
 
+- :func:`request_url` rebuilds a request's URL on a :class:`ServerIdentity`,
+  under the URL rule every signer signs under, so a server that only verifies
+  needs nothing more.
 - :class:`ServerEdge` is the server's one identity at its edges, with the
   signer, the directory, and the confirmer that depend on it, checked against
   each other once. Both middlewares take it, and :meth:`ServerEdge.request_url`
@@ -32,7 +35,7 @@ import logging
 from collections.abc import Awaitable, Callable, Iterable, Mapping, MutableMapping
 from dataclasses import dataclass
 from typing import Literal
-from urllib.parse import quote
+from urllib.parse import quote, quote_from_bytes
 
 from .directory import DirectoryPublisher
 from .errors import ConfigurationError, SigningError, WebBotAuthError
@@ -44,7 +47,7 @@ from .presentation import (
     unsignable_response,
 )
 from .roles import RequestConfirmer, ResponseSigning
-from .rules import STREAMING_MEDIA_TYPES
+from .rules import STREAMING, Streaming
 from .values import DIRECTORY_PATH, Clock, ServerIdentity, is_decimal, system_clock, whole_number
 from .verifier import VerifiedRequest, is_signed
 
@@ -113,17 +116,36 @@ def _checked_edge(edge: object) -> ServerEdge:
     return edge
 
 
-def _request_url(scope: Scope, identity: ServerIdentity) -> str:
-    """The absolute URL the client requested, rebuilt on ``identity.base_url``."""
-    root = identity.base_url
+#: The printable ASCII a rebuilt path keeps as received: all but ``?`` and ``#``,
+#: which would end it. A rebuilt query keeps ``?`` too.
+_PATH_KEPT = "".join(chr(c) for c in range(0x21, 0x7F) if chr(c) not in "?#")
+_QUERY_KEPT = _PATH_KEPT + "?"
+
+
+def request_url(identity: ServerIdentity, scope: Scope) -> str:
+    """Rebuilds the absolute URL the client requested, on the server's own base URL.
+
+    ``identity.base_url``, such as ``https://seller.example.com``, is the
+    server's public base URL, whatever ``Host`` the client sends: the ``Host``
+    header is the client's claim, and a signature covers ``@authority`` and
+    ``@target-uri`` so that a request signed for one server doesn't verify at
+    another. The path and query are the bytes the client sent (``raw_path``
+    and ``query_string``), any byte outside printable ASCII percent-encoded,
+    and the URL is :func:`~.message.target_uri` of the result, the URL rule
+    every signer signs under. It needs only the identity, so a server that
+    verifies requests and signs nothing passes this URL to its
+    :class:`RequestVerifier`; :meth:`ServerEdge.request_url` is the same
+    rebuild.
+    """
+    checked = _checked_identity(identity)
     raw_path = _of_type(scope, "raw_path", bytes, b"")
     path = (
-        raw_path.decode("latin-1")
+        quote_from_bytes(raw_path, safe=_PATH_KEPT)
         if raw_path
-        else quote(_of_type(scope, "path", str, "/"), safe="/:@!$&'()*+,;=-._~%")
+        else quote(_of_type(scope, "path", str, "/"), safe=_PATH_KEPT)
     )
-    query = _of_type(scope, "query_string", bytes, b"").decode("latin-1")
-    return target_uri(f"{root}{path}?{query}")
+    query = quote_from_bytes(_of_type(scope, "query_string", bytes, b""), safe=_QUERY_KEPT)
+    return target_uri(f"{checked.base_url}{path if path.startswith('/') else '/' + path}?{query}")
 
 
 async def _read_body(
@@ -252,7 +274,7 @@ class _BufferedResponse:
     """The ``send`` a signed app gets: it holds back the start, buffers the body up to
     ``limit`` bytes, and sends the signed response when the body ends.
 
-    A response that is already signed or streams (``skip``) passes through as
+    A response that is already signed or streams (``streaming``) passes through as
     sent. A second start, any other message after a held-back start, and a
     body over ``limit`` can't be signed, and are answered with ``500``.
     """
@@ -282,7 +304,7 @@ class _BufferedResponse:
 
     async def _started(self, message: Message) -> None:
         lines = HeaderLines(_headers(message))
-        if lines.carries_signature_field() or lines.media_type() in self._options.skip:
+        if lines.carries_signature_field() or self._options.streaming.streams(lines.media_type()):
             self._state = "passthrough"
             await self._options.send(message)
             return
@@ -332,7 +354,7 @@ class _BufferedResponse:
 @dataclass(frozen=True, slots=True)
 class _Options:
     send: Send
-    skip: tuple[str, ...]
+    streaming: Streaming
     limit: int
 
 
@@ -340,20 +362,19 @@ class _Options:
 class SigningPolicy:
     """What :class:`ResponseSigningMiddleware` signs, checked once.
 
-    Responses of the ``skip_media_types`` (``text/event-stream`` by default)
-    stream, and pass through unsigned. A response body is buffered up to
-    ``max_body_bytes`` (1 MiB by default). A bad value raises
-    :class:`ConfigurationError`.
+    Responses that ``streaming`` names (:data:`~.rules.STREAMING`,
+    ``text/event-stream``, by default) stream, and pass through unsigned;
+    a client configured with the same :class:`~.rules.Streaming` takes them
+    unsigned. A response body is buffered up to ``max_body_bytes`` (1 MiB by
+    default). A bad value raises :class:`ConfigurationError`.
     """
 
-    skip_media_types: tuple[str, ...] = STREAMING_MEDIA_TYPES
+    streaming: Streaming = STREAMING
     max_body_bytes: int = MAX_BODY_BYTES
 
     def __post_init__(self) -> None:
-        types = self.skip_media_types
-        if isinstance(types, str) or not all(isinstance(t, str) for t in types):
-            raise ConfigurationError(f"skip_media_types is a tuple of media types, not {types!r}")
-        object.__setattr__(self, "skip_media_types", tuple(t.lower() for t in types))
+        if not isinstance(self.streaming, Streaming):
+            raise ConfigurationError(f"streaming is a Streaming, not {self.streaming!r}")
         whole_number("max_body_bytes", self.max_body_bytes, minimum=0)
 
 
@@ -414,18 +435,14 @@ class ServerEdge:
         object.__setattr__(self, "confirmer", confirmer)
 
     def request_url(self, scope: Scope) -> str:
-        """Rebuilds the absolute URL the client requested, on the server's own base URL.
+        """Rebuilds the absolute URL the client requested: :func:`request_url` on ``identity``.
 
-        ``identity.base_url``, such as ``https://seller.example.com``, is the
-        server's public base URL, whatever ``Host`` the client sends: the
-        ``Host`` header is the client's claim, and a signature covers
-        ``@authority`` and ``@target-uri`` so that a request signed for one
-        server doesn't verify at another. An application that verifies at its
-        own boundary passes this URL to its verifier, so a verifier configured
-        for another base URL refuses the request instead of the server
-        answering with responses its peers refuse.
+        An application that verifies at its own boundary passes this URL to
+        its verifier, so a verifier configured for another base URL refuses
+        the request instead of the server answering with responses its peers
+        refuse.
         """
-        return _request_url(scope, self.identity)
+        return request_url(self.identity, scope)
 
 
 @dataclass(frozen=True, slots=True, init=False)
@@ -439,7 +456,7 @@ class ResponseSigningMiddleware:
     :class:`DirectoryMiddleware` serves it.
 
     :class:`SigningPolicy` holds the options. The middleware passes through
-    unsigned the responses of its ``skip_media_types``, which stream, and
+    unsigned the responses its ``streaming`` rule names, which stream, and
     responses that already carry a signature. A response it can't sign under
     the profile, such as a body without ``Content-Type``, or a body over
     ``max_body_bytes``, becomes a ``500`` with error ``response-unsignable``
@@ -474,7 +491,7 @@ class ResponseSigningMiddleware:
             return
         request = HTTPRequest(_method(scope), self.edge.request_url(scope), _headers(scope))
         policy = self.policy
-        options = _Options(send, policy.skip_media_types, policy.max_body_bytes)
+        options = _Options(send, policy.streaming, policy.max_body_bytes)
         await self.app(
             _signable_scope(scope), receive, _BufferedResponse(self.edge.signer, request, options)
         )
@@ -607,7 +624,6 @@ __all__ = [
     "DEFAULT_REQUIRE",
     "DEFAULT_SIGNING",
     "MAX_BODY_BYTES",
-    "STREAMING_MEDIA_TYPES",
     "ASGIApp",
     "DirectoryMiddleware",
     "Message",
@@ -620,5 +636,6 @@ __all__ = [
     "Send",
     "ServerEdge",
     "SigningPolicy",
+    "request_url",
     "verified_request",
 ]

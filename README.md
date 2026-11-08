@@ -442,7 +442,7 @@ The live deployment differs from the local test only where production needs it:
   module of [`iab-agentic-primitives`](https://github.com/KonstantinMirin/iab-agentic-primitives-wba/blob/feat/web-bot-auth/WEB_BOT_AUTH.md), documented in its
   `WEB_BOT_AUTH.md`. Every signature, verification, directory, and fetch rule
   comes from it. The demo pins commit
-  `664ecf76ac4eb07926ba61637df6b2dbe9cb6403` of the `refactor/wba-architecture`
+  `4cabcbe9b4c2e04b116ccdca85b44d4587bcf659` of the `refactor/wba-architecture`
   branch of
   [`iab-agentic-primitives-wba`](https://github.com/KonstantinMirin/iab-agentic-primitives-wba),
   vendored unchanged in

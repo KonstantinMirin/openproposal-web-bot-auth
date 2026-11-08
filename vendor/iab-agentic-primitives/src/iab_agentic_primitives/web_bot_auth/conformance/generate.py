@@ -50,6 +50,8 @@ from .fixtures import (
     SELLER_AUTHORITY,
     SPEC,
     T0,
+    TARGET_URIS,
+    TargetUri,
     at,
     key,
     nonce,
@@ -675,6 +677,47 @@ def _negative_008(tier: Tier) -> Vector:
     )
 
 
+def _target_uri_vector(target: TargetUri) -> Callable[[Tier], Vector]:
+    """The builder of the vector that signs a ``GET`` to ``target.url``."""
+
+    def build(tier: Tier) -> Vector:
+        config = SignerConfig(_buyer(), Origin.parse(BUYER))
+        stream = f"target-uri/{target.slug}"
+        signed = RequestSigner(config).sign(
+            HTTPRequest("GET", target.url), now=T0, nonce=nonce(stream)
+        )
+        if signed.url != target.wire:
+            raise ValueError(f"{target.url} is signed as {signed.url}, not {target.wire}")
+        # The vector carries the URL as a caller writes it, so a verifier applies the rule.
+        request = replace(signed, url=target.url)
+        return _vector(
+            _Exchange(
+                kind="request",
+                authority=SELLER_AUTHORITY,
+                request=RequestDoc.of(request),
+                directories=_BUYER_DIRECTORY,
+            ),
+            name=f"@target-uri: {target.name.lower()}, {target.url}",
+            tier=tier,
+            spec=SPEC,
+            spec_reference=_ref("the-target-uri"),
+            reference_now=at(10),
+            expected_signature_base=_bases(request, ("sig1", _buyer())),
+            expected=passing(BUYER),
+            comment=(
+                f"The buyer signs a GET to {target.url}, and the request carries that URL as a "
+                f"caller writes it. Its @target-uri is {target.wire}: the URL as an HTTP client "
+                "sends it and a server receives it, the WHATWG URL serialization normalized per "
+                "RFC 3986 section 6.2.2 (lowercase scheme and host, no default port, no dot "
+                "segments), with every character a client sends raw left as written. A verifier "
+                "that parses the URL with a stricter grammar, re-encodes it, or skips the "
+                "normalization computes another signature base and refuses a valid request."
+            ),
+        )
+
+    return build
+
+
 @dataclass(frozen=True)
 class VectorEntry:
     """One committed vector: its path under the vector directory, its tier, and its builder."""
@@ -692,6 +735,10 @@ VECTORS_REGISTRY: tuple[VectorEntry, ...] = (
     VectorEntry("positive/002-signed-directory-response.json", "wba", _positive_002),
     VectorEntry("positive/003-signed-response.json", "wba", _positive_003),
     VectorEntry("positive/004-origin-form-request.json", "wba", _positive_004),
+    *(
+        VectorEntry(f"positive/{i:03}-target-uri-{t.slug}.json", "wba", _target_uri_vector(t))
+        for i, t in enumerate(TARGET_URIS, 5)
+    ),
     VectorEntry("negative/001-missing-nonce.json", "profile", _negative_001),
     VectorEntry("negative/002-replayed-nonce.json", "profile", _negative_002),
     VectorEntry("negative/003-signature-agent-not-covered.json", "wba", _negative_003),

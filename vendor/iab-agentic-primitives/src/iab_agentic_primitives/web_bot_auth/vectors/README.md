@@ -39,7 +39,7 @@ the `Signature-Agent` value, the covered `Signature-Agent` member,
 key selection by thumbprint from the directory the member names, the required
 nonce, replay refusal, one signature per request, the signed directory response,
 the signed response and its binding to the request, the verifier's own
-authority, and the `400`, `403`, and `429` responses, each with its rule. They don't exercise live directory fetches, the fetch rules, or
+authority, the target URI, and the `400`, `403`, and `429` responses, each with its rule. They don't exercise live directory fetches, the fetch rules, or
 caching; the unit tests in `tests/web_bot_auth/` grade those.
 
 ## File layout
@@ -54,7 +54,10 @@ vectors/
 │   ├── 001-single-signer-request.json          the buyer commits to proposal prop_7
 │   ├── 002-signed-directory-response.json      the buyer's directory, signed per key (WBA Appendix B.1)
 │   ├── 003-signed-response.json                the seller's CommitResult, bound to positive/001
-│   └── 004-origin-form-request.json            the same commit, Signature-Agent in the draft -00 origin form
+│   ├── 004-origin-form-request.json            the same commit, Signature-Agent in the draft -00 origin form
+│   └── 005- to 012-target-uri-*.json           a GET to each URL whose @target-uri the profile normalizes or
+│                                               keeps as sent: ids[]=1, a|b, {json}, a^b, %20, :443, mixed case,
+│                                               and dot segments
 └── negative/                                   messages a verifier MUST refuse, with the status and rule
     ├── 001-missing-nonce.json                  → 403 nonce-missing
     ├── 002-replayed-nonce.json                 → 429 nonce-replayed (after verifying positive/001)
@@ -144,6 +147,10 @@ signs each one at run time, so no committed signature expires.
   override `components`, `parameters`, `request` (`bound`, the default, signs
   the request; `unbound` sends it unsigned), or `after_signing` (`status`,
   `append_to_body`, `request_headers`).
+- **`target_uris`**: each is a `GET` to `url`, as a caller writes it, and
+  `wire`, its `@target-uri`: the URL as it travels on the wire
+  (`WEB_BOT_AUTH.md`, "The target URI"). Each side signs the `GET` and the
+  other verifies it as the signer's identity.
 - **`expected`**, **`tier`**, **`basis`**: `expected` as for vectors, `tier`
   as for vectors (`wba` by default), and `basis`, the rule's source.
 

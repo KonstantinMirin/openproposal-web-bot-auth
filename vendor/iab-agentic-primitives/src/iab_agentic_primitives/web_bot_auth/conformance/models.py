@@ -565,6 +565,22 @@ class ResponseScenario(Scenario):
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class TargetUriCase(Model):
+    """A URL a ``GET`` is signed for, as a caller writes it, and its ``@target-uri``.
+
+    ``wire`` is the URL as it travels on the wire, the value every signature
+    base carries (``WEB_BOT_AUTH.md``, "The target URI"). Each side signs a
+    ``GET`` to ``url`` and the other verifies it as the signer's identity.
+    """
+
+    id: str
+    name: str
+    url: str
+    wire: str
+    basis: str
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class ScenariosDocument(Model):
     """The failure scenarios, with every default both interpreters sign from.
 
@@ -592,6 +608,7 @@ class ScenariosDocument(Model):
     request_scenarios: tuple[RequestScenario, ...]
     directory_scenarios: tuple[DirectoryScenario, ...]
     response_scenarios: tuple[ResponseScenario, ...]
+    target_uris: tuple[TargetUriCase, ...]
 
 
 # ── operations and results (PROTOCOL.md) ───────────────────────────────────
@@ -822,6 +839,7 @@ __all__ = [
     "SignatureParameters",
     "StatusCode",
     "Suite",
+    "TargetUriCase",
     "Tier",
     "Unset",
     "Vector",

@@ -171,15 +171,22 @@ class RequestSigner(_Signer):
 
         ``nonce`` is a fresh 64-byte nonce by default; one given must be in a
         form the profile accepts. The URL is signed, and returned, as
-        :func:`~.message.target_uri` gives it, without a fragment or an empty
-        query, as a server's edge rebuilds it; send the request to the
-        returned URL.
-        Raises :class:`SigningError` for a request the profile can't sign.
+        :func:`~.message.target_uri` gives it: the URL as it travels on the
+        wire, which a server's edge rebuilds, so ``https://Seller.Example.com:443/x/../p``
+        is signed and returned as ``https://seller.example.com/p``. Send the
+        request to the returned URL with a client that sends it as given, as
+        httpx and ``fetch`` do; a client that re-encodes it, for example
+        ``|`` as ``%7C``, sends a URL nobody signed.
+        Raises :class:`SigningError` for a request the profile can't sign,
+        such as one whose URL isn't an absolute ``http`` or ``https`` URL.
         """
         chosen = generate_nonce() if nonce is None else nonce
         if not validate_nonce(chosen):
             raise SigningError(NONCE_RULE)
-        target = replace(request, url=target_uri(request.url))
+        try:
+            target = replace(request, url=target_uri(request.url))
+        except ValueError as e:
+            raise SigningError(f"the request can't be signed: {e}") from e
         return _sign(target, self.config, REQUEST, now=now, nonce=chosen)
 
 

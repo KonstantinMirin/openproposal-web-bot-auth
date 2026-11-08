@@ -67,6 +67,18 @@ class DirectoryFetcher(Protocol):
     ) -> DirectoryResponse: ...
 
 
+class DirectoryStoreUnavailable(Exception):
+    """Raised by a :class:`DirectoryStore` that can't read or write now, such as when its
+    backend is down.
+
+    The resolver reads a failed :meth:`~DirectoryStore.get` or
+    :meth:`~DirectoryStore.failure_until` as nothing stored, so it fetches the
+    directory afresh, and logs a failed :meth:`~DirectoryStore.put` or
+    :meth:`~DirectoryStore.record_failure`. Neither changes the answer: an
+    outage costs fetches, never a ``500``, and a refusal stays the refusal.
+    """
+
+
 @runtime_checkable
 class DirectoryStore(Protocol):
     """Keeps each origin's last directory response, and when its failed fetches stop holding.
@@ -83,6 +95,11 @@ class DirectoryStore(Protocol):
     and age; a response that doesn't verify is a cache miss.
     :meth:`record_failure` keeps the time until which a failed fetch of
     ``origin`` holds, and :meth:`failure_until` returns it, or ``None``.
+
+    When it can't reach its backend, a method raises
+    :class:`DirectoryStoreUnavailable` and nothing else; the resolver reads a
+    failed read as a miss and logs a failed write. Any other error is a bug
+    that propagates.
     """
 
     async def get(self, origin: Origin) -> DirectoryResponse | None: ...
@@ -97,6 +114,7 @@ class DirectoryStore(Protocol):
 __all__ = [
     "DirectoryFetcher",
     "DirectoryStore",
+    "DirectoryStoreUnavailable",
     "KeyResolver",
     "ResolvedKey",
 ]

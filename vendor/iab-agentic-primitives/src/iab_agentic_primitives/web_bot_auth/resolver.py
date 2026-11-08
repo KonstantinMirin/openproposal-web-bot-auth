@@ -33,7 +33,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
-from collections.abc import Iterable, Mapping
+from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass
 from functools import partial
 from types import TracebackType
@@ -49,7 +49,13 @@ from .directory import (
     verify_directory,
 )
 from .errors import ConfigurationError, Refusal, WebBotAuthError, refuse
-from .ports import DirectoryFetcher, DirectoryStore, KeyResolver, ResolvedKey
+from .ports import (
+    DirectoryFetcher,
+    DirectoryStore,
+    DirectoryStoreUnavailable,
+    KeyResolver,
+    ResolvedKey,
+)
 from .rules import CACHE
 from .values import Clock, KeyId, Origin, UnixSeconds, system_clock, whole_number
 
@@ -155,7 +161,10 @@ class DirectoryResolver:
     directory answers every keyid without a fetch, so an unknown keyid never
     causes one. A stale but valid directory is fetched again; when that fetch
     fails, the stored keys still answer. Only a refusal is a failed fetch; any
-    other error propagates and records nothing. The ``now`` a resolve is
+    other error propagates and records nothing. A store that raises
+    :class:`~.ports.DirectoryStoreUnavailable` is read as holding nothing, so
+    the directory is fetched afresh, and its failed writes are logged; neither
+    changes the answer. The ``now`` a resolve is
     judged at decides only whether the directory has expired by then
     (``directory-window``); it never stamps or ages the cache.
 
@@ -272,12 +281,32 @@ class DirectoryResolver:
         verified = verify_directory(response, origin, response.fetched_at, self._limits)
         return self._hold(verified)
 
+    async def _read[T](
+        self, read: Callable[[Origin], Awaitable[T | None]], origin: Origin
+    ) -> T | None:
+        """What the store's ``read`` returns for ``origin``; ``None`` when it is unavailable."""
+        try:
+            return await read(origin)
+        except DirectoryStoreUnavailable as e:
+            logger.warning(
+                "the directory store can't be read for %s, so it is a miss: %s", origin, e
+            )
+            return None
+
+    async def _write(self, write: Awaitable[None], origin: Origin) -> None:
+        """Awaits the store's ``write``; logs it when the store is unavailable, and goes on."""
+        try:
+            await write
+        except DirectoryStoreUnavailable as e:
+            logger.warning("the directory store can't be written for %s: %s", origin, e)
+
     async def _stored(self, origin: Origin, at: UnixSeconds) -> VerifiedDirectory | None:
         """The stored directory of ``origin``, verified once and unexpired at ``at``.
 
-        A stored response that doesn't verify, such as another origin's, is a miss.
+        A stored response that doesn't verify, such as another origin's, is a
+        miss, and so is a store that can't be read.
         """
-        response = await self._store.get(origin)
+        response = await self._read(self._store.get, origin)
         if response is None:
             self._held.pop(origin, None)
             return None
@@ -317,7 +346,7 @@ class DirectoryResolver:
             flight.exception()  # retrieved here too, so a flight nobody awaits stays quiet
 
     async def _failing(self, origin: Origin, at: UnixSeconds) -> bool:
-        until = await self._store.failure_until(origin)
+        until = await self._read(self._store.failure_until, origin)
         return until is not None and at < until
 
     async def _refresh(self, origin: Origin) -> VerifiedDirectory:
@@ -337,7 +366,7 @@ class DirectoryResolver:
             directory = verify_directory(response, origin, response.fetched_at, self._limits)
         except WebBotAuthError as e:
             until = UnixSeconds(now + self._cache.negative_ttl)
-            await self._store.record_failure(origin, until)
+            await self._write(self._store.record_failure(origin, until), origin)
             logger.warning(
                 "directory fetch of %s failed, not retried before %s%s: %s %s",
                 origin,
@@ -350,7 +379,7 @@ class DirectoryResolver:
                 return stored  # a failed fetch doesn't evict
             raise
         # A directory that resolves is evidence: it replaces the entry, with or without the key.
-        await self._store.put(origin, response)
+        await self._write(self._store.put(origin, response), origin)
         return self._hold(directory)
 
     async def aclose(self) -> None:

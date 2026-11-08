@@ -61,8 +61,14 @@ from .directory import (
 )
 from .errors import ConfigurationError, Refusal, SigningError, WebBotAuthError
 from .keys import Ed25519Key, thumbprint
-from .message import Answer, HeaderLines, Headers, HTTPRequest, HTTPResponse
-from .ports import DirectoryFetcher, DirectoryStore, KeyResolver, ResolvedKey
+from .message import Answer, HeaderLines, Headers, HTTPRequest, HTTPResponse, target_uri
+from .ports import (
+    DirectoryFetcher,
+    DirectoryStore,
+    DirectoryStoreUnavailable,
+    KeyResolver,
+    ResolvedKey,
+)
 from .presentation import refusal_response
 from .replay import MemoryNonceStore, NonceStore, NonceStoreUnavailable
 from .resolver import CachePolicy, DirectoryResolver, MemoryDirectoryStore, StaticKeyResolver
@@ -86,6 +92,7 @@ from .values import (
     RequestAuthority,
     Seconds,
     ServerIdentity,
+    TargetURI,
     UnixSeconds,
     system_clock,
 )
@@ -122,6 +129,7 @@ __all__ = [
     "DirectoryResolver",
     "DirectoryResponse",
     "DirectoryStore",
+    "DirectoryStoreUnavailable",
     "Ed25519Key",
     "ExpectedOrigin",
     "FetchLimits",
@@ -154,6 +162,7 @@ __all__ = [
     "ServerIdentity",
     "SigningError",
     "StaticKeyResolver",
+    "TargetURI",
     "UnixSeconds",
     "VerifiedDirectory",
     "VerifiedRequest",
@@ -164,6 +173,7 @@ __all__ = [
     "publish_directory",
     "refusal_response",
     "system_clock",
+    "target_uri",
     "thumbprint",
     "verify_directory",
 ]

@@ -19,6 +19,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from http_message_signatures import (
     HTTPMessageSigner,
     HTTPMessageVerifier,
+    HTTPSignatureComponentResolver,
     MappingKeyResolver,
     algorithms,
 )
@@ -28,8 +29,8 @@ from http_message_signatures.exceptions import HTTPMessageSignaturesException
 from ._wire import ComponentId, SignatureMember, only_member, signature_values
 from .errors import Refusal, SigningError, refuse
 from .keys import Ed25519Key
-from .message import HeaderLines, HTTPRequest, HTTPResponse, target_uri
-from .values import OMIT, KeyId, Omit, UnixSeconds
+from .message import HeaderLines, HTTPRequest, HTTPResponse
+from .values import OMIT, KeyId, Omit, TargetURI, UnixSeconds
 
 #: Whether a signature replaces the message's signatures or joins them.
 Mode = Literal["replace", "append"]
@@ -104,9 +105,17 @@ class _FieldLines:
 
 @dataclass
 class _RequestView:
+    """A request as the library reads it, with the profile's :class:`TargetURI`.
+
+    ``url`` is the scheme and authority alone, which the library's strict URL
+    grammar checks; :class:`_ProfileComponents` takes the path and query from
+    ``target``.
+    """
+
     method: str
     url: str
     headers: _FieldLines
+    target: TargetURI
 
 
 @dataclass
@@ -116,10 +125,34 @@ class _ResponseView:
     request: _RequestView
 
 
+class _ProfileComponents(HTTPSignatureComponentResolver):
+    """The library's component resolver, reading the request URL the profile owns.
+
+    The library parses a request's ``url`` in its constructor with the strict
+    RFC 3986 grammar, which refuses what clients send raw, such as ``[ ] |
+    ^ { }`` in a query, and it takes no parsed parts. ``component_resolver_class``
+    is its extension point, so this subclass is the smallest seam: the
+    library checks the scheme and authority, and its parsed parts then take
+    the profile's path and query. Every derived component the library
+    resolves, ``@target-uri`` and ``@authority`` alike, comes from one
+    :class:`TargetURI`.
+    """
+
+    def __init__(self, message: _RequestView | _ResponseView) -> None:
+        super().__init__(message)  # type: ignore[no-untyped-call]  # the library leaves it untyped
+        if isinstance(message, _RequestView):
+            target = message.target
+            self.url_parts = replace(self.url_parts, path=target.path, query=target.query)
+
+
 def _request_view(request: HTTPRequest) -> _RequestView:
-    """The library's view of ``request``; its URL is the one place a URL enters a signature base."""
-    url = target_uri(request.url)
-    return _RequestView(request.method.upper(), url, _FieldLines(request.headers))
+    """The library's view of ``request``; its URL is the one place a URL enters a signature base.
+
+    Raises ``ValueError`` when the URL isn't an absolute ``http`` or ``https`` URL.
+    """
+    target = TargetURI.parse(request.url)
+    origin = f"{target.scheme}://{target.authority}"
+    return _RequestView(request.method.upper(), origin, _FieldLines(request.headers), target)
 
 
 def _view(message: HTTPRequest | HTTPResponse) -> _RequestView | _ResponseView:
@@ -155,8 +188,13 @@ def signed[M: (HTTPRequest, HTTPResponse)](
     Raises :class:`SigningError` when the library can't sign the message, for
     example when a request URL isn't absolute or a covered field is absent.
     """
-    view = _view(message)
-    signer = HTTPMessageSigner(signature_algorithm=_algorithm(params.alg))
+    try:
+        view = _view(message)
+    except ValueError as e:
+        raise SigningError(f"the message can't be signed: {e}") from e
+    signer = HTTPMessageSigner(
+        signature_algorithm=_algorithm(params.alg), component_resolver_class=_ProfileComponents
+    )
     try:
         prepared = signer.prepare(
             view,
@@ -249,14 +287,15 @@ def verify(
     verifier = _ProfileClockVerifier(
         signature_algorithm=algorithms.ED25519,
         key_resolver=MappingKeyResolver(public_keys={member.keyid: public_key}, private_keys={}),
+        component_resolver_class=_ProfileComponents,
     )
     try:
-        alone = replace(message, headers=only_member(message.headers, member.label))
+        view = _view(replace(message, headers=only_member(message.headers, member.label)))
     except ValueError as e:
         raise refuse(Refusal.SIGNATURE_INVALID, f"signature {member.label}: {e}") from e
     try:
         results = verifier.verify(
-            _view(alone),
+            view,
             expect_tag=member.tag,
             expect_label=member.label,
             max_age=None,

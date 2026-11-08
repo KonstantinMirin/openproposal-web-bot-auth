@@ -11,7 +11,7 @@ classes are private: these three objects are the only rules there are, and
 signed under the response rules.
 
 :data:`CACHE` states how long a verifier keeps a directory (OpenProposal §
-2.8.3).
+2.8.3), and :data:`STREAMING` which responses stream unsigned.
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ from typing import ClassVar, Final
 
 from ._sig import SignatureParams
 from ._wire import ComponentId, ComponentParam, component_id, parse_signature_fields
-from .errors import Refusal, WebBotAuthError, refuse
+from .errors import ConfigurationError, Refusal, WebBotAuthError, refuse
 from .message import HeaderLines, Headers, HTTPRequest, HTTPResponse
 from .values import OMIT, KeyId, Seconds, UnixSeconds, b64url_encode, whole_number
 
@@ -41,9 +41,6 @@ CLOCK_SKEW: Final = 60
 NONCE_BYTES: Final = 64
 #: What the nonce rule requires, as a signer and a verifier say it.
 NONCE_RULE: Final = "nonce must be 64 bytes as unpadded base64url or padded base64"
-#: Media types whose responses stream: a server passes them through unsigned, so a
-#: client takes one unsigned.
-STREAMING_MEDIA_TYPES: Final = ("text/event-stream",)
 #: The key ids of the published test keys, whose private keys ship in the
 #: conformance vectors (``vectors/keys.json``). Web Bot Auth section 6.8 says
 #: they "MUST NOT be used in production": a verifier always refuses them, unless
@@ -319,6 +316,38 @@ DIRECTORY: Final = _DirectoryRules()
 
 
 @dataclass(frozen=True, slots=True)
+class Streaming:
+    """The media types whose responses stream, and so go unsigned: one rule for both sides.
+
+    A server can't buffer a stream to sign it, so it passes a response of one
+    of ``media_types`` through unsigned, and a client that requires signed
+    responses takes such a response unsigned. A seller that streams another
+    type, such as ``application/x-ndjson``, and its buyers configure the same
+    value: ``SigningPolicy(streaming=...)`` on the server, and
+    ``WebBotAuth(..., streaming=...)`` on the client. :data:`STREAMING`,
+    ``text/event-stream`` alone, is the default of both. Media types are
+    compared lowercase, without parameters. Anything but a tuple of strings
+    raises :class:`ConfigurationError`.
+    """
+
+    media_types: tuple[str, ...] = ("text/event-stream",)
+
+    def __post_init__(self) -> None:
+        types = self.media_types
+        if not isinstance(types, tuple) or not all(isinstance(t, str) for t in types):
+            raise ConfigurationError(f"media_types is a tuple of media types, not {types!r}")
+        object.__setattr__(self, "media_types", tuple(t.lower() for t in types))
+
+    def streams(self, media_type: str | None) -> bool:
+        """True when a response of ``media_type`` streams, and so may go unsigned."""
+        return media_type is not None and media_type.lower() in self.media_types
+
+
+#: The profile's streaming rule: ``text/event-stream`` responses stream, unsigned.
+STREAMING: Final = Streaming()
+
+
+@dataclass(frozen=True, slots=True)
 class CacheRules:
     """How long a verifier keeps a directory (OpenProposal § 2.8.3).
 
@@ -372,7 +401,7 @@ __all__ = [
     "REQUEST",
     "RESPONSE",
     "SIGNATURE_TAG",
-    "STREAMING_MEDIA_TYPES",
+    "STREAMING",
     "TEST_KEY_IDS",
     "CacheRules",
     "ComponentId",
@@ -380,6 +409,7 @@ __all__ = [
     "Rules",
     "SignatureParams",
     "Stamp",
+    "Streaming",
     "Window",
     "accept_signature",
     "component_id",

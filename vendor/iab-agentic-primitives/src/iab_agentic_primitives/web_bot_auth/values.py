@@ -246,18 +246,163 @@ def _url_authority(scheme: str, host: str, port: int | None) -> RequestAuthority
     return RequestAuthority(f"{host}:{port}")
 
 
+# ── the target URI: the one URL rule ──────────────────────────────────────
+
+#: What a URL parser trims from both ends of a URL: C0 controls and space (WHATWG).
+_TRIMMED = "".join(map(chr, range(0x21)))
+#: What a URL parser removes from anywhere in a URL: tab and newline (WHATWG).
+_REMOVED = str.maketrans("", "", "\t\n\r")
+#: The printable ASCII characters a path carries percent-encoded on the wire: the
+#: WHATWG path percent-encode set. Controls, DEL, and non-ASCII are always encoded.
+_PATH_ENCODED = frozenset(' "#<>?`{}')
+#: The printable ASCII characters an http(s) query carries percent-encoded on the
+#: wire: the WHATWG special-query percent-encode set.
+_QUERY_ENCODED = frozenset(" \"#<>'")
+#: The path segments a URL parser reads as ``.`` and ``..`` (WHATWG), lowercased.
+_SINGLE_DOT = frozenset({".", "%2e"})
+_DOUBLE_DOT = frozenset({"..", ".%2e", "%2e.", "%2e%2e"})
+_SCHEME_PREFIX = re.compile(r"([A-Za-z][A-Za-z0-9+.\-]*)://")
+
+
+def _percent_encoded(text: str, encoded: frozenset[str]) -> str:
+    """``text`` with ``encoded``, controls, DEL, and non-ASCII percent-encoded as UTF-8.
+
+    An existing escape, ``%zz`` included, is left as it is.
+    """
+    out: list[str] = []
+    for c in text:
+        if " " < c < "\x7f" and c not in encoded:
+            out.append(c)
+        else:
+            out.extend(f"%{b:02X}" for b in c.encode("utf-8", "surrogatepass"))
+    return "".join(out)
+
+
+def _without_dot_segments(path: str) -> str:
+    """``path``, which starts with ``/``, with its dot segments removed (RFC 3986 § 5.2.4).
+
+    A segment is a dot segment as WHATWG reads it, ``%2e`` included, and a
+    trailing one leaves the path ending in ``/``.
+    """
+    segments = path.split("/")[1:]
+    kept: list[str] = []
+    for i, segment in enumerate(segments):
+        last = i == len(segments) - 1
+        lowered = segment.lower()
+        if lowered in _DOUBLE_DOT:
+            if kept:
+                kept.pop()
+        elif lowered not in _SINGLE_DOT:
+            kept.append(segment)
+            continue
+        if last:
+            kept.append("")
+    return "/" + "/".join(kept)
+
+
+def _host_and_port(authority: str) -> tuple[str, str]:
+    """``host[:port]`` split, after any userinfo, with an IPv6 literal kept in brackets."""
+    hostport = authority.rpartition("@")[2]
+    if hostport.startswith("["):
+        literal, bracket, after = hostport.partition("]")
+        if not bracket or (after and not after.startswith(":")):
+            raise ValueError(f"{authority!r} is not a host and port")
+        return literal + bracket, after[1:]
+    host, _, port = hostport.partition(":")
+    return host, port
+
+
+def _target_host(host: str) -> str:
+    """``host`` as the wire carries it: an IP literal compressed, a name lowercased in A-labels."""
+    if host.startswith("["):
+        try:
+            return f"[{ipaddress.IPv6Address(host[1:-1])}]"
+        except ValueError as e:
+            raise ValueError(f"{host!r} is not an IPv6 address") from e
+    if not host:
+        raise ValueError("the URL names no host")
+    return _canonical_host(host).lower()
+
+
+def _target_port(port: str, scheme: str) -> int | None:
+    """No port for none, an empty one, or the scheme's default; ``ValueError`` for a bad one."""
+    if not port:
+        return None
+    if not is_decimal(port) or int(port) > 65535:
+        raise ValueError(f"{port!r} is not a port")
+    number = int(port)
+    return None if number == _DEFAULT_PORTS[scheme] else number
+
+
+@dataclass(frozen=True, slots=True)
+class TargetURI:
+    """A request's target URI as it travels on the wire: the profile's one URL rule.
+
+    The signer signs this value as ``@target-uri``, the verifier checks it, the
+    server edge rebuilds it, and ``@authority`` is its :attr:`authority`, so a
+    URL a signer signs is the URL a verifier recomputes. It is the URL an HTTP
+    client sends, the WHATWG URL serialization that httpx and ``fetch``
+    produce, normalized per RFC 3986 § 6.2.2:
+
+    - the scheme and host are lowercase, a name in IDNA A-labels and an IP
+      literal in compressed form, and a default port is dropped;
+    - dot segments are removed, and an empty path is ``/``;
+    - the characters WHATWG percent-encodes are percent-encoded: controls,
+      space, non-ASCII (as UTF-8), ``" < >`` and, in the path, ``` ` { } ```
+      or, in the query, ``'``. Everything else, such as ``| ^ [ ] { }`` in a
+      query, stays as written, and an existing escape is never changed;
+    - userinfo and the fragment, which never go on the wire, are dropped, and
+      so is an empty query: a server can't tell ``/p?`` from ``/p``.
+
+    ``str()`` is the serialization. :meth:`parse` is the one way to make one.
+    """
+
+    scheme: str
+    host: str
+    port: int | None
+    path: str
+    query: str | None
+
+    @classmethod
+    def parse(cls, url: str) -> TargetURI:
+        """Reads an absolute ``http`` or ``https`` URL; ``ValueError`` for anything else."""
+        if not isinstance(url, str):
+            raise ValueError(f"a URL is a str, not {url!r}")
+        text = url.strip(_TRIMMED).translate(_REMOVED).partition("#")[0]
+        prefix = _SCHEME_PREFIX.match(text)
+        scheme = prefix[1].lower() if prefix else ""
+        if prefix is None or scheme not in _DEFAULT_PORTS:
+            raise ValueError(f"{url!r} is not an absolute http or https URL")
+        before, _, query = text[prefix.end() :].partition("?")
+        authority, slash, path = before.replace("\\", "/").partition("/")
+        host, port = _host_and_port(authority)
+        return cls(
+            scheme,
+            _target_host(host),
+            _target_port(port, scheme),
+            _percent_encoded(_without_dot_segments(slash + path or "/"), _PATH_ENCODED),
+            _percent_encoded(query, _QUERY_ENCODED) or None,
+        )
+
+    @property
+    def authority(self) -> RequestAuthority:
+        """The ``@authority`` (RFC 9421 § 2.2.3): the host, and a port other than the default."""
+        return RequestAuthority(self.host if self.port is None else f"{self.host}:{self.port}")
+
+    def __str__(self) -> str:
+        query = "" if self.query is None else f"?{self.query}"
+        return f"{self.scheme}://{self.authority}{self.path}{query}"
+
+
 def authority_of(url: str) -> RequestAuthority:
     """Returns the ``@authority`` of an absolute URL (RFC 9421 section 2.2.3).
 
-    The host is lowercased and a default port dropped, as a verifier computes
-    it. Raises ``ValueError`` for anything but an absolute ``http`` or
-    ``https`` URL.
+    It is :attr:`TargetURI.authority`, under the same URL rule as
+    ``@target-uri``: the host is lowercased and a default port dropped.
+    Raises ``ValueError`` for anything but an absolute ``http`` or ``https``
+    URL.
     """
-    parts = urlsplit(url)
-    scheme = parts.scheme.lower()
-    if scheme not in _DEFAULT_PORTS or not parts.hostname:
-        raise ValueError(f"{url!r} is not an absolute http or https URL")
-    return _url_authority(scheme, parts.hostname.lower(), parts.port)
+    return TargetURI.parse(url).authority
 
 
 #: A host with an optional port: no path, userinfo, or space.
@@ -411,6 +556,7 @@ __all__ = [
     "RequestAuthority",
     "Seconds",
     "ServerIdentity",
+    "TargetURI",
     "UnixSeconds",
     "authority_of",
     "identifier_set",

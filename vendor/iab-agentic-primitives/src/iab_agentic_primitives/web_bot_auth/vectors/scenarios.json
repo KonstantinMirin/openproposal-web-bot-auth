@@ -1,5 +1,5 @@
 {
-  "$comment": "Failure scenarios for the Web Bot Auth profile, as data. A harness signs each request, directory, and response scenario at run time, applies after_signing, and grades the verifier on expected: a pass, or a refusal by its status and rule (refusals.json). created and expires are offsets in seconds from the harness clock; a null parameter is omitted; a nonce object asks for that many random bytes in that encoding. verifier is the verifier's own authority, which a request scenario's authority replaces. tier \"wba\": the reference libraries with no profile rules already give the expected outcome. tier \"profile\": the bare libraries give the opposite outcome and only the profile's rules give the expected one; a WBA MUST the library does not enforce stays \"profile\" until it does. See README.md.",
+  "$comment": "Failure scenarios for the Web Bot Auth profile, as data. A harness signs each request, directory, and response scenario at run time, applies after_signing, and grades the verifier on expected: a pass, or a refusal by its status and rule (refusals.json). created and expires are offsets in seconds from the harness clock; a null parameter is omitted; a nonce object asks for that many random bytes in that encoding. verifier is the verifier's own authority, which a request scenario's authority replaces. tier \"wba\": the reference libraries with no profile rules already give the expected outcome. tier \"profile\": the bare libraries give the opposite outcome and only the profile's rules give the expected one; a WBA MUST the library does not enforce stays \"profile\" until it does. Each target_uris case is a GET to url, which each side signs and the other verifies; wire is its @target-uri. See README.md.",
   "spec": "OpenProposal 3.0 § 2.8",
   "spec_reference": "https://github.com/IABTechLab/iab-agentic-primitives/blob/main/WEB_BOT_AUTH.md#profile-rules",
   "signing_profile": "web-bot-auth",
@@ -1100,6 +1100,64 @@
         "tag": "other-profile/v1"
       },
       "request": "bound"
+    }
+  ],
+  "target_uris": [
+    {
+      "id": "U01",
+      "name": "Array brackets in the query",
+      "url": "https://seller.example.com/proposals?ids[]=1",
+      "wire": "https://seller.example.com/proposals?ids[]=1",
+      "basis": "Profile: @target-uri is the URL as it travels on the wire (RFC 3986 § 6.2.2)"
+    },
+    {
+      "id": "U02",
+      "name": "A pipe in the query",
+      "url": "https://seller.example.com/proposals?f=a|b",
+      "wire": "https://seller.example.com/proposals?f=a|b",
+      "basis": "Profile: @target-uri is the URL as it travels on the wire (RFC 3986 § 6.2.2)"
+    },
+    {
+      "id": "U03",
+      "name": "Braces in the query",
+      "url": "https://seller.example.com/proposals?q={json}",
+      "wire": "https://seller.example.com/proposals?q={json}",
+      "basis": "Profile: @target-uri is the URL as it travels on the wire (RFC 3986 § 6.2.2)"
+    },
+    {
+      "id": "U04",
+      "name": "A caret in the query",
+      "url": "https://seller.example.com/proposals?q=a^b",
+      "wire": "https://seller.example.com/proposals?q=a^b",
+      "basis": "Profile: @target-uri is the URL as it travels on the wire (RFC 3986 § 6.2.2)"
+    },
+    {
+      "id": "U05",
+      "name": "An escaped space in the path",
+      "url": "https://seller.example.com/proposals/a%20b",
+      "wire": "https://seller.example.com/proposals/a%20b",
+      "basis": "Profile: @target-uri is the URL as it travels on the wire (RFC 3986 § 6.2.2)"
+    },
+    {
+      "id": "U06",
+      "name": "The default port",
+      "url": "https://seller.example.com:443/proposals/prop_7",
+      "wire": "https://seller.example.com/proposals/prop_7",
+      "basis": "Profile: @target-uri is the URL as it travels on the wire (RFC 3986 § 6.2.2)"
+    },
+    {
+      "id": "U07",
+      "name": "A mixed-case scheme and host",
+      "url": "HTTPS://Seller.Example.COM/proposals/prop_7",
+      "wire": "https://seller.example.com/proposals/prop_7",
+      "basis": "Profile: @target-uri is the URL as it travels on the wire (RFC 3986 § 6.2.2)"
+    },
+    {
+      "id": "U08",
+      "name": "Dot segments in the path",
+      "url": "https://seller.example.com/proposals/./x/../prop_7",
+      "wire": "https://seller.example.com/proposals/prop_7",
+      "basis": "Profile: @target-uri is the URL as it travels on the wire (RFC 3986 § 6.2.2)"
     }
   ]
 }

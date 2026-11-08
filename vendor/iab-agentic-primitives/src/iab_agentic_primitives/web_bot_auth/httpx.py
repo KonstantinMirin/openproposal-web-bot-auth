@@ -38,7 +38,7 @@ import httpx
 from .errors import ConfigurationError, Refusal, WebBotAuthError
 from .message import HeaderLines, HTTPRequest, HTTPResponse, target_uri
 from .roles import RequestSigning, ResponseConfirmer
-from .rules import STREAMING_MEDIA_TYPES
+from .rules import STREAMING, Streaming
 from .sync import SyncRuntime
 from .values import Origin
 from .verifier import SAME_ORIGIN, ExpectedOrigin, VerifiedResponse, is_signed
@@ -177,8 +177,10 @@ class WebBotAuth:
 
     With ``require_signed_response`` (the default), a ``2xx`` response that
     isn't verified raises :class:`ResponseNotVerified`, which carries the
-    response. An unsigned response of a media type a server streams unsigned
-    (:data:`~.rules.STREAMING_MEDIA_TYPES`, ``text/event-stream``) is let
+    response. An unsigned response of a media type that ``streaming`` names,
+    which a server streams unsigned (:data:`~.rules.STREAMING`,
+    ``text/event-stream``, by default; configure the seller's
+    :class:`~.rules.Streaming`), is let
     through, and so is every response that isn't a ``2xx``, such as a
     refusal a verifier sends unsigned (``400``, ``403``, ``429``, ``503``),
     a redirect, or a proxy's ``502``: its status, headers, and body are the
@@ -205,8 +207,10 @@ class WebBotAuth:
     runtime: SyncRuntime | None
     expect: Expect
     require_signed_response: bool
+    streaming: Streaming
 
-    def __init__(
+    # The client's settings are its public API, one keyword each; the lint limit doesn't shape it.
+    def __init__(  # noqa: PLR0913
         self,
         signer: RequestSigning | None,
         response_verifier: ResponseConfirmer | None = None,
@@ -214,16 +218,20 @@ class WebBotAuth:
         runtime: SyncRuntime | None = None,
         expect: Expect = SAME_ORIGIN,
         require_signed_response: bool = True,
+        streaming: Streaming = STREAMING,
     ) -> None:
         if signer is None and response_verifier is None:
             raise ConfigurationError("a client that signs nothing must verify responses")
         if expect not in (SAME_ORIGIN, None) and not isinstance(expect, Origin):
             raise ConfigurationError(f"expect is an Origin, 'same-origin', or None, not {expect!r}")
+        if not isinstance(streaming, Streaming):
+            raise ConfigurationError(f"streaming is a Streaming, not {streaming!r}")
         object.__setattr__(self, "signer", signer)
         object.__setattr__(self, "response_verifier", response_verifier)
         object.__setattr__(self, "runtime", runtime)
         object.__setattr__(self, "expect", expect)
         object.__setattr__(self, "require_signed_response", require_signed_response)
+        object.__setattr__(self, "streaming", streaming)
 
     @classmethod
     def verify_only(
@@ -233,6 +241,7 @@ class WebBotAuth:
         runtime: SyncRuntime | None = None,
         expect: Expect = SAME_ORIGIN,
         require_signed_response: bool = True,
+        streaming: Streaming = STREAMING,
     ) -> WebBotAuth:
         """A configuration that sends requests unsigned and verifies each signed response."""
         return cls(
@@ -241,6 +250,7 @@ class WebBotAuth:
             runtime=runtime,
             expect=expect,
             require_signed_response=require_signed_response,
+            streaming=streaming,
         )
 
     def async_client(
@@ -323,7 +333,7 @@ class WebBotAuth:
             return None
         if not response.is_success:
             return None
-        if isinstance(found, Unsigned) and _media_type(response) in STREAMING_MEDIA_TYPES:
+        if isinstance(found, Unsigned) and self.streaming.streams(_media_type(response)):
             return None
         return ResponseNotVerified(response, found)
 

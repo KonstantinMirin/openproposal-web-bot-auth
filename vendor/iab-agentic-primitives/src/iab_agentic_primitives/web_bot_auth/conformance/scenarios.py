@@ -24,6 +24,7 @@ from .fixtures import (
     SELLER_AUTHORITY,
     SELLER_KEYS,
     SPEC,
+    TARGET_URIS,
     key,
     p256_public_jwk,
 )
@@ -41,6 +42,7 @@ from .models import (
     ResponseScenario,
     ScenariosDocument,
     SignatureParameters,
+    TargetUriCase,
     passing,
     refusing,
 )
@@ -612,6 +614,19 @@ def _response_scenarios() -> tuple[ResponseScenario, ...]:
     )
 
 
+def _target_uris() -> tuple[TargetUriCase, ...]:
+    return tuple(
+        TargetUriCase(
+            id=f"U{i:02}",
+            name=t.name,
+            url=t.url,
+            wire=t.wire,
+            basis="Profile: @target-uri is the URL as it travels on the wire (RFC 3986 § 6.2.2)",
+        )
+        for i, t in enumerate(TARGET_URIS, 1)
+    )
+
+
 _COMMENT = (
     "Failure scenarios for the Web Bot Auth profile, as data. A harness signs each request, "
     "directory, and response scenario at run time, applies after_signing, and grades the "
@@ -622,7 +637,8 @@ _COMMENT = (
     "reference libraries with no profile rules already give the expected outcome. tier "
     '"profile": the bare libraries give the opposite outcome and only the profile\'s rules give '
     'the expected one; a WBA MUST the library does not enforce stays "profile" until it does. '
-    "See README.md."
+    "Each target_uris case is a GET to url, which each side signs and the other verifies; wire "
+    "is its @target-uri. See README.md."
 )
 
 
@@ -673,6 +689,7 @@ def build_scenarios() -> ScenariosDocument:
         request_scenarios=_request_scenarios(),
         directory_scenarios=_directory_scenarios(),
         response_scenarios=_response_scenarios(),
+        target_uris=_target_uris(),
     )
 
 

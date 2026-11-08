@@ -13,6 +13,8 @@ from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from typing import NamedTuple
 
+from .values import TargetURI
+
 #: Header input: a mapping, or ``(name, value)`` field lines, read once.
 Headers = Mapping[str, str] | Iterable[tuple[str, str]]
 
@@ -110,17 +112,18 @@ class HeaderLines:
 
 
 def target_uri(url: str) -> str:
-    """``url`` as the profile signs and rebuilds it: no fragment, then no empty query.
+    """``url`` as it travels on the wire: the ``@target-uri`` every signature base takes.
 
-    A fragment never goes on the wire, and a server can't tell
-    ``https://seller.example.com/p?`` from ``https://seller.example.com/p``
-    (ASGI gives both the query string ``b""``). So every signature base, the
-    signer's and the verifiers' alike, takes the URL this returns, and the
-    server's edge rebuilds it the same way. Any other URL is returned as given.
+    It is the serialization of :class:`~.values.TargetURI`: the WHATWG URL
+    serialization an HTTP client sends, normalized per RFC 3986 § 6.2.2
+    (lowercase scheme and host, no default port, no dot segments), with no
+    userinfo, fragment, or empty query, and with the characters a client
+    sends raw, such as ``| ^ [ ] { }`` in a query, left as written. The
+    signer signs it, the verifiers recompute it, and the server's edge
+    rebuilds it, so they agree on every URL. Raises ``ValueError`` for
+    anything but an absolute ``http`` or ``https`` URL.
     """
-    head = url.partition("#")[0]
-    path, mark, query = head.partition("?")
-    return path if mark and not query else head
+    return str(TargetURI.parse(url))
 
 
 def _header_lines(headers: Headers | None) -> HeaderLines:
