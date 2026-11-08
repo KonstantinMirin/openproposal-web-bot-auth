@@ -34,6 +34,8 @@ from starlette.types import ASGIApp
 from buyer.app import create_app as create_buyer
 from buyer.resources import BuyerResources
 from buyer.settings import BuyerSettings
+from persistence.observe import KeptOriginCredential, SellerRecords
+from persistence.values import Origin
 from protocol.values import objects, read_json
 from seller.caller import WHOAMI, ResolvedView
 from seller.faults import FAULT_REASONS
@@ -208,14 +210,53 @@ def test_the_store_refuses_a_thread_other_than_the_one_that_opened_it(tmp_path: 
         resources = client.app_state["resources"]
         assert isinstance(resources, SellerResources)
         with pytest.raises(sqlite3.ProgrammingError, match="same thread"):
-            resources.store.is_empty()
+            resources.store.principal("buyer-wba")
 
 
-def test_a_restart_keeps_the_seeded_records(tmp_path: Path) -> None:
-    for _ in range(2):  # the second start finds the records and seeds nothing
-        with TestClient(_seller(tmp_path), base_url=SELLER) as client:
-            caller = _resolved(client, {"Authorization": f"Bearer {TOKEN}"})
-            assert caller.principal.id == "buyer-bearer"
+def test_each_boot_applies_the_counterparties_its_settings_name(
+    tmp_path: Path, buyer_key: Ed25519Key
+) -> None:
+    """The settings are the one source of truth for the seller's buyers: a changed buyer
+    origin or bearer token takes effect on the next boot, and the one it replaces stops
+    working."""
+    moved = "https://buyer-two.wba-demo.noetis.dev"
+    keys: dict[LibraryOrigin | str, list[Ed25519Key]] = {BUYER: [buyer_key], moved: [buyer_key]}
+
+    def boot(origin: str, token: str | None) -> TestClient:
+        settings = replace(
+            seller_settings(tmp_path, origins=ELSEWHERE),
+            peer_buyer_origin=Origin.parse(origin),
+            bearer_token=None if token is None else SecretStr(token),
+        )
+        return TestClient(seller_app(settings, resolver=StaticKeyResolver(keys)), base_url=SELLER)
+
+    def whoami(client: TestClient, headers: dict[str, str]) -> httpx.Response:
+        answer: httpx.Response = client.get("/whoami", headers=headers)
+        return answer
+
+    def signed_as(origin: str) -> dict[str, str]:
+        return signed_headers("GET", f"{SELLER}/whoami", buyer_key, origin=origin)
+
+    with boot(BUYER, TOKEN) as client:
+        assert (
+            _resolved(client, {"Authorization": f"Bearer {TOKEN}"}).principal.id == "buyer-bearer"
+        )
+        assert _resolved(client, signed_as(BUYER)).principal.id == "buyer-wba"
+    with boot(moved, "rotated-token") as client:
+        assert whoami(client, {"Authorization": f"Bearer {TOKEN}"}).status_code == 401
+        assert _resolved(client, {"Authorization": "Bearer rotated-token"}).principal.id == (
+            "buyer-bearer"
+        )
+        assert _resolved(client, signed_as(moved)).principal.domain == Origin.parse(moved).host
+        former = WHOAMI.validate_json(whoami(client, signed_as(BUYER)).content)
+        assert not isinstance(former, ResolvedView), former  # verified, but no principal now
+    with boot(moved, None) as client:
+        assert whoami(client, {"Authorization": "Bearer rotated-token"}).status_code == 401
+    with SellerRecords.open(tmp_path / "seller.db") as records:
+        assert records.credentials("buyer-wba") == [
+            KeptOriginCredential(origin=Origin.parse(moved))
+        ]
+        assert records.credentials("buyer-bearer") == []
 
 
 # The fault switch (TEST ONLY)

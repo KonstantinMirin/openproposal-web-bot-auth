@@ -49,7 +49,7 @@ from transport.wba import fetch_of, lines_of, origin_of, sent_request
 
 from .credentials import BuyerCredential, seller_call
 from .refusal import Reason, Refusal
-from .repository import Counterparty
+from .settings import Counterparty
 
 #: The client every call goes through. The rest of the buyer holds one and passes it
 #: here; only this module, buyer/credentials.py, and buyer/cfbot.py touch httpx.

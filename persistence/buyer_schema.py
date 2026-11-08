@@ -23,22 +23,15 @@ from .values import Origin
 CommitState = Literal["pending", "agreed", "rejected"]
 
 SCHEMA = f"""
--- A seller this buyer deals with, by origin. The buyer stores no seller key:
--- keys come from the origin's directory. bearer_token is the credential the
--- seller issued this buyer, for the bearer flow.
-CREATE TABLE IF NOT EXISTS sellers (
-    origin        TEXT PRIMARY KEY,
-    domain        TEXT NOT NULL,
-    legal_name    TEXT NOT NULL,
-    bearer_token  TEXT
-);
--- Each Commit the buyer composed. A pending commit is re-sent whole, with the
+-- Each Commit the buyer composed, to the seller at seller_origin. The buyer's
+-- settings name its sellers (buyer/settings.py); it stores no seller, no
+-- seller key, and no token. A pending commit is re-sent whole, with the
 -- same idempotency_key, until the seller's answer verifies (§ 4.1.2, § 5.6.1).
 -- An agreed commit names the seller's signed answer, the evidence it kept
 -- (persistence/evidence.py); one answer settles one commit.
 CREATE TABLE IF NOT EXISTS commits (
     id               INTEGER PRIMARY KEY,
-    seller_origin    TEXT NOT NULL REFERENCES sellers (origin),
+    seller_origin    TEXT NOT NULL,
     proposal_id      TEXT NOT NULL,
     line_item_ids    TEXT NOT NULL,
     idempotency_key  TEXT NOT NULL UNIQUE,

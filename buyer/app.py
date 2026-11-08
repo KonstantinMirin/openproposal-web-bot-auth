@@ -54,7 +54,7 @@ from .cfbot import Cfbot
 from .flow import Buyer
 from .http import install_handlers
 from .plan import Plan
-from .repository import BuyerRepository, Counterparty, NotPendingError
+from .repository import BuyerRepository, NotPendingError
 from .resources import BuyerResources, CfbotDep, FlowDep, KeyringDep, SettingsDep
 from .seller_client import HTTPClient, SellerClient
 from .settings import BuyerSettings
@@ -195,23 +195,14 @@ class _Parts:
     resolver: KeyResolver | None
 
     def resources(self, store: BuyerRepository, client: HTTPClient) -> BuyerResources:
-        """The buyer's resources over its open store and client: its record of its seller,
-        the offer flow, and cfbot, both signing with the one signing identity."""
+        """The buyer's resources over its open store and client: the offer flow, with the
+        sellers its settings name on this boot, and cfbot, both signing with the one signing
+        identity."""
         settings = self.settings
-        # The buyer knows the seller by its origin only, and its domain is that origin's host.
-        # Its legal name and the token, the bearer flow's credential, come from the settings.
-        seller = settings.peer_seller_origin
-        store.add_counterparty(
-            Counterparty(
-                origin=seller,
-                domain=seller.host,
-                legal_name=settings.peer_seller_legal_name,
-                bearer_token=settings.bearer_token,
-            )
-        )
         signing = self.signing
         keys = resolver_or_default(client, settings.max_cache_age, self.resolver)
-        flow = Buyer(store, SellerClient(client, keys), signing, self.plan, settings.self_origin)
+        sellers = SellerClient(client, keys)
+        flow = Buyer(store, settings.counterparties, sellers, signing, self.plan)
         cfbot = Cfbot(client, settings.peer_cfbot_origin, signing)
         return BuyerResources(settings, store, signing.keyring, client, flow, cfbot)
 

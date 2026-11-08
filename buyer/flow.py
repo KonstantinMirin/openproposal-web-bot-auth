@@ -1,7 +1,7 @@
 """The buyer's side of offer acceptance: read the issued proposal, commit, check the answer.
 
-`Buyer.commit` is a sequence of protocol operations: resolve the seller in the
-buyer's own records, read the proposal (`SellerClient.read`), compose the
+`Buyer.commit` is a sequence of protocol operations: resolve the seller among
+the sellers the buyer deals with, read the proposal (`SellerClient.read`), compose the
 `commit` (`protocol.compose_commit`), send it (`SellerClient.commit`), check
 the answer (`protocol.check_result`), and keep the agreement
 (`BuyerRepository.keep_agreement`). Each step returns a value; the first
@@ -32,8 +32,9 @@ from transport.control import Agreed, Outcome, Read, Refused, Rejected, SellerVi
 from .credentials import Bearer, BuyerCredential, SignWith
 from .plan import Plan
 from .refusal import Reason, Refusal
-from .repository import BuyerRepository, CommitKey, Counterparty, PendingCommit
+from .repository import BuyerRepository, CommitKey, PendingCommit
 from .seller_client import Accepted, ReadProposal, Rejection, SellerClient
+from .settings import Counterparty
 
 
 @dataclass(frozen=True)
@@ -70,23 +71,23 @@ def _refused(seller: SellerView | None, method: AuthMethod, refusal: Refusal) ->
 
 
 class Buyer:
-    """The offer flow, over the buyer's records, its seller client, its signing identity, its
-    plan, and its own origin, which it keeps with each signed answer as the receiver."""
+    """The offer flow, over the buyer's records, its sellers, its seller client, its signing
+    identity, whose origin it keeps with each signed answer as the receiver, and its plan."""
 
     def __init__(
         self,
         repo: BuyerRepository,
+        sellers: Sequence[Counterparty],
         client: SellerClient,
         signing: SigningIdentity,
         plan: Plan,
-        self_origin: Origin,
     ) -> None:
-        self.repo, self.client, self.signing = repo, client, signing
-        self.plan, self.self_origin = plan, self_origin
+        self.repo, self.client, self.signing, self.plan = repo, client, signing, plan
+        self.sellers = {seller.origin: seller for seller in sellers}
 
     def _call(self, seller_origin: Origin, method: AuthMethod) -> _Call | Refused:
-        """The seller, resolved once from the buyer's own records, and the credential."""
-        seller = self.repo.counterparty(seller_origin)
+        """The seller, resolved once from the sellers the buyer deals with, and the credential."""
+        seller = self.sellers.get(seller_origin)
         if seller is None:
             detail = f"{seller_origin} is not a seller this buyer deals with"
             return _refused(None, method, Refusal(Reason.UNKNOWN_SELLER, detail))
@@ -183,7 +184,7 @@ class Buyer:
         )
         evidence_id = self.repo.keep_agreement(
             pending.id,
-            answer.exchange.evidence(self.self_origin),
+            answer.exchange.evidence(self.signing.origin),
             answer.result.entries,
             attributed=attributed,
         )

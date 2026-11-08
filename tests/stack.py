@@ -274,7 +274,8 @@ class Stack:
     ) -> None:
         self.origins = origins
         self.seller_dir, self.buyer_dir = root / "seller", root / "buyer"
-        self.seller_dir.mkdir(parents=True)
+        # A root that already holds a stack restarts both agents over their records and keys.
+        self.seller_dir.mkdir(parents=True, exist_ok=True)
         # The seller loads this key at create_app; `signed` signs as the seller with it.
         self.seller_key = keyfile.load_or_create(self.seller_dir / "wba-key.jwk")
         #: cfbot's key, which its directory publishes.

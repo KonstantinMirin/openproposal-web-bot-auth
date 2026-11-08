@@ -5,7 +5,7 @@ The seller reads every `AgentSettings` variable (shared/settings.py), and these:
 | Variable | Default | What it sets |
 |---|---|---|
 | `SELF_LEGAL_NAME` | `Demo Seller Inc.` | the legal name it issues proposals under |
-| `PEER_BUYER_ORIGIN` | `https://buyer.wba-demo.noetis.dev` | the signing buyer it seeds |
+| `PEER_BUYER_ORIGIN` | `https://buyer.wba-demo.noetis.dev` | the signing buyer, set on each boot |
 | `DEMO_FAULT_INJECTION` | off | TEST ONLY: mounts `PUT /test/fault` |
 
 Its database is `seller.db` in `DATA_DIR`, and its signing key `wba-key.jwk` in

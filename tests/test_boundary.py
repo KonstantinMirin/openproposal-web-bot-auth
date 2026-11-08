@@ -43,7 +43,7 @@ from persistence.values import Origin
 from protocol.operations import parse_errors
 from protocol.values import JsonObject, read_json
 from seller.caller import WHOAMI, BearerCredential, ResolvedView
-from seller.seed import seed
+from seller.seed import onboard
 from seller.sqlite_store import SqliteSellerStore
 from tests._tools import commit_body, seed_issuer
 from tests.stack import (
@@ -343,9 +343,11 @@ def _seeded_with_a_token_for_the_signing_buyer(data_dir: Path) -> None:
     data_dir.mkdir()
     store = SqliteSellerStore(data_dir / "seller.db")
     try:
-        seed(store, seed_issuer(), buyer_origin=Origin.parse(BUYER), bearer_token=SecretStr(TOKEN))
+        onboard(
+            store, seed_issuer(), buyer_origin=Origin.parse(BUYER), bearer_token=SecretStr(TOKEN)
+        )
         with store.transaction():
-            store.add_token_credential("buyer-wba", "buyer-wba-token")
+            store.set_token_credential("buyer-wba", "buyer-wba-token")
     finally:
         store.close()
 

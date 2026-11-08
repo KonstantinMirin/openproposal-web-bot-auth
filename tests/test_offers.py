@@ -28,7 +28,7 @@ from persistence.observe import KeptEntry, SellerRecords
 from protocol.operations import parse_errors, parse_result
 from protocol.record import items_by_id
 from protocol.values import JsonObject, JsonValue, read_json
-from seller.seed import seed
+from seller.seed import onboard
 from seller.sqlite_store import SqliteSellerStore
 from tests._tools import commit_body, seed_issuer, seed_template
 from tests.stack import ELSEWHERE, seller_app, seller_settings
@@ -59,14 +59,14 @@ def _seed(data_dir: Path, edit: Edit, prior: list[AssentEntry]) -> None:
     edit(template)
     store = SqliteSellerStore(data_dir / "seller.db")
     try:
-        seed(
+        onboard(
             store,
             seed_issuer(template),
             buyer_origin=ELSEWHERE.buyer,
             bearer_token=SecretStr("t"),
         )
         with store.transaction():
-            store.add_token_credential("buyer-wba", "buyer-wba-token")
+            store.set_token_credential("buyer-wba", "buyer-wba-token")
             for entry in prior:
                 store.append_assent("demo-wba-1", entry, None)
     finally:

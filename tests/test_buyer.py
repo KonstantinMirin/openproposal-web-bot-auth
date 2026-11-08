@@ -42,6 +42,7 @@ from tests.stack import (
     BUYER,
     BUYER_OPERATOR,
     CFBOT,
+    DEMO,
     ELSEWHERE,
     RESELLER,
     SELLER,
@@ -533,6 +534,22 @@ def test_an_unsigned_answer_of_any_status_is_refused(
     assert f"the seller's {status} answer" in outcome.detail
     assert _kept_nothing(stack)
     assert _commits(stack, "demo-wba-1") == ([] if on == "read" else ["pending"])
+
+
+def test_each_boot_deals_with_the_sellers_its_settings_name(tmp_path: Path) -> None:
+    """The buyer keeps no record of its sellers: a token its settings no longer hold is gone
+    on the next boot, and so is a seller they no longer name."""
+    with Stack(tmp_path) as stack:
+        as_state(Read, stack.read("demo-bearer-1", "bearer"))
+    with Stack(tmp_path, token=False) as stack:
+        refused = as_state(Refused, stack.read("demo-bearer-1", "bearer"))
+        assert refused.code == "credential-not-issued"
+        as_state(Read, stack.read("demo-wba-1"))
+    with Stack(tmp_path, origins=ELSEWHERE) as stack:
+        trigger = ReadTrigger(proposal_id="demo-wba-1", seller=DEMO.seller)
+        refused = as_state(Refused, stack.buyer_control.call(READ, trigger))
+        assert refused.code == "unknown-seller"
+        assert stack.requests == []
 
 
 def test_a_pending_commit_is_found_whatever_the_order_of_its_line_items(stack: Stack) -> None:

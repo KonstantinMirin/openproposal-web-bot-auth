@@ -1,11 +1,11 @@
-"""The buyer's own records, in SQLite: its sellers, its commits, and the evidence of each agreement.
+"""The buyer's own records, in SQLite: its commits, and the evidence of each agreement.
 
 `BuyerRepository` takes and returns domain values, never rows, and it is the
 only buyer code that serializes for storage. It writes the tables that
 persistence/buyer_schema.py defines and reads commits through that module, the
-buyer's read model's too; a seller row is read straight into a `Counterparty`,
-by its fields' names. `keep_agreement` writes the seller's signed answer and
-settles the commit in one transaction.
+buyer's read model's too. `keep_agreement` writes the seller's signed answer and
+settles the commit in one transaction. The sellers the buyer deals with are not
+records: its settings name them (buyer/settings.py).
 """
 
 from __future__ import annotations
@@ -15,37 +15,18 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from openproposal import AssentEntry, Commit, ErrorObject, dump_json
-from pydantic import SecretStr
 
 from persistence import buyer_schema, evidence
 from persistence.buyer_schema import CommitState, KeptCommit, items_column
 from persistence.sqlite import (
-    fetch_one,
     inserted,
     is_closed,
     json_array,
     open_db,
-    select,
     transaction,
 )
 from persistence.values import Origin, SignedResponse
-from protocol.values import Value, commitment_key
-
-
-class Counterparty(Value):
-    """A seller this buyer deals with: known by its origin, never by a key.
-
-    The repository reads a seller row straight into it, by its fields' names.
-    """
-
-    origin: Origin
-    domain: str
-    legal_name: str
-    #: The token the seller issued this buyer, for the bearer flow.
-    bearer_token: SecretStr | None = None
-
-
-_COUNTERPARTY = select("sellers", Counterparty, where="origin = ?")
+from protocol.values import commitment_key
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -83,21 +64,6 @@ class BuyerRepository:
     @property
     def is_closed(self) -> bool:
         return is_closed(self._db)
-
-    # Sellers
-
-    def add_counterparty(self, seller: Counterparty) -> None:
-        """Records a seller once; a restart keeps the first record."""
-        token = seller.bearer_token.get_secret_value() if seller.bearer_token else None
-        self._db.execute(
-            "INSERT OR IGNORE INTO sellers (origin, domain, legal_name, bearer_token)"
-            " VALUES (?, ?, ?, ?)",
-            (str(seller.origin), seller.domain, seller.legal_name, token),
-        )
-
-    def counterparty(self, origin: Origin) -> Counterparty | None:
-        row = fetch_one(self._db, _COUNTERPARTY, (str(origin),))
-        return None if row is None else Counterparty.model_validate(row)
 
     # Commits
 

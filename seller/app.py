@@ -51,7 +51,7 @@ from .offers.acceptance import answer_commit
 from .offers.issuance import Issuer, issue_fresh
 from .offers.reading import full_representation, parse_commit
 from .resources import IssuerDep, OfferStoreDep, OnboardingDep, SellerResources
-from .seed import seed
+from .seed import onboard
 from .settings import SellerSettings
 from .sqlite_store import SqliteSellerStore
 
@@ -154,10 +154,11 @@ class _Parts:
     resolver: KeyResolver | None
 
     def resources(self, store: SqliteSellerStore, client: httpx.AsyncClient) -> SellerResources:
-        """The seller's resources over its open store and client: the first-boot records,
-        and the identity boundary over the store's principals and the request verifier."""
+        """The seller's resources over its open store and client: its counterparties, as
+        its settings name them on this boot, and the identity boundary over the store's
+        principals and the request verifier."""
         settings = self.settings
-        seed(
+        onboard(
             store,
             self.issuer,
             buyer_origin=settings.peer_buyer_origin,

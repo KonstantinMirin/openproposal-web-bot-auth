@@ -63,26 +63,39 @@ class SqliteSellerStore:
 
     # Principals and credentials (PrincipalDirectory, Onboarding)
 
-    def is_empty(self) -> bool:
-        return fetch_one(self._db, "SELECT 1 FROM principals LIMIT 1") is None
-
-    def add_principal(self, principal: Principal) -> None:
+    def put_principal(self, principal: Principal) -> None:
         self._db.execute(
-            "INSERT INTO principals (id, kind, legal_name, domain) VALUES (?, ?, ?, ?)",
+            "INSERT INTO principals (id, kind, legal_name, domain) VALUES (?, ?, ?, ?)"
+            " ON CONFLICT (id) DO UPDATE SET kind = excluded.kind,"
+            " legal_name = excluded.legal_name, domain = excluded.domain",
             (principal.id, principal.kind, principal.legal_name, principal.domain),
         )
 
-    def add_origin_credential(self, principal_id: str, origin: Origin) -> None:
+    def set_origin_credential(self, principal_id: str, origin: Origin) -> None:
+        """Replaces the principal's signature credential, and frees `origin` from any other."""
+        self._db.execute(
+            "DELETE FROM credentials"
+            " WHERE type = 'web_bot_auth' AND (principal_id = ? OR origin = ?)",
+            (principal_id, str(origin)),
+        )
         self._db.execute(
             "INSERT INTO credentials (principal_id, type, origin) VALUES (?, 'web_bot_auth', ?)",
             (principal_id, str(origin)),
         )
 
-    def add_token_credential(self, principal_id: str, token: str) -> None:
+    def set_token_credential(self, principal_id: str, token: str | None) -> None:
+        """Replaces the principal's bearer credential, and frees the token from any other."""
+        digest = None if token is None else token_hash(token)
         self._db.execute(
-            "INSERT INTO credentials (principal_id, type, token_hash) VALUES (?, 'bearer', ?)",
-            (principal_id, token_hash(token)),
+            "DELETE FROM credentials"
+            " WHERE type = 'bearer' AND (principal_id = ? OR token_hash = ?)",
+            (principal_id, digest),
         )
+        if digest is not None:
+            self._db.execute(
+                "INSERT INTO credentials (principal_id, type, token_hash) VALUES (?, 'bearer', ?)",
+                (principal_id, digest),
+            )
 
     def principal(self, principal_id: str) -> Principal | None:
         return self._principal(_BY_ID, principal_id)
