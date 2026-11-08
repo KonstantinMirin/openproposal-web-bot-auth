@@ -201,7 +201,7 @@ class _Parts:
         settings = self.settings
         signing = self.signing
         keys = resolver_or_default(client, settings.max_cache_age, self.resolver)
-        sellers = SellerClient(client, keys)
+        sellers = SellerClient(client, keys, settings.own)
         flow = Buyer(store, settings.counterparties, sellers, signing, self.plan)
         cfbot = Cfbot(client, settings.peer_cfbot_origin, signing)
         return BuyerResources(settings, store, signing.keyring, client, flow, cfbot)

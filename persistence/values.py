@@ -14,8 +14,8 @@ converts them to and from the library's own types.
 - `Signer`, `SignedRequest`, `SignedResponse`: who signed a kept message, with
   which key, the directory fetch that key came from, and when the party verified
   it, so that it verifies again at that instant.
-- `Provenance`: who wrote an assent entry and how that was proven, which the
-  seller keeps with the entry.
+- `Provenance`: what the seller's identity boundary confirmed of a caller,
+  which the seller keeps with an entry the caller writes.
 """
 
 from __future__ import annotations
@@ -207,29 +207,38 @@ class IllegalProvenanceError(ValueError):
     def __init__(self) -> None:
         super().__init__(
             "a provenance carries a signed request exactly when the caller signed,"
-            " and only a signature attributes"
+            " and only a signature covers the body"
         )
 
 
 class Provenance(Value):
-    """Who wrote an assent entry and how the boundary confirmed it: what storage keeps with it.
+    """What the identity boundary confirmed of a caller: who it is, and how that was proven.
 
-    The identity boundary builds it once, from the caller it confirmed. The
-    offer logic reads only `principal_id` and hands the rest to storage
-    unread. `signed` is present exactly when `method` is the signature method,
-    and only a signature attributes, so no other combination constructs.
+    It holds confirmed facts only: the principal the credential resolves to,
+    and, for a signature, the verified request, whose signer names the signing
+    origin, and whether the signature covers the body. Whether a signature
+    attributes an entry (§ 4.1.2) is not a fact about the caller: it depends on
+    the record the entry is about, so the seller computes it when it writes the
+    entry, against that record's party. `signed` is present exactly when
+    `method` is the signature method, and only a signature covers the body, so
+    no other combination constructs.
     """
 
     principal_id: str
     method: AuthMethod
-    #: § 4.1.2: the signature attributes the body's entries to the principal.
-    attributed: bool
     #: The verified request that carried the entry, with who signed it.
     signed: SignedRequest | None
+    #: True when the signature covers the body through `Content-Digest`.
+    body_covered: bool = False
 
     @model_validator(mode="after")
     def _signed_exactly_for_a_signature(self) -> Self:
         signature = self.method == "web_bot_auth"
-        if signature != (self.signed is not None) or (self.attributed and not signature):
+        if signature != (self.signed is not None) or (self.body_covered and not signature):
             raise IllegalProvenanceError
         return self
+
+    @property
+    def signing_host(self) -> str | None:
+        """The host of the origin that signed, or None for a bearer token."""
+        return None if self.signed is None else self.signed.signer.origin.host

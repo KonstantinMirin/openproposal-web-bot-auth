@@ -1,7 +1,8 @@
 # Layer ban: the protocol rules and the offer logic import no HTTP framework,
 # HTTP client, storage engine, file access, or environment read, and no identity type: the
-# offer logic takes a principal id and an opaque Provenance, never a caller or
-# a credential, so it can't read how a caller authenticated.
+# offer logic takes a principal id and an entry writer the HTTP seam binds to the
+# caller's provenance, never a caller, a credential, or the provenance, so it can't
+# read how a caller authenticated.
 #
 # Run as its own stage: `uv run ruff check --config ruff-domain.toml` (make lint).
 # A separate config, so that no exemption here leaks into another ban.
@@ -20,4 +21,5 @@ select = ["TID251"]
 "os.environ".msg = "The protocol rules read no configuration; settings are passed in."
 "os.getenv".msg = "The protocol rules read no configuration; settings are passed in."
 "pathlib".msg = "The protocol rules read no files; the composition root reads them and passes the parsed values in."
-"seller.caller".msg = "The offer logic is credential-blind: take the principal id or the Provenance the HTTP seam passes."
+"seller.caller".msg = "The offer logic is credential-blind: take the principal id or the EntryWriter the HTTP seam passes."
+"persistence.values.Provenance".msg = "The offer logic is credential-blind: the EntryWriter the HTTP seam passes holds the provenance."

@@ -5,8 +5,8 @@ at import time. Uvicorn builds the app with `--factory seller.app:app_from_env`,
 the only caller of `SellerSettings.from_env()`.
 
 Every agent-facing route takes the caller from the identity boundary
-(`CallerDep`, or `ProvenanceDep` for the offer logic, seller/http.py) and
-nothing else. The `/operator/` routes are the seller's own controls, outside
+(`CallerDep`, or, for the offer logic, `PrincipalDep` or `EntryWriterDep`,
+seller/http.py) and nothing else. The `/operator/` routes are the seller's own controls, outside
 the boundary: no front routes them, and each call carries the operator key
 (transport/operator.py).
 `ResponseSigningMiddleware` signs every response, refusals included, binds it
@@ -46,7 +46,7 @@ from .boundary import IdentityBoundary
 from .caller import WhoAmI
 from .errors import Rejected, UnknownPrincipal
 from .faults import FaultInjection
-from .http import CallerDep, ProvenanceDep, RawBodyDep, answer, install_handlers
+from .http import CallerDep, EntryWriterDep, PrincipalDep, RawBodyDep, answer, install_handlers
 from .offers.acceptance import answer_commit
 from .offers.issuance import Issuer, issue_fresh
 from .offers.reading import full_representation, parse_commit
@@ -61,22 +61,21 @@ api = APIRouter()
 
 @api.get("/proposals/{proposal_id}")
 async def get_proposal(
-    proposal_id: str, provenance: ProvenanceDep, store: OfferStoreDep
+    proposal_id: str, principal: PrincipalDep, store: OfferStoreDep
 ) -> JSONResponse:
-    principal_id = None if provenance is None else provenance.principal_id
-    return answer(full_representation(store, principal_id, proposal_id))
+    return answer(full_representation(store, principal, proposal_id))
 
 
 @api.post("/proposals/{proposal_id}/commit")
 async def post_commit(
-    proposal_id: str, provenance: ProvenanceDep, store: OfferStoreDep, body: RawBodyDep
+    proposal_id: str, writer: EntryWriterDep, store: OfferStoreDep, body: RawBodyDep
 ) -> JSONResponse:
     # The route takes the body as bytes, so nothing parses it before the boundary has
     # confirmed the credential: a failing credential is refused even when the JSON is broken.
     request = parse_commit(body)
     if isinstance(request, Rejected):
         return answer(request)
-    return answer(answer_commit(store, provenance, proposal_id, request, datetime.now(UTC)))
+    return answer(answer_commit(store, writer, proposal_id, request, datetime.now(UTC)))
 
 
 @api.get("/whoami")
@@ -154,14 +153,16 @@ class _Parts:
     resolver: KeyResolver | None
 
     def resources(self, store: SqliteSellerStore, client: httpx.AsyncClient) -> SellerResources:
-        """The seller's resources over its open store and client: its counterparties, as
-        its settings name them on this boot, and the identity boundary over the store's
-        principals and the request verifier."""
+        """The seller's resources over its open store and client: its buyer, as its
+        settings name it on this boot, and the identity boundary over the store's
+        principals and the request verifier. Settings that would rewrite the buyer's
+        recorded identity raise `IdentityChanged`, and the seller doesn't start."""
         settings = self.settings
         onboard(
             store,
             self.issuer,
             buyer_origin=settings.peer_buyer_origin,
+            buyer_legal_name=settings.peer_buyer_legal_name,
             bearer_token=settings.bearer_token,
         )
         keys = resolver_or_default(client, settings.max_cache_age, self.resolver)

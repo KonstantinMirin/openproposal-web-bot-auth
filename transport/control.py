@@ -94,6 +94,8 @@ class Reason(StrEnum):
     MALFORMED_ANSWER = "malformed-answer"
     #: A verified proposal that names another seller.
     WRONG_SELLER = "wrong-seller"
+    #: A verified proposal that names no buyer, or another buyer than this one.
+    WRONG_BUYER = "wrong-buyer"
     #: The seller's identity boundary refused the buyer's credential.
     CREDENTIAL_REFUSED = "credential-refused"
     #: The seller answered the read of the proposal to commit to with an error.

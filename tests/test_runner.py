@@ -45,6 +45,7 @@ from runner.report import (
     schema,
 )
 from runner.settings import RunnerSettings
+from seller.seed import BUYER as BUYER_PRINCIPAL
 from shared.settings import SettingsError
 from tests.stack import (
     BUYER,
@@ -130,10 +131,15 @@ def test_a_run_passes_every_step_and_publishes_a_report_the_schema_accepts(
     ]
     signature, bearer = report.signature, report.bearer
     assert signature is not None and signature.seller is not None
-    assert signature.seller.principal_id == "buyer-wba"
+    with stack.seller_records() as records:
+        principal = records.principal_with_origin(stack.origins.buyer)
+    assert principal is not None
+    # One buyer, one principal: the seller resolved the same one under each credential.
+    assert signature.seller.principal_id == principal.id
     assert signature.seller.request is not None and signature.seller.directory is not None
     assert signature.reverify is not None and signature.reverify.response_bound
     assert bearer is not None and bearer.seller is not None and bearer.buyer is not None
+    assert bearer.seller.principal_id == principal.id
     assert bearer.seller.request is None  # a bearer commit keeps no signed request
     assert "authorization" in bearer.buyer.request.headers.withheld
 
@@ -346,12 +352,12 @@ CORRUPTED = [
         _after_commit(
             _sql(
                 "seller",
-                "UPDATE assent SET principal_id = 'buyer-bearer'"
+                "UPDATE assent SET principal_id = 'someone-else'"
                 " WHERE role = 'commitment' AND authentication_method = 'web_bot_auth'",
             )
         ),
         "signature-seller",
-        "the seller resolved buyer-bearer, not buyer-wba",
+        f"the seller resolved someone-else, not {BUYER_PRINCIPAL}",
     ),
     Corrupted(
         "the seller recorded another method",
@@ -476,14 +482,14 @@ def test_each_agent_refuses_another_partys_operator_key(stack: Stack) -> None:
     refused = ErrorBody(error="operator-key", detail="operator key required")
     with pytest.raises(ControlFailed) as failed:
         ControlClient(stack.seller, operator_key=buyer_key).call(
-            ISSUE, IssueRequest(principal_id="buyer-wba")
+            ISSUE, IssueRequest(principal_id=BUYER_PRINCIPAL)
         )
     assert (failed.value.status, failed.value.error) == (403, refused)
     with pytest.raises(ControlFailed) as failed:
         ControlClient(stack.buyer, operator_key=seller_key).call(KEYS, None)
     assert (failed.value.status, failed.value.error) == (403, refused)
     ControlClient(stack.seller, operator_key=seller_key).call(
-        ISSUE, IssueRequest(principal_id="buyer-wba")
+        ISSUE, IssueRequest(principal_id=BUYER_PRINCIPAL)
     )
     ControlClient(stack.buyer, operator_key=buyer_key).call(KEYS, None)
 

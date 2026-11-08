@@ -22,7 +22,10 @@ from e2e.scenarios.stack import (
     OPERATOR_KEYS,
     SELLER,
     SELLER_CONTROL,
+    SELLER_DB,
+    buyer_principal,
 )
+from persistence.observe import SellerRecords
 from transport.client import ControlClient, ControlFailed
 from transport.control import (
     CFBOT_WHOAMI,
@@ -36,13 +39,20 @@ from transport.control import (
     ReadTrigger,
 )
 
+
+def _buyer() -> str:
+    """The buyer's principal, as the seller's records hold it."""
+    with SellerRecords.open(SELLER_DB) as records:
+        return buyer_principal(records).id
+
+
 #: Each party's controls, one call to them, and another party, whose key they must refuse.
 INSIDE: list[tuple[str, httpx.URL, Callable[[ControlClient], object], httpx.URL]] = [
     ("buyer keys", BUYER_CONTROL, lambda c: c.call(KEYS, None), SELLER_CONTROL),
     (
         "seller issue",
         SELLER_CONTROL,
-        lambda c: c.call(ISSUE, IssueRequest(principal_id="buyer-wba")),
+        lambda c: c.call(ISSUE, IssueRequest(principal_id=_buyer())),
         BUYER_CONTROL,
     ),
     ("cfbot whoami", CFBOT_CONTROL, lambda c: c.call(CFBOT_WHOAMI, None), BUYER_CONTROL),
@@ -83,7 +93,9 @@ def test_the_front_never_routes_operator_controls(web: httpx.Client, url: str) -
 def test_the_seller_issues_a_fresh_proposal_with_the_key(
     seller_control: ControlClient, buyer_control: ControlClient
 ) -> None:
-    issued = seller_control.call(ISSUE, IssueRequest(principal_id="buyer-wba"))
-    assert issued.proposal_id.startswith("live-buyer-wba-")
+    principal = _buyer()
+    issued = seller_control.call(ISSUE, IssueRequest(principal_id=principal))
+    assert issued.principal_id == principal
+    assert issued.proposal_id.startswith(f"live-{principal}-")
     read = buyer_control.call(READ, ReadTrigger(proposal_id=issued.proposal_id))
     assert isinstance(read, Read), read

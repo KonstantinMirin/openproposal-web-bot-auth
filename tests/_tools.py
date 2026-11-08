@@ -38,9 +38,9 @@ def seed_issuer(template: JsonObject | None = None) -> Issuer:
 
 
 def seed_document() -> JsonObject:
-    """The demo's seed proposal as the seller issues it to buyer-wba, as demo-wba-1."""
+    """The demo's seed proposal as the seller issues it to its buyer, as demo-wba-1."""
     buyer = Principal(
-        id="buyer-wba",
+        id="demo-buyer",
         kind="buyer",
         legal_name="Demo Buyer Agency LLC",
         domain="buyer.wba-demo.noetis.dev",

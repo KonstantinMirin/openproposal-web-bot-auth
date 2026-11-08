@@ -6,8 +6,8 @@
 # SELLER_OPERATOR_KEY, BUYER_OPERATOR_KEY, CFBOT_OPERATOR_KEY: what each agent's own
 #   controls require (transport/operator.py), one distinct key per party. The compose files
 #   hand each agent its own as OPERATOR_KEY, and the runner the seller's and the buyer's.
-# DEMO_BEARER_TOKEN: the token the seller issues its bearer buyer. The seller stores its
-#   SHA-256 only; the buyer presents it.
+# DEMO_BEARER_TOKEN: the token the seller issues its buyer, a second credential of the same
+#   principal as the buyer's origin. The seller stores its SHA-256 only; the buyer presents it.
 set -euo pipefail
 cd "$(dirname "$0")"
 target="${1:-../../wba-demo.env}"

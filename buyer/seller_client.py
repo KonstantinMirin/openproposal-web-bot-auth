@@ -6,9 +6,12 @@ seller by, and, for a signed request, its binding to the request. An answer
 of any status that doesn't verify is refused: a failing signature with the
 library's reason, never taken as no signature, and an unsigned answer as
 `signature-missing`. Each verified answer keeps the instant it verified at, so
-the evidence verifies again at that instant. Then the
-answer is parsed as the document its status says it is: a `Proposal`, a
-`CommitResult`, or a § 2.4 `errors[]`. Verification and parsing run inside one
+the evidence verifies again at that instant. Then the answer is parsed as the
+document its status says it is: a `Proposal`, a `CommitResult`, or a § 2.4
+`errors[]`. A proposal must name the seller the buyer called as its seller and
+the buyer's own party as its buyer; a `CommitResult` is taken only for the
+record of such a proposal, whose digest its entries must match
+(`protocol.operations.check_result`). Verification and parsing run inside one
 refusal boundary, so whatever the seller sends comes back as a value
 (`ReadProposal`, `Accepted`, `Rejection`) or as a `Refusal`, never as an
 exception. No HTTP status leaves this module.
@@ -44,6 +47,7 @@ from pydantic import ValidationError
 from persistence.values import KeptResponse, Origin, SignedResponse, Signer
 from protocol.operations import RECEIVE, parse_errors, parse_result
 from protocol.values import JsonObject, read_json
+from shared.party import OwnParty
 from transport.control import ErrorBody
 from transport.wba import fetch_of, lines_of, origin_of, sent_request
 
@@ -174,7 +178,8 @@ def _rejection(exchange: Exchange) -> Rejection | Refusal:
     )
 
 
-def _proposal(seller: Counterparty, exchange: Exchange) -> ReadProposal | Refusal:
+def _proposal(seller: Counterparty, own: OwnParty, exchange: Exchange) -> ReadProposal | Refusal:
+    """The proposal, when it names `seller` as its seller and this buyer as its buyer."""
     body = exchange.response.body
     # The raw JSON, unknown members and all, is the digest input, so its numbers must
     # canonicalize; the typed value, read from the same bytes, decides.
@@ -185,14 +190,20 @@ def _proposal(seller: Counterparty, exchange: Exchange) -> ReadProposal | Refusa
             Reason.WRONG_SELLER,
             f"the proposal names seller {proposal.seller.domain}, not {seller.domain}",
         )
+    buyer = None if proposal.buyer is None else proposal.buyer.domain
+    if buyer != own.domain:
+        return Refusal(
+            Reason.WRONG_BUYER, f"the proposal names buyer {buyer}, not this buyer {own.domain}"
+        )
     return ReadProposal(proposal, raw, exchange)
 
 
 class SellerClient:
-    """Sends the buyer's requests to a seller, and verifies and parses each answer."""
+    """Sends the buyer's requests to a seller, and verifies and parses each answer, as the
+    buyer's own party (`own`), which every proposal it takes must name as its buyer."""
 
-    def __init__(self, http: HTTPClient, resolver: KeyResolver) -> None:
-        self._http, self._resolver = http, resolver
+    def __init__(self, http: HTTPClient, resolver: KeyResolver, own: OwnParty) -> None:
+        self._http, self._resolver, self._own = http, resolver, own
 
     async def read(
         self, seller: Counterparty, credential: BuyerCredential, proposal_id: str
@@ -202,7 +213,7 @@ class SellerClient:
             exchange = await self._send(seller, credential, "GET", f"/proposals/{proposal_id}")
             if exchange.response.status != httpx.codes.OK:
                 return _rejection(exchange)
-            return _proposal(seller, exchange)
+            return _proposal(seller, self._own, exchange)
         except _REFUSED as e:
             return _refusal(e)
 

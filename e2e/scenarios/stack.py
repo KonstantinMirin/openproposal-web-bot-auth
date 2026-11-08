@@ -25,6 +25,8 @@ import uuid
 import httpx
 from iab_agentic_primitives.web_bot_auth import Ed25519Key, HTTPRequest, RequestSigner
 
+from persistence.observe import KeptPrincipal, SellerRecords
+from persistence.values import Origin
 from runner.settings import RunnerSettings
 from shared import settings as read
 from shared.keyring import KeyStore, rotation_wait
@@ -54,7 +56,7 @@ SELLER_DB = RUNNER.seller_db
 BUYER_DB = RUNNER.buyer_db
 BUYER_KEYS = read.path(_ENV, "BUYER_KEYS_DIR", "/buyer-keys")
 
-#: The token the seller issued its bearer buyer.
+#: The token the seller issued its buyer, beside the origin it knows the buyer by.
 BEARER_TOKEN = read.required_secret(_ENV, "DEMO_BEARER_TOKEN").get_secret_value()
 
 # The timing the agents run with, with the agents' own defaults.
@@ -65,6 +67,14 @@ MAX_CACHE_AGE = read.integer(_ENV, "WBA_MAX_CACHE_AGE", 300)
 ROTATION_WAIT = rotation_wait(read.integer(_ENV, "WBA_DIRECTORY_MAX_AGE", 300))
 #: How long the buyer's signatures last (`WBA_SIGNATURE_LIFETIME`).
 SIGNATURE_LIFETIME = read.integer(_ENV, "WBA_SIGNATURE_LIFETIME", 300)
+
+
+def buyer_principal(records: SellerRecords) -> KeptPrincipal:
+    """The buyer's one principal in the seller's records, found as an observer finds it: by
+    the credential that points at it, the buyer's origin."""
+    principal = records.principal_with_origin(Origin.parse(BUYER))
+    assert principal is not None, f"the seller has no principal for {BUYER}"
+    return principal
 
 
 def control(web: httpx.Client, base: httpx.URL) -> ControlClient:

@@ -8,9 +8,11 @@ through the same schema module as the party's store (persistence/seller_schema.p
 persistence/buyer_schema.py), and holds the party's `EvidenceStore`, exposing
 only the half of it that party keeps:
 
-- `SellerRecords`: the assent log, the ledger, the agreed records, and the
-  signed requests the seller verified, with the directories that confirmed
-  them.
+- `SellerRecords`: its principals and the credentials that point at them,
+  the assent log, the ledger, the agreed records, and the signed requests the
+  seller verified, with the directories that confirmed them. An observer finds
+  a principal by its credential (`principal_with_origin`), never by a literal
+  id.
 - `BuyerRecords`: the commits, and the signed answers the buyer verified, each
   with the request it is bound to.
 
@@ -34,6 +36,7 @@ from .seller_schema import (
     KeptCredential,
     KeptEntry,
     KeptOriginCredential,
+    KeptPrincipal,
     KeptTokenCredential,
 )
 from .sqlite import open_read_only
@@ -46,6 +49,7 @@ __all__ = [
     "KeptCredential",
     "KeptEntry",
     "KeptOriginCredential",
+    "KeptPrincipal",
     "KeptTokenCredential",
     "SellerRecords",
 ]
@@ -94,6 +98,10 @@ class SellerRecords(_ReadModel):
     def entries(self, proposal_id: str) -> list[KeptEntry]:
         """The assent log of `proposal_id`, in order."""
         return seller_schema.entries(self._db, proposal_id)
+
+    def principal_with_origin(self, origin: Origin) -> KeptPrincipal | None:
+        """The principal the signature credential `origin` points at, if any."""
+        return seller_schema.principal_with_origin(self._db, origin)
 
     def credentials(self, principal_id: str) -> list[KeptCredential]:
         """The credentials that name `principal_id`, in the order they were added."""

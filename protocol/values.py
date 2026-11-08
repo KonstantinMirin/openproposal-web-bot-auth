@@ -3,7 +3,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+import json
+from collections.abc import Iterable, Mapping, Sequence
 from datetime import UTC, datetime
 from typing import NoReturn
 
@@ -72,19 +73,39 @@ class MalformedJsonError(ValueError):
 _JSON_OBJECT: TypeAdapter[JsonObject] = TypeAdapter(JsonObject)
 
 
+def _unique_members(pairs: Sequence[tuple[str, object]]) -> dict[str, object]:
+    """An object's members, as `json.loads` hands them over; a name given twice raises."""
+    members: dict[str, object] = {}
+    for name, value in pairs:
+        if name in members:
+            detail = f"the body names the member {name!r} twice"
+            raise MalformedJsonError(detail)
+        members[name] = value
+    return members
+
+
 def read_json(raw: bytes) -> JsonObject:
     """Untrusted bytes as a JSON object, in the number domain RFC 8785 serializes (§ 4.1.1).
 
     A body that one party digests has to canonicalize at the other, so `NaN`,
     `Infinity`, a number beyond a double such as `1e400`, and an integer beyond
     2**53 are refused here, where the body is read, and not later where it is
-    digested. Raises `MalformedJsonError`.
+    digested. So is an object that names one member twice: readers disagree on
+    which of the two counts, so two parties could read different documents from
+    the same signed bytes. Raises `MalformedJsonError`.
     """
     try:
         value = _JSON_OBJECT.validate_json(raw)
     except ValidationError as e:
         reason = "; ".join(error["msg"] for error in e.errors())
         detail = f"the body is not a JSON object: {reason}"
+        raise MalformedJsonError(detail) from e
+    # The parse above keeps the last of two members of one name; this one refuses them. It
+    # reads only what the stricter parse above accepted.
+    try:
+        json.loads(raw, object_pairs_hook=_unique_members)
+    except (json.JSONDecodeError, UnicodeDecodeError) as e:
+        detail = f"the body is not a JSON object: {e}"
         raise MalformedJsonError(detail) from e
     try:
         canonical(value)

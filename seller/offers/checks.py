@@ -69,6 +69,13 @@ class CheckContext:
         return self.proposal.version
 
     @property
+    def record_buyer(self) -> str | None:
+        """The `buyer.domain` the issued record names (§ 4.3): the party the buyer's entry
+        is about."""
+        buyer = self.proposal.buyer
+        return None if buyer is None else buyer.domain
+
+    @property
     def stamp(self) -> str:
         """Now, as a § 2.2 `Instant`, which orders like the instants it is compared with."""
         return instant(self.now)

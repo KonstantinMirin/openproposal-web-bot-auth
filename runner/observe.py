@@ -139,9 +139,18 @@ class Observer:
         kids = list(verified.keys)
         return Done(directory, f"{len(kids)} key(s), signed by each: {', '.join(kids)}")
 
-    async def issue(self, principal_id: str) -> Done[Issued]:
+    def buyer_principal(self) -> str:
+        """The principal the buyer's origin points at in the seller's records: the buyer's
+        one principal, whichever credential it presents."""
+        origin = self.settings.peer_buyer_origin
+        with SellerRecords.open(self.settings.seller_db) as seller:
+            principal = seller.principal_with_origin(origin)
+        return checks.given(principal, f"principal for {origin}").id
+
+    async def issue(self) -> Done[Issued]:
+        principal_id = self.buyer_principal()
         issued = await self.seller.call(ISSUE, IssueRequest(principal_id=principal_id))
-        return Done(issued, issued.proposal_id)
+        return Done(issued, f"{issued.proposal_id} to {issued.principal_id}")
 
     async def commit(self, issued: Issued | None, method: AuthMethod) -> Done[Agreed]:
         trigger = CommitTrigger(
@@ -154,9 +163,12 @@ class Observer:
         return Done(outcome, f"agreed, record_digest {outcome.record_digest}")
 
     def seller_side(
-        self, outcome: Agreed | None, method: AuthMethod, principal_id: str
+        self, issued: Issued | None, outcome: Agreed | None, method: AuthMethod
     ) -> Done[SellerSide]:
-        """What the seller's boundary resolved, and the signed request it kept."""
+        """What the seller's boundary resolved, and the signed request it kept: the
+        principal the proposal was issued to, which is the buyer's one principal."""
+        principal_id = checks.given(issued, "issued proposal").principal_id
+        expect(principal_id == self.buyer_principal(), f"issued to {principal_id}")
         proposal_id = checks.given(outcome, "agreement").proposal_id
         with SellerRecords.open(self.settings.seller_db) as seller:
             entry = checks.commitment(seller.entries(proposal_id), principal_id, method)

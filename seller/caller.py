@@ -4,7 +4,8 @@ It imports pydantic, the pure values of protocol/values.py and
 persistence/values.py, and the `Principal` of seller/ports.py, which the store
 builds from its row: nothing that reaches HTTP, storage, or the Web Bot Auth
 library. The offer logic never takes a `Caller`: the seller's HTTP seam
-(seller/http.py) hands it the caller's `Provenance` instead.
+(seller/http.py) hands it the caller's principal id, and an entry writer that
+holds the caller's `Provenance`.
 
 The types allow no illegal state. Each is a `Value`: strict, so nothing is
 coerced (`body_covered="yes"` fails); frozen, with unknown members refused; and
@@ -14,8 +15,12 @@ apart by `method`: a bearer credential can't carry an origin, and a
 `PublicCaller` can carry only a signature, the identity a verified origin
 establishes without a principal. A `ResolvedCaller` carries the `Provenance`
 storage keeps with an entry it writes, which names the same principal, method,
-and attribution. `/whoami` answers a `WhoAmI`: the caller without its
+and body coverage. `/whoami` answers a `WhoAmI`: the caller without its
 provenance.
+
+Nothing here says whether a signature attributes an entry (§ 4.1.2): that
+depends on the record the entry is about, not on the caller, so the seller
+computes it when it writes the entry (seller/http.py).
 """
 
 from __future__ import annotations
@@ -39,10 +44,10 @@ class AmendedIdentityError(AmendedValueError):
 
 
 class ProvenanceMismatchError(ValueError):
-    """A caller whose provenance names another principal, method, or attribution."""
+    """A caller whose provenance names another principal, method, or body coverage."""
 
     def __init__(self) -> None:
-        super().__init__("the provenance names another principal, method, or attribution")
+        super().__init__("the provenance names another principal, method, or body coverage")
 
 
 class _Frozen(Value):
@@ -81,9 +86,6 @@ class ResolvedView(_Frozen):
     kind: Literal["resolved"] = "resolved"
     principal: Principal
     credential: Credential
-    #: § 4.1.2: the signature attributes the body's entries to the principal: it covers
-    #: the body, and the signing host is the principal's domain or a subdomain of it.
-    attributed: bool
 
 
 class ResolvedCaller(ResolvedView):
@@ -96,11 +98,12 @@ class ResolvedCaller(ResolvedView):
 
     @model_validator(mode="after")
     def _provenance_matches(self) -> Self:
-        p = self.provenance
-        if (p.principal_id, p.method, p.attributed) != (
+        p, credential = self.provenance, self.credential
+        covered = isinstance(credential, SignatureCredential) and credential.body_covered
+        if (p.principal_id, p.method, p.body_covered) != (
             self.principal.id,
-            self.credential.method,
-            self.attributed,
+            credential.method,
+            covered,
         ):
             raise ProvenanceMismatchError
         return self

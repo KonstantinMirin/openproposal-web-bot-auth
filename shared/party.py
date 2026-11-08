@@ -16,3 +16,8 @@ class OwnParty(Value):
 
     origin: Origin
     legal_name: str
+
+    @property
+    def domain(self) -> str:
+        """The domain a record names this party by: its origin's host."""
+        return self.origin.host

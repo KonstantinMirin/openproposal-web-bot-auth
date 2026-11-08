@@ -452,14 +452,15 @@ class Stack:
         self.seller_control.call(FAULT, FaultMode(mode=mode, on=on))
 
     def issue(self, proposal_id: str) -> None:
-        """Issues the seller's proposal to its signing buyer as `proposal_id`, as the seller's
-        onboarding issues one, through the seller's own store."""
+        """Issues the seller's proposal to its buyer, the principal the buyer's origin points
+        at, as `proposal_id`, as the seller's onboarding issues one, through the seller's own
+        store."""
         settings = seller_settings(self.seller_dir, origins=self.origins)
         template = loads_yaml(settings.template_file.read_text(encoding="utf-8"))
         store = SqliteSellerStore(self.seller_dir / "seller.db")
         try:
             with store.transaction():
-                principal = store.principal("buyer-wba")
+                principal = store.for_origin(self.origins.buyer)
                 assert principal is not None
                 issue(store, Issuer(settings.own, template), principal, proposal_id)
         finally:

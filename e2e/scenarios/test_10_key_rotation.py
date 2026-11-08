@@ -29,8 +29,10 @@ from e2e.scenarios.stack import (
     SELLER,
     SIGNATURE_LIFETIME,
     buyer_key,
+    buyer_principal,
     signed,
 )
+from persistence.observe import SellerRecords
 from seller.caller import WHOAMI, ResolvedView, SignatureCredential
 from transport.client import ControlClient, ControlFailed
 from transport.control import ACTIVATE, PUBLISH, READ, RETIRE, ErrorBody, Read, ReadTrigger
@@ -77,7 +79,9 @@ def _too_early(buyer_control: ControlClient, step: str, kid: str) -> int:
     return failed.value.status
 
 
-def test_key_rotation(web: httpx.Client, buyer_control: ControlClient) -> None:
+def test_key_rotation(
+    web: httpx.Client, buyer_control: ControlClient, seller_records: SellerRecords
+) -> None:
     old = buyer_key().thumbprint
 
     # 1. Publish the new key. Requests still go out signed with the old key, and verify.
@@ -110,4 +114,4 @@ def test_key_rotation(web: httpx.Client, buyer_control: ControlClient) -> None:
     assert refused.status_code == 403
     assert ErrorBody.model_validate_json(refused.content).code == "key-not-found"
 
-    assert _resolved(web, new).principal.id == "buyer-wba"
+    assert _resolved(web, new).principal.id == buyer_principal(seller_records).id

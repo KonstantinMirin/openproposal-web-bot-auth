@@ -2,10 +2,10 @@
 
 Each test seeds a seller's database from the template, changed where a row
 needs it (an ended window, a sold-out line item, an earlier live commitment),
-starts the app with `create_app`, and commits over its ASGI interface as
-buyer-wba with a bearer token. The commit is composed with the protocol
-operations from the document the seller serves, so it is correct unless the
-row breaks it on purpose. What comes out is the answer and the records the
+starts the app with `create_app`, and commits over its ASGI interface as the
+seller's buyer, with the bearer token the seller issued it. The commit is
+composed with the protocol operations from the document the seller serves, so
+it is correct unless the row breaks it on purpose. What comes out is the answer and the records the
 seller kept, read through its read model.
 """
 
@@ -25,17 +25,22 @@ from openproposal import AssentEntry, Proposal
 from pydantic import SecretStr
 
 from persistence.observe import KeptEntry, SellerRecords
+from persistence.values import Origin
 from protocol.operations import parse_errors, parse_result
 from protocol.record import items_by_id
 from protocol.values import JsonObject, JsonValue, read_json
+from seller.offers.issuance import issue
+from seller.ports import Principal
 from seller.seed import onboard
 from seller.sqlite_store import SqliteSellerStore
 from tests._tools import commit_body, seed_issuer, seed_template
 from tests.stack import ELSEWHERE, seller_app, seller_settings
+from tests.stack import TOKEN as BUYER_TOKEN
 
 #: The seller alone, under origins other than the demo's.
 SELLER = str(ELSEWHERE.seller)
-TOKEN = {"Authorization": "Bearer buyer-wba-token"}
+#: The token the seller's settings issue its buyer, which each boot applies.
+TOKEN = {"Authorization": f"Bearer {BUYER_TOKEN}"}
 ITEM = "business-daily-display"
 PATH = "/proposals/demo-wba-1/commit"
 
@@ -52,23 +57,34 @@ def _entry(role: str, **fields: object) -> AssentEntry:
     return AssentEntry.model_validate({"role": role, **EARLIER, **fields})
 
 
+#: Another buyer of the seller's, with a proposal of its own.
+OTHER = Principal(
+    id="other-buyer", kind="buyer", legal_name="Other Agency LLC", domain="other.example.com"
+)
+
+
 def _seed(data_dir: Path, edit: Edit, prior: list[AssentEntry]) -> None:
-    """The first-boot records from an edited template, plus a token for buyer-wba."""
+    """The first-boot records from an edited template, with `prior` in demo-wba-1's log,
+    and another buyer issued `other-1`."""
     data_dir.mkdir()
     template = seed_template()
     edit(template)
+    issuer = seed_issuer(template)
     store = SqliteSellerStore(data_dir / "seller.db")
     try:
         onboard(
             store,
-            seed_issuer(template),
+            issuer,
             buyer_origin=ELSEWHERE.buyer,
-            bearer_token=SecretStr("t"),
+            buyer_legal_name="Demo Buyer Agency LLC",
+            bearer_token=SecretStr(BUYER_TOKEN),
         )
         with store.transaction():
-            store.set_token_credential("buyer-wba", "buyer-wba-token")
             for entry in prior:
-                store.append_assent("demo-wba-1", entry, None)
+                store.append_own_entry("demo-wba-1", entry)
+            store.add_principal(OTHER)
+            store.set_origin_credential(OTHER.id, Origin.parse(f"https://{OTHER.domain}"))
+            issue(store, issuer, OTHER, "other-1")
     finally:
         store.close()
 
@@ -362,6 +378,24 @@ def test_an_unparsable_body_is_a_validation_error(seller_with: StartSeller, body
     assert _codes(answer) == ["validation"]
 
 
+def test_a_commit_that_names_a_member_twice_is_a_validation_error(
+    seller_with: StartSeller,
+) -> None:
+    """§ 4.1.1: a document that names a member twice is invalid. Readers disagree on which of
+    the two counts, so a verifier reading the first would read another record_digest than a
+    seller reading the last: the seller refuses the commit and keeps nothing of it."""
+    seller = seller_with()
+    commit = seller.composed()
+    entry, writes = json.dumps(commit["entry"]), json.dumps(commit["writes"])
+    wrong = json.dumps("sha256:" + "0" * 64)
+    body = f'{{"entry": {{"record_digest": {wrong}, {entry[1:]}, "writes": {writes}}}'.encode()
+    answer = seller.client.post(PATH, content=body, headers=TOKEN)
+    assert answer.status_code == 400
+    (error,) = parse_errors(answer.content)
+    assert (error.code, "'record_digest' twice" in error.detail) == ("validation", True)
+    assert seller.entries() == [] and seller.ledger() == []
+
+
 def test_writes_for_a_line_item_the_entry_doesnt_name_are_a_validation_error(
     seller_with: StartSeller,
 ) -> None:
@@ -377,10 +411,10 @@ def test_writes_for_a_line_item_the_entry_doesnt_name_are_a_validation_error(
 
 def test_a_proposal_issued_to_another_buyer_is_not_found(seller_with: StartSeller) -> None:
     seller = seller_with()
-    answer = seller.commit(seller.composed(), path="/proposals/demo-bearer-1/commit")
+    answer = seller.commit(seller.composed(), path="/proposals/other-1/commit")
     assert answer.status_code == 404
     assert _codes(answer) == ["not_found"]
-    assert seller.ledger("demo-bearer-1") == seller.ledger() == []
+    assert seller.ledger("other-1") == seller.ledger() == []
 
 
 # ── Acceptance ────────────────────────────────────────────────────────────
@@ -467,7 +501,7 @@ def test_a_retry_same_rejection_is_not_stored_and_the_same_key_then_succeeds(
     store = SqliteSellerStore(seller.data_dir / "seller.db")
     try:
         with store.transaction():
-            store.append_assent("demo-wba-1", _entry("withdrawal"), None)
+            store.append_own_entry("demo-wba-1", _entry("withdrawal"))
     finally:
         store.close()
     accepted = seller.commit(commit)

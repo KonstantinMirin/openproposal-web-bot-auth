@@ -12,7 +12,7 @@ import hashlib
 
 from iab_agentic_primitives.web_bot_auth import ServerIdentity
 
-from e2e.scenarios.stack import BUYER, SELLER
+from e2e.scenarios.stack import BUYER, SELLER, buyer_principal
 from persistence.observe import BuyerRecords, KeptOriginCredential, SellerRecords
 from persistence.values import Origin
 from protocol.operations import parse_result
@@ -27,9 +27,10 @@ def test_first_contact_by_signature(
     # Neither side holds a key or a directory of the other yet.
     assert seller_records.directories() == 0
     assert buyer_records.directories() == 0
-    assert seller_records.credentials("buyer-wba") == [
-        KeptOriginCredential(origin=Origin.parse(BUYER))
-    ]
+    principal = buyer_principal(seller_records)
+    assert KeptOriginCredential(origin=Origin.parse(BUYER)) in seller_records.credentials(
+        principal.id
+    )
 
     trigger = CommitTrigger(proposal_id="demo-wba-1", line_item_ids=["business-daily-display"])
     outcome = buyer_control.call(COMMIT, trigger)
@@ -44,9 +45,9 @@ def test_first_contact_by_signature(
     entries = seller_records.entries("demo-wba-1")
     assert [e.role for e in entries] == ["commitment", "acceptance"]
     entry = entries[0]
-    assert entry.principal_id == "buyer-wba"
+    assert entry.principal_id == principal.id
     assert entry.authentication_method == "web_bot_auth"
-    assert entry.attributed is True
+    assert entry.attributed is True  # the signing host is the domain the record's buyer names
     bought = buyer_records.commit(outcome.commit_id)
     assert bought is not None and bought.state == "agreed"
     assert entry.evidence_id is not None

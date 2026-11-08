@@ -7,6 +7,9 @@ each credential, each fault the buyer must refuse is refused, on a read and on
 a commit. A bearer request is unsigned, so it has no signature for an answer to
 be bound to: an unbound or rebound answer is what it should get.
 
+Each test commits to a proposal the seller issues afresh to the buyer's one
+principal, so no other scenario has committed to it.
+
 On a commit, the seller has accepted, but the buyer refuses the answer and
 records no agreement. It then re-sends the same Commit, with the same
 idempotency_key. The seller returns the stored result and writes no second
@@ -18,6 +21,7 @@ from collections.abc import Callable, Iterator
 import pytest
 from openproposal import AssentEntryRole
 
+from e2e.scenarios.stack import buyer_principal
 from persistence.observe import BuyerRecords, SellerRecords
 from persistence.values import AuthMethod
 from seller.faults import refused_under
@@ -25,12 +29,14 @@ from transport.client import ControlClient
 from transport.control import (
     COMMIT,
     FAULT,
+    ISSUE,
     READ,
     Agreed,
     CommitTrigger,
     FaultMode,
     FaultName,
     FaultTarget,
+    IssueRequest,
     Read,
     ReadTrigger,
     Refused,
@@ -38,14 +44,20 @@ from transport.control import (
 
 #: Sets the seller's fault, and which answers it breaks.
 SetFault = Callable[[FaultName, FaultTarget], None]
-#: Each credential's own proposal and line item, which no earlier scenario commits to.
-TRIGGER: dict[AuthMethod, CommitTrigger] = {
-    "web_bot_auth": CommitTrigger(proposal_id="demo-wba-2", line_item_ids=["weather-app-ctv"]),
-    "bearer": CommitTrigger(
-        proposal_id="demo-bearer-1", line_item_ids=["weather-app-ctv"], credential="bearer"
-    ),
-}
-CREDENTIALS = list(TRIGGER)
+CREDENTIALS: list[AuthMethod] = ["web_bot_auth", "bearer"]
+
+
+@pytest.fixture
+def trigger(
+    seller_control: ControlClient, seller_records: SellerRecords, credential: AuthMethod
+) -> CommitTrigger:
+    """A commit with the test's `credential` to a proposal the seller issues afresh to the
+    buyer's principal."""
+    principal = buyer_principal(seller_records).id
+    issued = seller_control.call(ISSUE, IssueRequest(principal_id=principal))
+    return CommitTrigger(
+        proposal_id=issued.proposal_id, line_item_ids=["weather-app-ctv"], credential=credential
+    )
 
 
 @pytest.fixture
@@ -71,9 +83,9 @@ def _seller_state(
 
 @pytest.mark.parametrize("credential", CREDENTIALS)
 def test_buyer_refuses_unverifiable_reads(
-    buyer_control: ControlClient, fault: SetFault, credential: AuthMethod
+    buyer_control: ControlClient, fault: SetFault, trigger: CommitTrigger
 ) -> None:
-    trigger = TRIGGER[credential]
+    credential = trigger.credential
     read = ReadTrigger(proposal_id=trigger.proposal_id, credential=trigger.credential)
     for mode, reason in refused_under(credential).items():
         fault(mode, "read")
@@ -91,9 +103,9 @@ def test_buyer_refuses_unverifiable_commit_answers(
     fault: SetFault,
     seller_records: SellerRecords,
     buyer_records: BuyerRecords,
-    credential: AuthMethod,
+    trigger: CommitTrigger,
 ) -> None:
-    trigger = TRIGGER[credential]
+    credential = trigger.credential
     proposal_id, items = trigger.proposal_id, trigger.line_item_ids
     before_entries, before_processed = _seller_state(seller_records, proposal_id)
     accepted = None

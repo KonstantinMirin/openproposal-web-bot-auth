@@ -35,7 +35,7 @@ def issued(issuer: Issuer, principal: Principal, proposal_id: str) -> StoredProp
     document = copy.deepcopy(issuer.template)
     document["proposal_id"] = proposal_id
     seller = issuer.seller
-    document["seller"] = {"domain": seller.origin.host, "legal_name": seller.legal_name}
+    document["seller"] = {"domain": seller.domain, "legal_name": seller.legal_name}
     document["buyer"] = {"domain": principal.domain, "legal_name": principal.legal_name}
     for item in line_items_of(document):
         item["eligible_buyers"] = [principal.domain]

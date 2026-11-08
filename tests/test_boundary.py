@@ -11,6 +11,8 @@ kept.
   public caller.
 - The boundary writes nothing. Only a commit that writes an entry keeps the
   signed request, with its header lines as received, in the same transaction.
+- A signature attributes an entry to the buyer the record names (§ 4.1.2),
+  computed when the entry is written, never to the caller's principal.
 - The offer logic is credential-blind: the same principal committing the same
   commit by signature and by token gets the same result.
 """
@@ -35,17 +37,16 @@ from iab_agentic_primitives.web_bot_auth import (
     accept_signature,
 )
 from iab_agentic_primitives.web_bot_auth import Origin as LibraryOrigin
-from pydantic import SecretStr
 from starlette.types import ASGIApp
 
-from persistence.observe import KeptEntry, SellerRecords
+from persistence.observe import KeptEntry, KeptPrincipal, SellerRecords
 from persistence.values import Origin
 from protocol.operations import parse_errors
 from protocol.values import JsonObject, read_json
 from seller.caller import WHOAMI, BearerCredential, ResolvedView
-from seller.seed import onboard
+from seller.ports import StoredProposal
 from seller.sqlite_store import SqliteSellerStore
-from tests._tools import commit_body, seed_issuer
+from tests._tools import commit_body
 from tests.stack import (
     ELSEWHERE,
     TOKEN,
@@ -105,6 +106,14 @@ def signed(
     return signed_headers(method, f"{SELLER}{path}", key, origin=origin, body=body)
 
 
+def _principal(data_dir: Path) -> KeptPrincipal:
+    """The principal the buyer's origin points at, as the seller's read model reads it."""
+    with SellerRecords.open(data_dir / "seller.db") as records:
+        principal = records.principal_with_origin(Origin.parse(BUYER))
+    assert principal is not None
+    return principal
+
+
 def _kept(data_dir: Path) -> tuple[int, int]:
     """How many signed requests and directory fetches the seller kept."""
     with SellerRecords.open(data_dir / "seller.db") as seller:
@@ -122,7 +131,8 @@ class DownNonceStore:
 
 # ── Every presented credential ────────────────────────────────────────────
 
-Headers = Callable[[Parties], dict[str, str]]
+#: The header lines a request carries: a mapping, or lines, which may repeat a name.
+Headers = Callable[[Parties], dict[str, str] | list[tuple[str, str]]]
 
 
 @dataclass(frozen=True)
@@ -165,6 +175,20 @@ REFUSALS = [
         400,
         "two-credentials",
         {"Accept-Signature": None, "Retry-After": None},
+    ),
+    Refusing(
+        "a valid token, then another Authorization line",
+        lambda _: [("Authorization", f"Bearer {TOKEN}"), ("Authorization", "Bearer bogus")],
+        400,
+        "two-credentials",
+        {"WWW-Authenticate": None, "Accept-Signature": None},
+    ),
+    Refusing(
+        "another Authorization line, then a valid token",
+        lambda _: [("Authorization", "Bearer bogus"), ("Authorization", f"Bearer {TOKEN}")],
+        400,
+        "two-credentials",
+        {"WWW-Authenticate": None, "Accept-Signature": None},
     ),
     Refusing(
         "a signature that doesn't parse (400)",
@@ -220,33 +244,36 @@ def test_no_credential_is_a_public_caller(seller: TestClient) -> None:
     assert seller.get("/whoami").json() == {"kind": "public", "signature": None}
 
 
-def test_a_token_resolves_its_principal(seller: TestClient) -> None:
+def test_a_token_resolves_the_principal_the_buyers_origin_points_at(
+    seller: TestClient, tmp_path: Path
+) -> None:
     response = seller.get("/whoami", headers={"Authorization": f"Bearer {TOKEN}"})
     caller = WHOAMI.validate_json(response.content)
-    assert isinstance(caller, ResolvedView) and caller.principal.id == "buyer-bearer"
+    assert isinstance(caller, ResolvedView)
+    assert caller.principal.model_dump() == _principal(tmp_path).model_dump()
     assert isinstance(caller.credential, BearerCredential)  # no origin, no evidence
-    assert caller.attributed is False
 
 
 def test_a_verified_origin_with_a_principal_resolves_it(
-    seller: TestClient, parties: Parties
+    seller: TestClient, parties: Parties, tmp_path: Path
 ) -> None:
     caller = seller.get("/whoami", headers=signed("GET", "/whoami", parties.buyer)).json()
     assert caller == {
         "kind": "resolved",
         "principal": {
-            "id": "buyer-wba",
+            "id": _principal(tmp_path).id,
             "kind": "buyer",
             "legal_name": "Demo Buyer Agency LLC",
             "domain": ELSEWHERE.buyer.host,
         },
+        # Confirmed facts only: whether a signature attributes an entry depends on the
+        # record the entry is about, not on the caller.
         "credential": {
             "method": "web_bot_auth",
             "origin": BUYER,
             "keyid": parties.buyer.thumbprint,
             "body_covered": False,
         },
-        "attributed": False,  # a GET has no body to attribute
     }
 
 
@@ -303,10 +330,11 @@ def test_a_signed_commit_keeps_its_request_with_the_entry(parties: Parties, tmp_
 
     commitment, acceptance = _assent(tmp_path)
     assert (commitment.principal_id, commitment.authentication_method) == (
-        "buyer-wba",
+        _principal(tmp_path).id,
         "web_bot_auth",
     )
-    assert commitment.attributed is True  # the body is covered, and the host is the domain
+    # The body is covered, and the signing host is the domain the record's buyer names.
+    assert commitment.attributed is True
     assert acceptance.evidence_id is None and acceptance.authentication_method is None
     assert commitment.evidence_id is not None
     with SellerRecords.open(tmp_path / "seller.db") as records:
@@ -335,21 +363,55 @@ def test_a_rejected_commit_keeps_no_evidence(
     assert _kept(tmp_path) == (0, 0)
 
 
-# ── The offer logic is credential-blind ───────────────────────────────────
+# ── Attribution is about the record ───────────────────────────────────────
 
 
-def _seeded_with_a_token_for_the_signing_buyer(data_dir: Path) -> None:
-    """The first-boot records, plus a token for buyer-wba, so one principal has both."""
-    data_dir.mkdir()
+def _issued_naming(data_dir: Path, buyer_domain: str) -> None:
+    """Makes demo-wba-1, still issued to the buyer's principal, name `buyer_domain` as its
+    buyer, as a record issued under another identity would."""
     store = SqliteSellerStore(data_dir / "seller.db")
     try:
-        onboard(
-            store, seed_issuer(), buyer_origin=Origin.parse(BUYER), bearer_token=SecretStr(TOKEN)
-        )
         with store.transaction():
-            store.set_token_credential("buyer-wba", "buyer-wba-token")
+            issued = store.issued("demo-wba-1")
+            assert issued is not None
+            buyer: JsonObject = {"domain": buyer_domain, "legal_name": "Demo Buyer Agency LLC"}
+            document: JsonObject = {**issued.document, "buyer": buyer}
+            store.save_proposal(StoredProposal(issued.buyer_principal_id, document))
     finally:
         store.close()
+
+
+@pytest.mark.parametrize(
+    ("record_buyer", "attributed"),
+    [
+        (ELSEWHERE.buyer.host, True),
+        ("wba-demo.noetis.dev", True),  # the signing host is a subdomain of it
+        ("other-agency.example.com", False),
+    ],
+)
+def test_a_signature_is_attributed_to_the_buyer_the_record_names(
+    tmp_path: Path, parties: Parties, record_buyer: str, *, attributed: bool
+) -> None:
+    """§ 4.1.2 attributes an entry to the record's party: the seller computes it when it
+    writes the entry, against the record's `buyer.domain`, never against the domain its
+    records hold for the caller's principal, which signs from the same host each time."""
+    path = "/proposals/demo-wba-1/commit"
+    with TestClient(_app(tmp_path, parties), base_url=SELLER):
+        pass
+    _issued_naming(tmp_path, record_buyer)
+    with TestClient(_app(tmp_path, parties), base_url=SELLER) as seller:
+        document = _issued(seller, signed("GET", "/proposals/demo-wba-1", parties.buyer))
+        body = commit_body(document, DISPLAY)
+        answer = seller.post(
+            path, content=body, headers=signed("POST", path, parties.buyer, body=body)
+        )
+    assert answer.status_code == 200, answer.text
+    commitment, acceptance = _assent(tmp_path)
+    assert commitment.principal_id == _principal(tmp_path).id
+    assert (commitment.attributed, acceptance.attributed) == (attributed, False)
+
+
+# ── The offer logic is credential-blind ───────────────────────────────────
 
 
 def _without_acceptance_time(result: JsonObject) -> JsonObject:
@@ -371,11 +433,10 @@ def test_a_signature_and_a_token_get_the_same_result_for_the_same_commit(
     """Differential: one principal, one document, one commit, two credentials."""
     path = "/proposals/demo-wba-1/commit"
     at, key = datetime.now(UTC), str(uuid.uuid4())
-    by_token = {"Authorization": "Bearer buyer-wba-token"}
+    by_token = {"Authorization": f"Bearer {TOKEN}"}
     results, rows = [], []
     for credential in ("signature", "token"):
         data_dir = tmp_path / credential
-        _seeded_with_a_token_for_the_signing_buyer(data_dir)
         with TestClient(_app(data_dir, parties), base_url=SELLER) as client:
             read = signed("GET", "/proposals/demo-wba-1", parties.buyer)
             document = _issued(client, read if credential == "signature" else by_token)
@@ -390,7 +451,8 @@ def test_a_signature_and_a_token_get_the_same_result_for_the_same_commit(
             results.append(_without_acceptance_time(read_json(answer.content)))
         rows.append([(e.role, e.principal_id) for e in _assent(data_dir)])
     assert results[0] == results[1]
-    assert rows[0] == rows[1] == [("commitment", "buyer-wba"), ("acceptance", None)]
+    principal = _principal(tmp_path / "signature").id
+    assert rows[0] == rows[1] == [("commitment", principal), ("acceptance", None)]
     # Only the stored provenance differs.
     methods = [_assent(tmp_path / c)[0].authentication_method for c in ("signature", "token")]
     assert methods == ["web_bot_auth", "bearer"]

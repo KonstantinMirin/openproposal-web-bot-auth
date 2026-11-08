@@ -39,7 +39,7 @@ each service only the values it names:
 | `SELLER_OPERATOR_KEY` | Seller (as `OPERATOR_KEY`), runner | The seller's own controls (`/operator/`) require it in `X-Operator-Key`. |
 | `BUYER_OPERATOR_KEY` | Buyer (as `OPERATOR_KEY`), runner | The buyer's own controls (`/operator/`) require it. |
 | `CFBOT_OPERATOR_KEY` | cfbot (as `OPERATOR_KEY`) | cfbot's own controls (`/run/`) require it. The runner never calls them. |
-| `DEMO_BEARER_TOKEN` | Seller, buyer, runner | The token the seller issues its bearer buyer. The seller stores only its SHA-256. |
+| `DEMO_BEARER_TOKEN` | Seller, buyer, runner | The token the seller issues its buyer, beside the buyer's origin: two credentials of one principal. The seller stores only its SHA-256. |
 
 Each party's key is its own, so one party's key opens no other party's controls.
 
@@ -61,9 +61,10 @@ set the values the table's last column names.
 | Variable | Service | Default | What it sets |
 | :--- | :--- | :--- | :--- |
 | `SELF_ORIGIN` | Seller, buyer, cfbot | `https://<service>.wba-demo.noetis.dev` | The service's own origin, which it signs as and verifies against |
-| `SELF_LEGAL_NAME` | Seller | `Demo Seller Inc.` | The legal name the seller issues every proposal under, beside its own origin's host |
+| `SELF_LEGAL_NAME` | Seller, buyer | `Demo Seller Inc.`, `Demo Buyer Agency LLC` | The legal name the agent trades under, beside its own origin's host: the seller issues every proposal under it, and the buyer takes only proposals that name its host as the buyer's domain |
 | `PEER_SELLER_LEGAL_NAME` | Buyer | `Demo Seller Inc.` | The seller's legal name, as the buyer names it |
-| `PEER_BUYER_ORIGIN` | Seller, runner, scenarios | `https://buyer.wba-demo.noetis.dev` | The signing buyer, which the seller applies on every boot; the buyer the runner and the scenarios check |
+| `PEER_BUYER_LEGAL_NAME` | Seller | `Demo Buyer Agency LLC` | The buyer's legal name, as the seller records its principal |
+| `PEER_BUYER_ORIGIN` | Seller, runner, scenarios | `https://buyer.wba-demo.noetis.dev` | The buyer's origin, whose host is its domain: the seller records its one principal from it once, and refuses to start if a later boot names another; the buyer the runner and the scenarios check |
 | `PEER_SELLER_ORIGIN` | Buyer, cfbot, runner, scenarios | `https://seller.wba-demo.noetis.dev` | The seller the buyer deals with and cfbot calls |
 | `PEER_CFBOT_ORIGIN` | Buyer, runner, scenarios | `https://cfbot.wba-demo.noetis.dev` | Cloudflare's verifier |
 | `DATA_DIR` | Seller, buyer | `/data` | The database (`seller.db`, `buyer.db`), on the `-db` volume |
@@ -74,7 +75,7 @@ set the values the table's last column names.
 | `OPERATOR_KEY` | Seller, buyer, cfbot | None: every control call is refused | What `X-Operator-Key` must carry: the agent's own key, from the secrets file |
 | `SELLER_OPERATOR_KEY`, `BUYER_OPERATOR_KEY` | Runner, scenarios | None: required, so the runner won't start | Each agent's own key, sent to that agent's controls only |
 | `CFBOT_OPERATOR_KEY` | Scenarios | None: required | cfbot's own key, for its `/run/` controls |
-| `DEMO_BEARER_TOKEN` | Seller, buyer, runner, scenarios | None: no bearer buyer | The token the seller issues its bearer buyer; the runner reads it only to keep it out of reports |
+| `DEMO_BEARER_TOKEN` | Seller, buyer, runner, scenarios | None: no bearer credential | The token the seller issues its buyer; the runner reads it only to keep it out of reports |
 | `WBA_DIRECTORY_MAX_AGE` | Seller, buyer, scenarios | `300` | The directory's `Cache-Control: max-age` (the e2e buyer: `0`). A buyer key waits this plus 300 s before it signs |
 | `WBA_MAX_CACHE_AGE` | Seller, buyer, scenarios | The library's, `300` | How long a cached directory answers without a fetch (the e2e seller: `20`) |
 | `WBA_SIGNATURE_LIFETIME` | Buyer, scenarios | `300` | How long the buyer's request signatures last (e2e: `10`) |

@@ -25,11 +25,7 @@ from .ports import Principal, ProcessedCommit, StoredProposal
 
 #: A principal, by id, and by the credential that names it.
 _BY_ID = select("principals", Principal, where="id = ?")
-_BY_ORIGIN = select(
-    "principals",
-    Principal,
-    where="id = (SELECT principal_id FROM credentials WHERE origin = ?)",
-)
+_BY_ORIGIN = select("principals", Principal, where=seller_schema.WITH_ORIGIN)
 _BY_TOKEN = select(
     "principals",
     Principal,
@@ -63,11 +59,10 @@ class SqliteSellerStore:
 
     # Principals and credentials (PrincipalDirectory, Onboarding)
 
-    def put_principal(self, principal: Principal) -> None:
+    def add_principal(self, principal: Principal) -> None:
+        """Records a new principal; one with its id already recorded fails the insert."""
         self._db.execute(
-            "INSERT INTO principals (id, kind, legal_name, domain) VALUES (?, ?, ?, ?)"
-            " ON CONFLICT (id) DO UPDATE SET kind = excluded.kind,"
-            " legal_name = excluded.legal_name, domain = excluded.domain",
+            "INSERT INTO principals (id, kind, legal_name, domain) VALUES (?, ?, ?, ?)",
             (principal.id, principal.kind, principal.legal_name, principal.domain),
         )
 
@@ -129,15 +124,30 @@ class SqliteSellerStore:
     def assent(self, proposal_id: str) -> list[AssentEntry]:
         return [kept.entry for kept in seller_schema.entries(self._db, proposal_id)]
 
-    def append_assent(
-        self, proposal_id: str, entry: AssentEntry, provenance: Provenance | None
+    def append_own_entry(self, proposal_id: str, entry: AssentEntry) -> None:
+        self._append(proposal_id, entry, None, None, attributed=False)
+
+    # A caller's entry, with its provenance (KeptEvidence)
+
+    def append_caller_entry(
+        self, proposal_id: str, entry: AssentEntry, provenance: Provenance, *, attributed: bool
     ) -> None:
-        """Appends an entry. A buyer's entry keeps its provenance and, for a signature, the
-        signed request that carried it, in the caller's transaction."""
+        """Appends a caller's entry with its provenance and, for a signature, the signed
+        request that carried it, in the caller's transaction."""
+        signed = provenance.signed
+        evidence_id = None if signed is None else self._evidence.keep_request(signed)
+        self._append(proposal_id, entry, provenance, evidence_id, attributed=attributed)
+
+    def _append(
+        self,
+        proposal_id: str,
+        entry: AssentEntry,
+        provenance: Provenance | None,
+        evidence_id: int | None,
+        *,
+        attributed: bool,
+    ) -> None:
         p = provenance
-        evidence_id = None
-        if p is not None and p.signed is not None:
-            evidence_id = self._evidence.keep_request(p.signed)
         self._db.execute(
             "INSERT INTO assent (proposal_id, role, entry, idempotency_key, principal_id,"
             " authentication_method, evidence_id, attributed) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -149,7 +159,7 @@ class SqliteSellerStore:
                 None if p is None else p.principal_id,
                 None if p is None else p.method,
                 evidence_id,
-                int(p is not None and p.attributed),
+                int(attributed),
             ),
         )
 

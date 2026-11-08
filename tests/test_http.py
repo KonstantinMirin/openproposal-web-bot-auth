@@ -24,6 +24,7 @@ from pydantic import ValidationError
 
 from protocol.operations import parse_errors
 from seller.http import status_for
+from seller.seed import BUYER
 from tests.stack import BUYER_OPERATOR, SELLER_OPERATOR, TOKEN, Stack
 from transport.control import (
     ACTIVATE,
@@ -232,7 +233,7 @@ FAILING = [
         ISSUE.path,
         403,
         "operator-key",
-        body={"principal_id": "buyer-wba"},
+        body={"principal_id": BUYER},
     ),
     Failing(
         "issue wrong method",
@@ -250,7 +251,7 @@ FAILING = [
         ISSUE.path,
         422,
         "validation",
-        body={"principal": "buyer-wba"},
+        body={"principal": BUYER},
         headers=SELLER_OPERATOR,
     ),
     Failing(
@@ -270,7 +271,7 @@ FAILING = [
         ISSUE.path,
         500,
         "internal",
-        body={"principal_id": "buyer-wba"},
+        body={"principal_id": BUYER},
         headers=SELLER_OPERATOR,
         before=_drop("proposals", _seller_db),
     ),

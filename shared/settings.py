@@ -11,7 +11,9 @@ exactly `https://<host>`, so `.host` is always a host.
 Origins follow one naming scheme in every service: `SELF_ORIGIN` is the agent's
 own origin, and `PEER_<ROLE>_ORIGIN` names a counterparty (`PEER_SELLER_ORIGIN`,
 `PEER_BUYER_ORIGIN`, `PEER_CFBOT_ORIGIN`). `DEFAULT_ORIGINS` is the one place the
-demo's own origins are written, by role.
+demo's own origins are written, by role, and `DEFAULT_LEGAL_NAMES` the one place
+its parties' legal names are: an agent's own (`SELF_LEGAL_NAME`) and its
+counterparty's (`PEER_<ROLE>_LEGAL_NAME`) default to the same entry.
 
 | Variable | Default | What it sets |
 |---|---|---|
@@ -20,7 +22,7 @@ demo's own origins are written, by role.
 | `KEYS_DIR` | `/keys` | its signing keys, on a volume no other service mounts |
 | `SSL_CERT_FILE` | the system's roots | the trust store for every call it makes |
 | `OPERATOR_KEY` | none: operator calls are refused | its own controls (transport/operator.py) |
-| `DEMO_BEARER_TOKEN` | none: no bearer buyer | the token the seller issued its bearer buyer |
+| `DEMO_BEARER_TOKEN` | none: no bearer credential | the token the seller issued its buyer |
 | `WBA_DIRECTORY_MAX_AGE` | `300` | its directory's `Cache-Control: max-age` |
 | `WBA_MAX_CACHE_AGE` | the library's, 300 | how long a cached directory answers |
 """
@@ -48,6 +50,11 @@ DEFAULT_ORIGINS: Mapping[Role, Origin] = {
     "seller": Origin.parse("https://seller.wba-demo.noetis.dev"),
     "buyer": Origin.parse("https://buyer.wba-demo.noetis.dev"),
     "cfbot": Origin.parse("https://cfbot.wba-demo.noetis.dev"),
+}
+#: The legal name each agent trades under in the demo's own deployment.
+DEFAULT_LEGAL_NAMES: Mapping[Literal["seller", "buyer"], str] = {
+    "seller": "Demo Seller Inc.",
+    "buyer": "Demo Buyer Agency LLC",
 }
 
 

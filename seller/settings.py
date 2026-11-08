@@ -5,7 +5,10 @@ The seller reads every `AgentSettings` variable (shared/settings.py), and these:
 | Variable | Default | What it sets |
 |---|---|---|
 | `SELF_LEGAL_NAME` | `Demo Seller Inc.` | the legal name it issues proposals under |
-| `PEER_BUYER_ORIGIN` | `https://buyer.wba-demo.noetis.dev` | the signing buyer, set on each boot |
+| `PEER_BUYER_ORIGIN` | `https://buyer.wba-demo.noetis.dev` | its buyer's origin and domain |
+| `PEER_BUYER_LEGAL_NAME` | `Demo Buyer Agency LLC` | its buyer's legal name |
+
+Its buyer is one principal, whichever credential it presents (seller/seed.py).
 | `DEMO_FAULT_INJECTION` | off | TEST ONLY: mounts `PUT /test/fault` |
 
 Its database is `seller.db` in `DATA_DIR`, and its signing key `wba-key.jwk` in
@@ -22,7 +25,7 @@ from typing import ClassVar, Self
 from persistence.values import Origin
 from shared import settings as read
 from shared.party import OwnParty
-from shared.settings import DEFAULT_ORIGINS, AgentSettings, Role
+from shared.settings import DEFAULT_LEGAL_NAMES, DEFAULT_ORIGINS, AgentSettings, Role
 
 #: The proposal every buyer is issued, as the seller's onboarding wrote it.
 TEMPLATE_FILE = Path(__file__).resolve().parent / "seed" / "proposal.yaml"
@@ -33,7 +36,8 @@ class SellerSettings(AgentSettings):
     role: ClassVar[Role] = "seller"
 
     peer_buyer_origin: Origin = DEFAULT_ORIGINS["buyer"]
-    self_legal_name: str = "Demo Seller Inc."
+    peer_buyer_legal_name: str = DEFAULT_LEGAL_NAMES["buyer"]
+    self_legal_name: str = DEFAULT_LEGAL_NAMES["seller"]
     template_file: Path = TEMPLATE_FILE
     #: TEST ONLY: install seller/faults.py.
     faults: bool = False
@@ -55,6 +59,9 @@ class SellerSettings(AgentSettings):
         return replace(
             super().from_env(env),
             peer_buyer_origin=read.origin(env, "PEER_BUYER_ORIGIN", DEFAULT_ORIGINS["buyer"]),
-            self_legal_name=read.text(env, "SELF_LEGAL_NAME", "Demo Seller Inc."),
+            peer_buyer_legal_name=read.text(
+                env, "PEER_BUYER_LEGAL_NAME", DEFAULT_LEGAL_NAMES["buyer"]
+            ),
+            self_legal_name=read.text(env, "SELF_LEGAL_NAME", DEFAULT_LEGAL_NAMES["seller"]),
             faults=read.flag(env, "DEMO_FAULT_INJECTION"),
         )

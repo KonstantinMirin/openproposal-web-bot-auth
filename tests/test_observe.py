@@ -22,9 +22,15 @@ from iab_agentic_primitives.web_bot_auth import (
 )
 
 from persistence.evidence import NoEvidenceError
-from persistence.observe import BuyerRecords, KeptOriginCredential, SellerRecords
+from persistence.observe import (
+    BuyerRecords,
+    KeptOriginCredential,
+    KeptTokenCredential,
+    SellerRecords,
+)
 from persistence.values import Origin
-from tests.stack import BUYER, SELLER, Stack, as_state
+from protocol.record import sha256_hex
+from tests.stack import BUYER, SELLER, TOKEN, Stack, as_state
 from transport.control import Agreed
 from transport.reverify import reverify_request, reverify_response
 
@@ -55,10 +61,15 @@ def test_the_seller_records_read_the_commit_as_the_boundary_resolved_it(
     with stack.seller_records() as seller:
         commitment, acceptance = seller.entries("demo-wba-1")
         assert (commitment.role, acceptance.role) == ("commitment", "acceptance")
-        assert commitment.principal_id == "buyer-wba"
+        principal = seller.principal_with_origin(Origin.parse(BUYER))
+        assert principal is not None and principal.domain == Origin.parse(BUYER).host
+        assert commitment.principal_id == principal.id
         assert commitment.authentication_method == "web_bot_auth"
         assert seller.processed("demo-wba-1") == [commitment.idempotency_key]
-        assert seller.credentials("buyer-wba") == [KeptOriginCredential(origin=Origin.parse(BUYER))]
+        assert seller.credentials(principal.id) == [
+            KeptOriginCredential(origin=Origin.parse(BUYER)),
+            KeptTokenCredential(token_hash=sha256_hex(TOKEN.encode())),
+        ]
         assert seller.directories_of(Origin.parse(BUYER)) == 1
         assert seller.requests_from(Origin.parse(BUYER)) == 1
 

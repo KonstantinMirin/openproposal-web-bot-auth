@@ -201,7 +201,7 @@ signature: sig1=:5kF9XH4bsuauHZoFccx+QIPx31fC1lEEETIkSXE22ZRLN8OIL1otTSDNxFNjTIx
   <li><strong>Resolve.</strong> The confirmed credential maps to the principal in the seller's own <code>credentials</code> table: by verified origin, or by token hash. A verified origin with no row is an established identity with no principal: a <code>PublicCaller</code> that carries the signature.</li>
   <li><strong>Freeze.</strong> The boundary returns one immutable value, <code>ResolvedCaller</code> or <code>PublicCaller</code>. Nothing downstream can change it.</li>
 </ol>
-<p>The offer logic is credential-blind. The boundary records who the caller is and how that was proven as a provenance: the principal, the credential method, the attribution of § 4.1.2, and, for a signature, the signed request. The offer logic receives only the principal and that provenance, never the caller or its credential, and hands the provenance to storage with the entry it writes, so no offer decision depends on which credential the caller used. The boundary writes nothing: the signed request is kept only with an entry it carried.</p>
+<p>The offer logic is credential-blind. The boundary records only what it confirmed of the caller, as a provenance: the principal, the credential method, and, for a signature, the signed request and whether it covers the body. The offer logic receives only the principal, and an entry writer that holds the provenance, never the caller or its credential, so no offer decision depends on which credential the caller used. When it writes the buyer's entry, the writer decides whether the signature attributes it (§ 4.1.2) against the buyer the issued record names, not against the caller. The boundary writes nothing: the signed request is kept only with an entry it carried.</p>
 <p>A credential that fails is refused at the boundary, before anything parses the body. The refusal is a transport status with no <code>errors[]</code> object:</p>
 </div>
 <div class="table-wrap">
@@ -219,7 +219,7 @@ signature: sig1=:5kF9XH4bsuauHZoFccx+QIPx31fC1lEEETIkSXE22ZRLN8OIL1otTSDNxFNjTIx
 
 <h3 id="interop">Two credentials, one identity type</h3>
 <div class="prose">
-<p>The same flow runs with either credential and reaches the same <code>ResolvedCaller</code> type, so you can add Web Bot Auth next to bearer tokens without touching the business logic. The live run proves it every 15 minutes: the bearer buyer and the signing buyer both reach <code>agreed</code> through the same code. Web Bot Auth adds what a bearer token can't give:</p>
+<p>The same flow runs with either credential and reaches the same <code>ResolvedCaller</code> type, so you can add Web Bot Auth next to bearer tokens without touching the business logic. Both credentials point at the same principal: one buyer is one party, whichever credential it presents. The live run proves it every 15 minutes: the buyer reaches <code>agreed</code> with a signature and with a token, through the same code, and the seller resolves the same principal both times. Web Bot Auth adds what a bearer token can't give:</p>
 </div>
 <div class="table-wrap">
 <table>

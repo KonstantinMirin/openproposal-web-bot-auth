@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import replace
 from pathlib import Path
 
@@ -34,12 +34,20 @@ from starlette.types import ASGIApp
 from buyer.app import create_app as create_buyer
 from buyer.resources import BuyerResources
 from buyer.settings import BuyerSettings
-from persistence.observe import KeptOriginCredential, SellerRecords
+from persistence.observe import (
+    KeptOriginCredential,
+    KeptPrincipal,
+    KeptTokenCredential,
+    SellerRecords,
+)
 from persistence.values import Origin
+from protocol.record import sha256_hex
 from protocol.values import objects, read_json
 from seller.caller import WHOAMI, ResolvedView
+from seller.errors import IdentityChanged
 from seller.faults import FAULT_REASONS
 from seller.resources import SellerResources
+from seller.settings import SellerSettings
 from tests.stack import (
     BUYER_KEY,
     ELSEWHERE,
@@ -93,6 +101,14 @@ def seller(tmp_path: Path, buyer_key: Ed25519Key) -> Iterator[TestClient]:
         yield client
 
 
+def _buyer_principal(data_dir: Path) -> KeptPrincipal:
+    """The principal the buyer's origin points at, as the seller's read model reads it."""
+    with SellerRecords.open(data_dir / "seller.db") as records:
+        principal = records.principal_with_origin(ELSEWHERE.buyer)
+    assert principal is not None
+    return principal
+
+
 def _resolved(client: TestClient, headers: dict[str, str]) -> ResolvedView:
     """The caller `/whoami` resolves for a request with `headers`, as it answers it."""
     caller = WHOAMI.validate_json(client.get("/whoami", headers=headers).content)
@@ -121,23 +137,19 @@ def test_the_seller_signs_every_answer_and_serves_its_directory(seller: TestClie
     assert len(objects(read_json(directory.content).get("keys"))) == 1
 
 
-def test_the_seller_resolves_each_credential_through_its_injected_resources(
-    seller: TestClient, buyer_key: Ed25519Key
+def test_the_seller_resolves_each_credential_to_the_buyers_one_principal(
+    seller: TestClient, buyer_key: Ed25519Key, tmp_path: Path
 ) -> None:
     assert seller.get("/whoami").json() == {"kind": "public", "signature": None}
 
     by_token = _resolved(seller, {"Authorization": f"Bearer {TOKEN}"})
-    assert by_token.principal.id == "buyer-bearer"
-
     by_signature = _resolved(
         seller, signed_headers("GET", f"{SELLER}/whoami", buyer_key, origin=BUYER)
     )
+    assert by_token.principal == by_signature.principal
     principal = by_signature.principal
-    assert (principal.id, principal.kind, principal.legal_name) == (
-        "buyer-wba",
-        "buyer",
-        "Demo Buyer Agency LLC",
-    )
+    assert principal.model_dump() == _buyer_principal(tmp_path / "seller").model_dump()
+    assert (principal.kind, principal.legal_name) == ("buyer", "Demo Buyer Agency LLC")
     assert principal.domain == ELSEWHERE.buyer.host  # the configured buyer origin's host
 
 
@@ -150,20 +162,24 @@ def _issue_status(seller: TestClient, key: SecretStr | None, principal_id: str) 
     return 200
 
 
-def test_the_seller_operator_controls_take_the_key_from_settings(seller: TestClient) -> None:
-    assert _issue_status(seller, None, "buyer-wba") == 403
-    assert _issue_status(seller, SecretStr("not-the-operator-key"), "buyer-wba") == 403
+def test_the_seller_operator_controls_take_the_key_from_settings(
+    seller: TestClient, tmp_path: Path
+) -> None:
+    buyer = _buyer_principal(tmp_path / "seller").id
+    assert _issue_status(seller, None, buyer) == 403
+    assert _issue_status(seller, SecretStr("not-the-operator-key"), buyer) == 403
     issued = ControlClient(seller, operator_key=SELLER_KEY).call(
-        ISSUE, IssueRequest(principal_id="buyer-wba")
+        ISSUE, IssueRequest(principal_id=buyer)
     )
-    assert issued.proposal_id.startswith("live-buyer-wba-")
+    assert issued.principal_id == buyer
+    assert issued.proposal_id.startswith(f"live-{buyer}-")
     assert _issue_status(seller, SELLER_KEY, "nobody") == 404
 
 
 def test_a_seller_without_an_operator_key_refuses_every_operator_call(tmp_path: Path) -> None:
     settings = replace(seller_settings(tmp_path, origins=ELSEWHERE), operator_key=None)
     with TestClient(seller_app(settings)) as client:
-        assert _issue_status(client, SELLER_KEY, "buyer-wba") == 403
+        assert _issue_status(client, SELLER_KEY, _buyer_principal(tmp_path).id) == 403
 
 
 def test_the_seller_lifespan_closes_the_client_and_the_store(tmp_path: Path) -> None:
@@ -210,53 +226,77 @@ def test_the_store_refuses_a_thread_other_than_the_one_that_opened_it(tmp_path: 
         resources = client.app_state["resources"]
         assert isinstance(resources, SellerResources)
         with pytest.raises(sqlite3.ProgrammingError, match="same thread"):
-            resources.store.principal("buyer-wba")
+            resources.store.for_origin(ELSEWHERE.buyer)
 
 
-def test_each_boot_applies_the_counterparties_its_settings_name(
+def test_each_boot_points_the_buyers_credentials_at_its_one_principal(
     tmp_path: Path, buyer_key: Ed25519Key
 ) -> None:
-    """The settings are the one source of truth for the seller's buyers: a changed buyer
-    origin or bearer token takes effect on the next boot, and the one it replaces stops
-    working."""
-    moved = "https://buyer-two.wba-demo.noetis.dev"
-    keys: dict[LibraryOrigin | str, list[Ed25519Key]] = {BUYER: [buyer_key], moved: [buyer_key]}
+    """The settings point both of the buyer's credentials at its one principal on every boot:
+    a rotated token takes effect on the next boot, and the one it replaces stops working."""
+    keys: dict[LibraryOrigin | str, list[Ed25519Key]] = {BUYER: [buyer_key]}
+    by_signature = signed_headers("GET", f"{SELLER}/whoami", buyer_key, origin=BUYER)
 
-    def boot(origin: str, token: str | None) -> TestClient:
+    def boot(token: str | None) -> TestClient:
         settings = replace(
             seller_settings(tmp_path, origins=ELSEWHERE),
-            peer_buyer_origin=Origin.parse(origin),
             bearer_token=None if token is None else SecretStr(token),
         )
         return TestClient(seller_app(settings, resolver=StaticKeyResolver(keys)), base_url=SELLER)
 
-    def whoami(client: TestClient, headers: dict[str, str]) -> httpx.Response:
-        answer: httpx.Response = client.get("/whoami", headers=headers)
-        return answer
+    def status(client: TestClient, token: str) -> int:
+        answer: httpx.Response = client.get("/whoami", headers={"Authorization": f"Bearer {token}"})
+        return answer.status_code
 
-    def signed_as(origin: str) -> dict[str, str]:
-        return signed_headers("GET", f"{SELLER}/whoami", buyer_key, origin=origin)
-
-    with boot(BUYER, TOKEN) as client:
-        assert (
-            _resolved(client, {"Authorization": f"Bearer {TOKEN}"}).principal.id == "buyer-bearer"
-        )
-        assert _resolved(client, signed_as(BUYER)).principal.id == "buyer-wba"
-    with boot(moved, "rotated-token") as client:
-        assert whoami(client, {"Authorization": f"Bearer {TOKEN}"}).status_code == 401
-        assert _resolved(client, {"Authorization": "Bearer rotated-token"}).principal.id == (
-            "buyer-bearer"
-        )
-        assert _resolved(client, signed_as(moved)).principal.domain == Origin.parse(moved).host
-        former = WHOAMI.validate_json(whoami(client, signed_as(BUYER)).content)
-        assert not isinstance(former, ResolvedView), former  # verified, but no principal now
-    with boot(moved, None) as client:
-        assert whoami(client, {"Authorization": "Bearer rotated-token"}).status_code == 401
+    with boot(TOKEN) as client:
+        principal = _resolved(client, by_signature).principal
+        assert _resolved(client, {"Authorization": f"Bearer {TOKEN}"}).principal == principal
+    with boot("rotated-token") as client:
+        assert status(client, TOKEN) == 401
+        assert _resolved(client, {"Authorization": "Bearer rotated-token"}).principal == principal
+        assert _resolved(client, by_signature).principal == principal
     with SellerRecords.open(tmp_path / "seller.db") as records:
-        assert records.credentials("buyer-wba") == [
-            KeptOriginCredential(origin=Origin.parse(moved))
+        assert records.credentials(principal.id) == [
+            KeptOriginCredential(origin=ELSEWHERE.buyer),
+            KeptTokenCredential(token_hash=sha256_hex(b"rotated-token")),
         ]
-        assert records.credentials("buyer-bearer") == []
+    with boot(None) as client:
+        assert status(client, "rotated-token") == 401
+        assert _resolved(client, by_signature).principal == principal
+
+
+@pytest.mark.parametrize(
+    "changed",
+    [
+        lambda s: replace(
+            s, peer_buyer_origin=Origin.parse("https://buyer-two.wba-demo.noetis.dev")
+        ),
+        lambda s: replace(s, peer_buyer_legal_name="Another Agency LLC"),
+    ],
+    ids=["another origin", "another legal name"],
+)
+def test_a_boot_that_would_rewrite_the_buyers_identity_refuses_to_start(
+    tmp_path: Path, buyer_key: Ed25519Key, changed: Callable[[SellerSettings], SellerSettings]
+) -> None:
+    """The proposals issued to the buyer name its domain and legal name, so no boot rewrites
+    them: settings that name the buyer otherwise stop the seller at startup, and the
+    principal and the proposals issued to it stay as they were."""
+    keys: dict[LibraryOrigin | str, list[Ed25519Key]] = {BUYER: [buyer_key]}
+    settings = seller_settings(tmp_path, origins=ELSEWHERE)
+    with TestClient(seller_app(settings), base_url=SELLER):
+        pass
+    before = _buyer_principal(tmp_path)
+
+    with pytest.raises(IdentityChanged), TestClient(seller_app(changed(settings))):
+        pass
+
+    assert _buyer_principal(tmp_path) == before
+    path = "/proposals/demo-wba-1"
+    headers = signed_headers("GET", f"{SELLER}{path}", buyer_key, origin=BUYER)
+    app = seller_app(settings, resolver=StaticKeyResolver(keys))
+    with TestClient(app, base_url=SELLER) as client:
+        document = read_json(client.get(path, headers=headers).content)
+    assert document["buyer"] == {"domain": before.domain, "legal_name": before.legal_name}
 
 
 # The fault switch (TEST ONLY)

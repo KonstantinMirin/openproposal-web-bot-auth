@@ -28,8 +28,8 @@ from transport.control import Refused
 DISPLAY = "business-daily-display"
 #: Each number as JSON text: NaN, a number beyond a double, an integer beyond 2**53.
 NUMBERS = {"nan": "NaN", "beyond-a-double": "1e400", "beyond-2**53": str(2**60)}
-#: The proposal each credential's principal commits to.
-PROPOSAL: dict[AuthMethod, str] = {"web_bot_auth": "demo-wba-1", "bearer": "demo-bearer-1"}
+#: The proposal the buyer commits to, under either credential.
+PROPOSAL = "demo-wba-1"
 
 
 @pytest.fixture
@@ -77,7 +77,7 @@ def _headers(stack: Stack, credential: AuthMethod, url: str, body: bytes) -> dic
 def test_the_seller_rejects_a_commit_that_holds_one_as_validation(
     stack: Stack, credential: AuthMethod, number: str, place: str
 ) -> None:
-    proposal_id = PROPOSAL[credential]
+    proposal_id = PROPOSAL
     body = _commit(number, "1") if place == "amount" else _commit("1000", number)
     url = f"{SELLER}/proposals/{proposal_id}/commit"
     answer = stack.seller.post(url, content=body, headers=_headers(stack, credential, url, body))
@@ -110,7 +110,7 @@ def test_the_buyer_refuses_a_read_that_holds_one(
     stack: Stack, credential: AuthMethod, number: str
 ) -> None:
     _holding(stack, "GET", number)
-    outcome = as_state(Refused, stack.read(PROPOSAL[credential], credential))
+    outcome = as_state(Refused, stack.read(PROPOSAL, credential))
     assert outcome.code == "malformed-answer"
     assert "RFC 8785" in outcome.detail
 
@@ -120,7 +120,7 @@ def test_the_buyer_refuses_a_read_that_holds_one(
 def test_the_buyer_refuses_a_commit_answer_that_holds_one_and_settles_nothing(
     stack: Stack, credential: AuthMethod, number: str
 ) -> None:
-    proposal_id = PROPOSAL[credential]
+    proposal_id = PROPOSAL
     _holding(stack, "POST", number)
     outcome = as_state(Refused, stack.commit(proposal_id, [DISPLAY], credential))
     assert outcome.code == "malformed-answer"

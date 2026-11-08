@@ -22,7 +22,7 @@ from seller.ports import Principal
 
 def principal(**fields: object) -> Principal:
     values: dict[str, object] = {
-        "id": "buyer-wba",
+        "id": "demo-buyer",
         "kind": "buyer",
         "legal_name": "Demo Buyer Agency LLC",
         "domain": "buyer.example",
@@ -38,10 +38,10 @@ def signed_request() -> SignedRequest:
 
 def provenance(**fields: object) -> Provenance:
     values: dict[str, object] = {
-        "principal_id": "buyer-wba",
+        "principal_id": "demo-buyer",
         "method": "web_bot_auth",
-        "attributed": False,
         "signed": signed_request(),
+        "body_covered": False,
     }
     return Provenance.model_validate(values | fields)
 
@@ -64,7 +64,6 @@ def resolved_caller(**fields: object) -> ResolvedCaller:
     values: dict[str, object] = {
         "principal": principal(),
         "credential": signature_credential(),
-        "attributed": False,
         "provenance": provenance(),
     }
     return ResolvedCaller.model_validate(values | fields)

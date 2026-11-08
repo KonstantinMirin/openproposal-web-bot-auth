@@ -4,11 +4,14 @@ The buyer reads every `AgentSettings` variable (shared/settings.py), and these:
 
 | Variable | Default | What it sets |
 |---|---|---|
+| `SELF_LEGAL_NAME` | `Demo Buyer Agency LLC` | the legal name it trades under |
 | `PEER_SELLER_ORIGIN` | `https://seller.wba-demo.noetis.dev` | the seller it deals with |
 | `PEER_SELLER_LEGAL_NAME` | `Demo Seller Inc.` | that seller's legal name, as the buyer names it |
 | `PEER_CFBOT_ORIGIN` | `https://cfbot.wba-demo.noetis.dev` | Cloudflare's verifier |
 | `WBA_SIGNATURE_LIFETIME` | `300` | how long its signatures last |
 
+Its own party (`own`) is its `SELF_ORIGIN` and its legal name: the buyer
+refuses a proposal that names any other buyer domain than its origin's host.
 Its database is `buyer.db` in `DATA_DIR`, and its keyring is `KEYS_DIR`.
 `plan_file` is its plan, the one this package ships by default; the composition
 root reads it once. The sellers it deals with are its settings' own
@@ -31,7 +34,8 @@ from pydantic import SecretStr
 from persistence.values import Origin
 from protocol.values import Value
 from shared import settings as read
-from shared.settings import DEFAULT_ORIGINS, AgentSettings, Role
+from shared.party import OwnParty
+from shared.settings import DEFAULT_LEGAL_NAMES, DEFAULT_ORIGINS, AgentSettings, Role
 
 #: The § 3.4 writes the buyer commits for each line item it buys.
 PLAN_FILE = Path(__file__).resolve().parent / "plan.yaml"
@@ -57,10 +61,17 @@ class BuyerSettings(AgentSettings):
     role: ClassVar[Role] = "buyer"
 
     peer_seller_origin: Origin = DEFAULT_ORIGINS["seller"]
-    peer_seller_legal_name: str = "Demo Seller Inc."
+    self_legal_name: str = DEFAULT_LEGAL_NAMES["buyer"]
+    peer_seller_legal_name: str = DEFAULT_LEGAL_NAMES["seller"]
     peer_cfbot_origin: Origin = DEFAULT_ORIGINS["cfbot"]
     signature_lifetime: int = 300
     plan_file: Path = PLAN_FILE
+
+    @property
+    def own(self) -> OwnParty:
+        """The buyer's own party: every proposal it commits to must name its origin's host as
+        the buyer's domain."""
+        return OwnParty(origin=self.self_origin, legal_name=self.self_legal_name)
 
     @property
     def counterparties(self) -> tuple[Counterparty, ...]:
@@ -84,7 +95,10 @@ class BuyerSettings(AgentSettings):
         return replace(
             super().from_env(env),
             peer_seller_origin=read.origin(env, "PEER_SELLER_ORIGIN", DEFAULT_ORIGINS["seller"]),
-            peer_seller_legal_name=read.text(env, "PEER_SELLER_LEGAL_NAME", "Demo Seller Inc."),
+            self_legal_name=read.text(env, "SELF_LEGAL_NAME", DEFAULT_LEGAL_NAMES["buyer"]),
+            peer_seller_legal_name=read.text(
+                env, "PEER_SELLER_LEGAL_NAME", DEFAULT_LEGAL_NAMES["seller"]
+            ),
             peer_cfbot_origin=read.origin(env, "PEER_CFBOT_ORIGIN", DEFAULT_ORIGINS["cfbot"]),
             signature_lifetime=read.integer(env, "WBA_SIGNATURE_LIFETIME", 300),
         )

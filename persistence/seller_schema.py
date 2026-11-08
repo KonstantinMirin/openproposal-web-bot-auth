@@ -109,7 +109,28 @@ def entries(db: sqlite3.Connection, proposal_id: str) -> list[KeptEntry]:
     return [KeptEntry.model_validate(row) for row in fetch_all(db, query, (proposal_id,))]
 
 
-# Credentials
+# Principals and credentials
+
+
+class KeptPrincipal(Value):
+    """A party the seller knows: the identity its credentials point at."""
+
+    id: str
+    kind: PrincipalKind
+    legal_name: str
+    domain: str
+
+
+#: The principal a signature credential points at, by its origin; the seller's store finds
+#: a caller's principal with the same clause.
+WITH_ORIGIN = "id = (SELECT principal_id FROM credentials WHERE origin = ?)"
+
+
+def principal_with_origin(db: sqlite3.Connection, origin: Origin) -> KeptPrincipal | None:
+    """The principal the signature credential `origin` points at, if any."""
+    query = select("principals", KeptPrincipal, where=WITH_ORIGIN)
+    row = fetch_one(db, query, (str(origin),))
+    return None if row is None else KeptPrincipal.model_validate(row)
 
 
 class KeptOriginCredential(Value):

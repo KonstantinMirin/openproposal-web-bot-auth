@@ -3,12 +3,14 @@
 Every `RUN_INTERVAL` seconds (900 by default; `0` runs once), the runner:
 
 1. fetches and verifies each agent's key directory over public HTTPS;
-2. has the seller issue a fresh proposal to its signing buyer, and the buyer
-   commit to it with a Web Bot Auth signature;
+2. finds the buyer's principal in the seller's records, by the buyer's
+   origin, has the seller issue it a fresh proposal, and the buyer commit to
+   it with a Web Bot Auth signature;
 3. reads what each party kept: the signed request as each side holds it, the
    seller's signed and bound answer, the directory each side verified against,
    and both sides' `record_digest`; then verifies that evidence again offline;
-4. runs the same flow with the bearer buyer's token;
+4. runs the same flow with the bearer token the seller issued the same buyer,
+   and checks that the seller resolved the same principal;
 5. has cfbot, on Cloudflare's library, verify a request the buyer signs.
 
 It writes `latest-run.json` (a `Report`, runner/report.py) and `history.json`
@@ -88,7 +90,6 @@ class CredentialPath:
 
     name: PathName
     method: AuthMethod
-    principal: str
     label: str
     steps: PathSteps
 
@@ -96,7 +97,6 @@ class CredentialPath:
 SIGNATURE = CredentialPath(
     "signature",
     "web_bot_auth",
-    "buyer-wba",
     "a Web Bot Auth signature",
     PathSteps(
         issue="signature-issue",
@@ -110,7 +110,6 @@ SIGNATURE = CredentialPath(
 BEARER = CredentialPath(
     "bearer",
     "bearer",
-    "buyer-bearer",
     "a bearer token",
     PathSteps(
         issue="bearer-issue",
@@ -177,8 +176,8 @@ async def _path(run: Run, observer: Observer, path: CredentialPath) -> FlowRun:
     issued = await run.step(
         steps.issue,
         group,
-        f"Seller issues a fresh proposal to {path.principal}",
-        partial(observer.issue, path.principal),
+        "Seller issues a fresh proposal to the buyer's principal",
+        observer.issue,
     )
     outcome = await run.step(
         steps.commit,
@@ -191,8 +190,8 @@ async def _path(run: Run, observer: Observer, path: CredentialPath) -> FlowRun:
     seller = await run.step(
         steps.seller,
         group,
-        "Seller's boundary resolved the stored principal",
-        partial(observer.seller_side, outcome, path.method, path.principal),
+        "Seller's boundary resolved the buyer's one principal",
+        partial(observer.seller_side, issued, outcome, path.method),
         needs=committed,
     )
     buyer = await run.step(

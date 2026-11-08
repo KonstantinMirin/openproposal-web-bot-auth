@@ -1,12 +1,19 @@
 """The seller's HTTP seam: what a route asks for, and how every answer and error is rendered.
 
-A route takes `caller: CallerDep`, or `provenance: ProvenanceDep` when it calls
-the offer logic, and, when it reads one, `body: RawBodyDep`, never a `Request`,
-which would hand it the credential headers. `CallerDep` runs the identity
-boundary that `create_app` built, over the same body bytes the route then
-parses, so nothing parses the body before the credential is confirmed.
-`ProvenanceDep` is all the offer logic receives of the caller: its principal
-and the provenance storage keeps, never a credential.
+A route takes `caller: CallerDep`, or, when it calls the offer logic,
+`principal: PrincipalDep` or `writer: EntryWriterDep`, and, when it reads one,
+`body: RawBodyDep`, never a `Request`, which would hand it the credential
+headers. `CallerDep` runs the identity boundary that `create_app` built, over
+the same body bytes the route then parses, so nothing parses the body before
+the credential is confirmed.
+
+The offer logic receives of the caller only its principal id: as
+`PrincipalDep`, or as the `principal_id` of the `EntryWriter` that
+`EntryWriterDep` binds here to the caller's provenance. The writer is the one
+place a caller's entry meets its provenance. It computes, inside the offer
+logic's transaction, whether a signature attributes the entry (§ 4.1.2):
+against the `buyer.domain` of the record the entry is about, never against
+the caller's principal, as the buyer does for the seller's answer.
 
 The offer logic returns its answers as values; this module renders them. A
 seller error body has one of two forms:
@@ -30,9 +37,10 @@ from typing import Annotated
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse, Response
-from openproposal import CommitResult, ErrorObject, ErrorObjectCode, dump
+from openproposal import AssentEntry, CommitResult, ErrorObject, ErrorObjectCode, dump
 
 from persistence.values import Provenance
+from protocol.attribution import attributes
 from protocol.operations import is_stored_result
 from protocol.values import JsonObject
 from transport.handlers import on_error
@@ -41,7 +49,8 @@ from transport.operator import install_control_handlers
 from .boundary import Refused
 from .caller import Caller, ResolvedCaller
 from .errors import Rejected
-from .resources import BoundaryDep
+from .ports import EntryWriter, KeptEvidence
+from .resources import BoundaryDep, KeptEvidenceDep
 
 
 async def raw_body(request: Request) -> bytes:
@@ -61,13 +70,47 @@ async def resolve_caller(request: Request, body: RawBodyDep, boundary: BoundaryD
 CallerDep = Annotated[Caller, Depends(resolve_caller)]
 
 
-async def provenance_of(caller: CallerDep) -> Provenance | None:
-    """What the offer logic takes of the caller: its provenance, or None with no principal."""
-    return caller.provenance if isinstance(caller, ResolvedCaller) else None
+async def principal_of(caller: CallerDep) -> str | None:
+    """What a read takes of the caller: its principal id, or None with no principal."""
+    return caller.principal.id if isinstance(caller, ResolvedCaller) else None
 
 
-#: How a route that calls the offer logic asks for its caller: `provenance: ProvenanceDep`.
-ProvenanceDep = Annotated[Provenance | None, Depends(provenance_of)]
+#: How a route that reads through the offer logic asks for its caller.
+PrincipalDep = Annotated[str | None, Depends(principal_of)]
+
+
+class CallerEntries:
+    """An `EntryWriter` bound to one caller's confirmed provenance, which only it holds."""
+
+    def __init__(self, evidence: KeptEvidence, provenance: Provenance) -> None:
+        self._evidence, self._provenance = evidence, provenance
+
+    @property
+    def principal_id(self) -> str:
+        return self._provenance.principal_id
+
+    def append(self, proposal_id: str, entry: AssentEntry, *, record_buyer: str | None) -> None:
+        """Keeps `entry` with the provenance. A signature attributes it when it covers the
+        body and its host is `record_buyer` or a subdomain of it (§ 4.1.2)."""
+        p, host = self._provenance, self._provenance.signing_host
+        attributed = (
+            host is not None
+            and record_buyer is not None
+            and attributes(host, record_buyer, body_covered=p.body_covered)
+        )
+        self._evidence.append_caller_entry(proposal_id, entry, p, attributed=attributed)
+
+
+async def entry_writer(caller: CallerDep, evidence: KeptEvidenceDep) -> EntryWriter | None:
+    """What a commit takes of the caller: the writer of its entries, or None with no
+    principal."""
+    if not isinstance(caller, ResolvedCaller):
+        return None
+    return CallerEntries(evidence, caller.provenance)
+
+
+#: How a route that writes through the offer logic asks for its caller.
+EntryWriterDep = Annotated[EntryWriter | None, Depends(entry_writer)]
 
 
 # § 2.4 errors

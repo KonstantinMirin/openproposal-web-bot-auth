@@ -3,8 +3,9 @@
 `IdentityBoundary.resolve` is the only code that reads a caller's protocol
 credential. It treats a Web Bot Auth signature and a bearer token the same way:
 
-1. Read the credential the caller presented: a `web-bot-auth` signature, an
-   `Authorization: Bearer` token, or nothing. Both at once is refused.
+1. Read the credential the caller presented: a `web-bot-auth` signature, one
+   `Authorization: Bearer` line, or nothing. Both at once, or more than one
+   `Authorization` line, is refused as two credentials.
 2. Confirm it: the library's `RequestVerifier` for a signature, which also
    proves the body is covered through `Content-Digest`; the token's hash for a
    bearer token. A credential that fails confirmation is refused here, never
@@ -15,11 +16,14 @@ credential. It treats a Web Bot Auth signature and a bearer token the same way:
 4. Return one frozen value (seller/caller.py). Handlers receive it and never
    read a header, and nothing amends it afterwards.
 
-The boundary writes nothing. A resolved caller carries its `Provenance`: the
-principal, how it authenticated, whether the signature attributes the body,
-and, for a signature, the verified request as a `SignedRequest` with the
-directory fetch it verified against and the instant it verified at. Storage
-keeps that only with an entry the request carried.
+The boundary writes nothing, and yields confirmed facts only. A resolved
+caller carries its `Provenance`: the principal, how it authenticated, and, for
+a signature, the verified request as a `SignedRequest` (its signer names the
+signing origin, with the directory fetch it verified against and the instant
+it verified at) and whether the signature covers the body. Whether a signature
+attributes an entry (§ 4.1.2) depends on the record the entry is about, so the
+boundary never decides it: the seller does, when it writes the entry. Storage
+keeps the provenance only with an entry the request carried.
 
 `create_app` (seller/app.py) builds the boundary from its collaborators, and
 seller/http.py binds it to `CallerDep`.
@@ -42,8 +46,7 @@ from iab_agentic_primitives.web_bot_auth import (
 )
 from starlette.requests import Request
 
-from persistence.values import KeptRequest, Origin, Provenance, SignedRequest, Signer
-from protocol.attribution import attributes
+from persistence.values import HeaderLine, KeptRequest, Origin, Provenance, SignedRequest, Signer
 from transport.control import BoundaryReason, ErrorBody
 from transport.wba import fetch_of, is_signed, origin_of, request_of, to_library
 
@@ -104,12 +107,20 @@ class _PresentedBearer:
     token: str
 
 
-def _presented(
-    request: KeptRequest, authorization: str | None
-) -> _PresentedSignature | _PresentedBearer | None:
+def _authorization(lines: tuple[HeaderLine, ...]) -> str | None:
+    """The one `Authorization` line's value, or None without one. Two or more lines are two
+    credentials, whichever of them would confirm: a server that read only one would let the
+    order of the lines decide."""
+    values = [value for name, value in lines if name.lower() == "authorization"]
+    if len(values) > 1:
+        raise Refused(400, "two-credentials", "present one Authorization line, not several")
+    return values[0] if values else None
+
+
+def _presented(request: KeptRequest) -> _PresentedSignature | _PresentedBearer | None:
     """The credential the caller presented, before anything confirms it."""
     signed = is_signed(request.lines)
-    token = _bearer(authorization)
+    token = _bearer(_authorization(request.lines))
     if signed and token is not None:
         raise Refused(400, "two-credentials", "present a signature or a bearer token, not both")
     if signed:
@@ -154,7 +165,7 @@ class IdentityBoundary:
         signature covers it through `Content-Digest`. Nothing parses it here.
         """
         kept = request_of(request.scope, self._identity, body)
-        presented = _presented(kept, request.headers.get("authorization"))
+        presented = _presented(kept)
         if presented is None:
             return PublicCaller()
         if isinstance(presented, _PresentedBearer):
@@ -177,21 +188,13 @@ class IdentityBoundary:
         principal = self._directory.for_origin(credential.origin)
         if principal is None:
             return PublicCaller(signature=credential)
-        attributed = attributes(
-            credential.origin.host, principal.domain, body_covered=credential.body_covered
-        )
         provenance = Provenance(
             principal_id=principal.id,
             method=credential.method,
-            attributed=attributed,
             signed=_signed(credential, verified, request, at),
+            body_covered=credential.body_covered,
         )
-        return ResolvedCaller(
-            principal=principal,
-            credential=credential,
-            attributed=attributed,
-            provenance=provenance,
-        )
+        return ResolvedCaller(principal=principal, credential=credential, provenance=provenance)
 
     def _resolve_bearer(self, token: str) -> ResolvedCaller:
         # A token is confirmed and resolved by the same lookup.
@@ -203,14 +206,9 @@ class IdentityBoundary:
                 "the bearer token is not valid",
                 headers={"WWW-Authenticate": 'Bearer error="invalid_token"'},
             )
-        provenance = Provenance(
-            principal_id=principal.id, method="bearer", attributed=False, signed=None
-        )
+        provenance = Provenance(principal_id=principal.id, method="bearer", signed=None)
         return ResolvedCaller(
-            principal=principal,
-            credential=BearerCredential(method="bearer"),
-            attributed=False,
-            provenance=provenance,
+            principal=principal, credential=BearerCredential(method="bearer"), provenance=provenance
         )
 
 

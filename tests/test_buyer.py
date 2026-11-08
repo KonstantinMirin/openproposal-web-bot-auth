@@ -6,12 +6,14 @@ verified, then parsed, inside one refusal boundary. Each test drives
 party kept.
 
 - A signed or bearer commit is agreed, and both parties keep the agreement,
-  with the header lines exactly as the transport carried them. The seller
+  with the header lines exactly as the transport carried them. One buyer is
+  one principal at the seller: a proposal read under one credential is
+  committed under the other. The seller
   decides on the proposal as issued and saves the agreed proposal beside it.
 - A verified answer that is malformed, an error without `retry`, or a boundary
   refusal is refused, never a 500, and settles nothing.
 - An unknown line item or seller is refused before anything is sent.
-- A proposal that names another seller is refused; a `CommitResult` that
+- A proposal that names another seller, or another buyer, is refused; a `CommitResult` that
   doesn't answer the commit is refused, and so is one whose `record_digest`
   doesn't recompute from the digest input the buyer kept.
 - An answer correctly signed by another origin than the seller's is refused,
@@ -47,6 +49,7 @@ from tests.stack import (
     RESELLER,
     SELLER,
     Lines,
+    Origins,
     Stack,
     as_state,
     lines,
@@ -124,7 +127,7 @@ def test_a_signed_commit_is_agreed_and_both_parties_keep_it(stack: Stack) -> Non
 
 
 def test_a_bearer_commit_is_agreed_with_no_signing_key(stack: Stack) -> None:
-    outcome = as_state(Agreed, stack.commit("demo-bearer-1", [DISPLAY], "bearer"))
+    outcome = as_state(Agreed, stack.commit("demo-wba-1", [DISPLAY], "bearer"))
     assert outcome.authentication_method == "bearer"
     assert outcome.keyid is None
     (_, commit) = stack.requests
@@ -139,7 +142,7 @@ def test_a_bearer_commit_is_agreed_with_no_signing_key(stack: Stack) -> None:
 
 @pytest.mark.parametrize(
     ("proposal_id", "credential"),
-    [("demo-wba-1", "web_bot_auth"), ("demo-bearer-1", "bearer")],
+    [("demo-wba-1", "web_bot_auth"), ("demo-wba-1", "bearer")],
 )
 def test_a_deployment_under_other_origins_reads_and_commits(
     tmp_path: Path, proposal_id: str, credential: AuthMethod
@@ -154,6 +157,25 @@ def test_a_deployment_under_other_origins_reads_and_commits(
         outcome = as_state(Agreed, stack.commit(proposal_id, [DISPLAY], credential))
     assert str(outcome.seller.origin) == "https://sell-side.wba-demo.noetis.dev"
     assert {r.url.host for r in stack.requests} == {"sell-side.wba-demo.noetis.dev"}
+
+
+def test_one_buyer_is_one_principal_under_either_credential(stack: Stack) -> None:
+    """A credential only points at the buyer's principal: what one credential reads, the
+    other commits to, and the seller records the same principal for each."""
+    as_state(Read, stack.read("demo-wba-1", "web_bot_auth"))
+    by_token = as_state(Agreed, stack.commit("demo-wba-1", [DISPLAY], "bearer"))
+    as_state(Read, stack.read("demo-wba-1", "bearer"))
+    by_signature = as_state(Agreed, stack.commit("demo-wba-1", [CTV], "web_bot_auth"))
+    assert (by_token.authentication_method, by_signature.authentication_method) == (
+        "bearer",
+        "web_bot_auth",
+    )
+    with stack.seller_records() as records:
+        principal = records.principal_with_origin(stack.origins.buyer)
+        entries = records.entries("demo-wba-1")
+    assert principal is not None and principal.domain == stack.origins.buyer.host
+    commitments = [(e.principal_id, e.authentication_method) for e in entries if e.idempotency_key]
+    assert commitments == [(principal.id, "bearer"), (principal.id, "web_bot_auth")]
 
 
 def _outside_line_items(proposal: JsonObject) -> JsonObject:
@@ -220,7 +242,7 @@ def test_a_read_answers_the_proposal_as_received(stack: Stack) -> None:
         "legal_name": "Demo Seller Inc.",
     }
     assert list(items_by_id(outcome.proposal)) == [DISPLAY, CTV]
-    assert as_state(Read, stack.read("demo-bearer-1", "bearer")).keyid is None
+    assert as_state(Read, stack.read("demo-wba-2", "bearer")).keyid is None
 
 
 def test_a_read_the_seller_refuses_is_rejected_with_its_errors(stack: Stack) -> None:
@@ -277,7 +299,7 @@ def test_a_trigger_that_names_no_origin_is_invalid(stack: Stack, seller: str, ro
 
 def test_a_bearer_call_without_an_issued_token_is_refused_unsent(tmp_path: Path) -> None:
     with Stack(tmp_path, token=False) as stack:
-        outcome = as_state(Refused, stack.commit("demo-bearer-1", [DISPLAY], "bearer"))
+        outcome = as_state(Refused, stack.commit("demo-wba-1", [DISPLAY], "bearer"))
         assert outcome.code == "credential-not-issued"
         assert outcome.authentication_method == "bearer"
         assert stack.requests == []
@@ -374,12 +396,60 @@ def _edited(stack: Stack, method: str, edit: Callable[[JsonObject], None]) -> No
     stack.answer = answer
 
 
+def test_a_proposal_that_names_a_member_twice_is_refused(stack: Stack) -> None:
+    """A correctly signed proposal whose bytes name `seller` twice, the seller's own last: a
+    reader that kept the first would read another seller from the same signed bytes."""
+
+    def answer(request: httpx.Request) -> httpx.Response | None:
+        if request.method != "GET":
+            return None
+        real = stack.forward(request).content
+        first = b'{"seller": {"domain": "other.example", "legal_name": "X"}, '
+        return stack.signed(request, 200, first + real[1:])
+
+    stack.answer = answer
+    outcome = as_state(Refused, stack.commit("demo-wba-1", [DISPLAY]))
+    assert outcome.code == "malformed-answer"
+    assert "'seller' twice" in outcome.detail
+    assert [m for m, _ in _sent(stack)] == ["GET"]
+    assert _commits(stack, "demo-wba-1") == []
+
+
 def test_a_proposal_that_names_another_seller_is_refused(stack: Stack) -> None:
     """A correctly signed proposal from this seller that names another seller."""
     _edited(stack, "GET", lambda d: d.update(seller={"domain": "other.example", "legal_name": "X"}))
     outcome = as_state(Refused, stack.commit("demo-wba-1", [DISPLAY]))
     assert outcome.code == "wrong-seller"
     assert "other.example" in outcome.detail
+    assert _commits(stack, "demo-wba-1") == []
+
+
+@pytest.mark.parametrize(
+    ("buyer", "named"),
+    [
+        ({"domain": "other-agency.wba-demo.noetis.dev", "legal_name": "X"}, "other-agency"),
+        (None, "None"),
+    ],
+    ids=["another buyer", "no buyer"],
+)
+@pytest.mark.parametrize("credential", ["web_bot_auth", "bearer"])
+def test_a_proposal_that_names_another_buyer_is_refused(
+    stack: Stack, buyer: JsonObject | None, named: str, credential: AuthMethod
+) -> None:
+    """A correctly signed proposal from this seller whose buyer isn't this buyer's own party:
+    the buyer neither commits to it nor keeps anything of it."""
+
+    def rename(document: JsonObject) -> None:
+        if buyer is None:
+            document.pop("buyer")
+        else:
+            document["buyer"] = buyer
+
+    _edited(stack, "GET", rename)
+    outcome = as_state(Refused, stack.commit("demo-wba-1", [DISPLAY], credential))
+    assert outcome.code == "wrong-buyer"
+    assert named in outcome.detail and BUYER.removeprefix("https://") in outcome.detail
+    assert [m for m, _ in _sent(stack)] == ["GET"]
     assert _commits(stack, "demo-wba-1") == []
 
 
@@ -500,7 +570,7 @@ def _signed_by_the_reseller(stack: Stack, method: str) -> None:
 def test_an_answer_signed_by_another_origin_is_refused(
     stack: Stack, credential: AuthMethod, on: str
 ) -> None:
-    proposal_id = PROPOSAL[credential]
+    proposal_id = "demo-wba-2"
     _signed_by_the_reseller(stack, "GET" if on == "read" else "POST")
     if on == "read":
         outcome = as_state(Refused, stack.read(proposal_id, credential))
@@ -540,12 +610,13 @@ def test_each_boot_deals_with_the_sellers_its_settings_name(tmp_path: Path) -> N
     """The buyer keeps no record of its sellers: a token its settings no longer hold is gone
     on the next boot, and so is a seller they no longer name."""
     with Stack(tmp_path) as stack:
-        as_state(Read, stack.read("demo-bearer-1", "bearer"))
+        as_state(Read, stack.read("demo-wba-1", "bearer"))
     with Stack(tmp_path, token=False) as stack:
-        refused = as_state(Refused, stack.read("demo-bearer-1", "bearer"))
+        refused = as_state(Refused, stack.read("demo-wba-1", "bearer"))
         assert refused.code == "credential-not-issued"
         as_state(Read, stack.read("demo-wba-1"))
-    with Stack(tmp_path, origins=ELSEWHERE) as stack:
+    # The seller moves; its buyer, whose identity the seller never rewrites, stays.
+    with Stack(tmp_path, origins=Origins(seller=ELSEWHERE.seller)) as stack:
         trigger = ReadTrigger(proposal_id="demo-wba-1", seller=DEMO.seller)
         refused = as_state(Refused, stack.buyer_control.call(READ, trigger))
         assert refused.code == "unknown-seller"
@@ -594,7 +665,6 @@ FAULTS: list[tuple[AuthMethod, BreakingFault, str]] = [
     for credential in get_args(AuthMethod)
     for mode, reason in refused_under(credential).items()
 ]
-PROPOSAL = {"web_bot_auth": "demo-wba-2", "bearer": "demo-bearer-1"}
 
 
 @pytest.mark.parametrize(("credential", "mode", "reason"), FAULTS)
@@ -602,7 +672,7 @@ PROPOSAL = {"web_bot_auth": "demo-wba-2", "bearer": "demo-bearer-1"}
 def test_each_fault_is_refused(
     tmp_path: Path, credential: AuthMethod, mode: BreakingFault, reason: str, on: str
 ) -> None:
-    proposal_id = PROPOSAL[credential]
+    proposal_id = "demo-wba-2"
     with Stack(tmp_path, faults=True) as stack:
         stack.fault(mode, "read" if on == "read" else "commit")
         if on == "read":
@@ -622,7 +692,7 @@ def test_an_answer_to_a_bearer_request_needs_no_binding(
 ) -> None:
     with Stack(tmp_path, faults=True) as stack:
         stack.fault(mode)
-        as_state(Agreed, stack.commit("demo-bearer-1", [CTV], "bearer"))
+        as_state(Agreed, stack.commit("demo-wba-2", [CTV], "bearer"))
 
 
 # cfbot

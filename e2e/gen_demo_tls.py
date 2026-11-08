@@ -8,7 +8,7 @@
 - `bundle.pem`: the public roots (certifi) followed by the demo CA. Every
   container points `SSL_CERT_FILE` at it, because that variable replaces the
   default trust file instead of adding to it.
-- `demo.env`: the bearer token the seller issues the bearer buyer, and each
+- `demo.env`: the bearer token the seller issues its buyer, and each
   agent's own operator key (`SELLER_OPERATOR_KEY`, `BUYER_OPERATOR_KEY`,
   `CFBOT_OPERATOR_KEY`), all random per run. e2e/run-e2e.sh hands the file to
   Compose, which gives each service only the values it names.
