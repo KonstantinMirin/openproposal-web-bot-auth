@@ -98,10 +98,16 @@ class Observer:
     """The steps of one run, against one deployment."""
 
     def __init__(
-        self, settings: RunnerSettings, control: httpx.AsyncClient, web: httpx.AsyncClient
+        self,
+        settings: RunnerSettings,
+        *,
+        seller: httpx.AsyncClient,
+        buyer: httpx.AsyncClient,
+        web: httpx.AsyncClient,
     ) -> None:
-        #: `control` reaches the agents' own controls; `web` fetches over public HTTPS.
-        self.settings, self.control, self.web = settings, control, web
+        #: `seller` and `buyer` reach each agent's own controls, each with that agent's
+        #: operator key; `web` fetches over public HTTPS.
+        self.settings, self.seller, self.buyer, self.web = settings, seller, buyer, web
 
     async def directory(self, origin: Origin) -> Done[Directory]:
         """Fetches the origin's directory as a verifier does, and verifies it with the library."""
@@ -122,8 +128,8 @@ class Observer:
         return Done(directory, f"{len(kids)} key(s), signed by each: {', '.join(kids)}")
 
     async def issue(self, principal_id: str) -> Done[Issued]:
-        response = await self.control.post(
-            f"{self.settings.seller_control}/operator/issue",
+        response = await self.seller.post(
+            "/operator/issue",
             json=IssueRequest(principal_id=principal_id).model_dump(),
         )
         expect(
@@ -140,9 +146,7 @@ class Observer:
             line_item_ids=[LINE_ITEM],
             credential=method,
         )
-        response = await self.control.post(
-            f"{self.settings.buyer_control}/operator/commit", json=trigger.model_dump()
-        )
+        response = await self.buyer.post("/operator/commit", json=trigger.model_dump())
         expect(
             response.status_code == httpx.codes.OK,
             f"commit returned {response.status_code}: {response.text}",
@@ -242,9 +246,7 @@ class Observer:
         )
 
     async def cloudflare(self) -> Done[CloudflareCheck]:
-        response = await self.control.post(
-            f"{self.settings.buyer_control}/operator/cloudflare-check"
-        )
+        response = await self.buyer.post("/operator/cloudflare-check")
         expect(
             response.status_code == httpx.codes.OK,
             f"cloudflare-check returned {response.status_code}",

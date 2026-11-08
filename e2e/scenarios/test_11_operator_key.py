@@ -1,29 +1,35 @@
-"""11. The agents' own controls: never routed by the front, and refused without the operator key.
+"""11. The agents' own controls: never routed by the front, and refused without the party's key.
 
 Each agent's `/operator/` (cfbot's `/run/`) routes are its operator's, not
 another agent's, so they sit outside the identity boundary. The front, Caddy
 serving the production snippet (deploy/Caddyfile.snippet), answers `404` for
 them and for the seller's test-only `/test/`, and the agent refuses a call
-inside the network that doesn't carry its `OPERATOR_KEY`.
+inside the network that doesn't carry its own `OPERATOR_KEY`. Each party has a
+key of its own, so one party's key is refused at another.
 """
 
 import httpx
 import pytest
 from conftest import BUYER, BUYER_OPERATOR, CFBOT, CFBOT_RUN, SELLER
+from settings import OPERATOR_KEYS
 
+from transport.control import OPERATOR_HEADER
+
+#: Each party's controls, and the party whose key they must refuse.
 INSIDE = [
-    ("GET", f"{BUYER_OPERATOR}/keys"),
-    ("POST", "http://seller:8000/operator/issue"),
-    ("POST", f"{CFBOT_RUN}/whoami"),
+    ("GET", f"{BUYER_OPERATOR}/keys", "seller"),
+    ("POST", "http://seller:8000/operator/issue", "buyer"),
+    ("POST", f"{CFBOT_RUN}/whoami", "buyer"),
 ]
 
 
-@pytest.mark.parametrize(("method", "url"), INSIDE)
-@pytest.mark.parametrize("key", [None, "not-the-operator-key"])
-def test_operator_controls_refuse_a_call_without_the_key(
-    method: str, url: str, key: str | None
+@pytest.mark.parametrize(("method", "url", "other"), INSIDE)
+@pytest.mark.parametrize("key", ["none", "a wrong key", "another party's key"])
+def test_operator_controls_refuse_a_call_without_the_partys_key(
+    method: str, url: str, other: str, key: str
 ) -> None:
-    headers = {"X-Operator-Key": key} if key else {}
+    sent = {"none": None, "a wrong key": "not-the-operator-key"}.get(key, OPERATOR_KEYS[other])
+    headers = {} if sent is None else {OPERATOR_HEADER: sent}
     with httpx.Client(timeout=30) as client:  # no operator-key hook
         response = client.request(method, url, headers=headers, json={"principal_id": "buyer-wba"})
     assert response.status_code == 403, response.text

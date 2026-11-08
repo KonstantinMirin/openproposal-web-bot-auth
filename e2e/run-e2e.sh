@@ -9,6 +9,6 @@ uv run --project .. python gen_demo_tls.py
 mkdir -p generated/logs
 python3 ../deploy/local_caddy.py ../deploy/Caddyfile.snippet generated/Caddyfile
 
-compose=(docker compose -f docker-compose.yml --profile test)
+compose=(docker compose --env-file generated/demo.env -f docker-compose.yml --profile test)
 trap '"${compose[@]}" down --volumes --remove-orphans >/dev/null 2>&1' EXIT
 compose_run "seller buyer cfbot front" scenarios

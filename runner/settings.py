@@ -4,7 +4,9 @@
   flow against, `https://<name>.wba-demo.noetis.dev` by default.
 - `SELLER_CONTROL`, `BUYER_CONTROL`: the agents' own controls inside the network,
   `http://seller:8000` and `http://buyer:8000` by default.
-- `OPERATOR_KEY`: what the controls require. Without it the runner refuses to start.
+- `SELLER_OPERATOR_KEY`, `BUYER_OPERATOR_KEY`: each agent's own operator key, which
+  the runner sends to that agent's controls only. Both are required: without
+  either, the runner stops at its settings.
 - `DEMO_BEARER_TOKEN`: read only so that no report holds it.
 - `SELLER_DB`, `BUYER_DB`: both parties' databases, read-only
   (`/seller-data/seller.db`, `/buyer-data/buyer.db`).
@@ -25,7 +27,7 @@ from persistence.values import Origin
 from shared import settings as read
 
 #: Environment variables whose values must never reach a report.
-SECRET_VARIABLES = ("OPERATOR_KEY", "DEMO_BEARER_TOKEN")
+SECRET_VARIABLES = ("SELLER_OPERATOR_KEY", "BUYER_OPERATOR_KEY", "DEMO_BEARER_TOKEN")
 #: Shorter values are not searched for in a report: they would match by chance.
 _SHORTEST_SECRET = 8
 
@@ -41,8 +43,11 @@ class RunnerSettings:
     buyer_db: str
     out_dir: Path
     interval: float
+    #: What the seller's controls require; sent to the seller only.
+    seller_operator_key: SecretStr
+    #: What the buyer's controls require; sent to the buyer only.
+    buyer_operator_key: SecretStr
     ca_bundle: Path | None = None
-    operator_key: SecretStr | None = None
     #: The values `assert_public` keeps out of every report.
     secrets: tuple[str, ...] = field(default=(), repr=False)
 
@@ -60,8 +65,9 @@ class RunnerSettings:
             buyer_db=env.get("BUYER_DB", "/buyer-data/buyer.db"),
             out_dir=read.path(env, "OUT_DIR", "/out"),
             interval=read.seconds(env, "RUN_INTERVAL", 900.0),
+            seller_operator_key=read.required_secret(env, "SELLER_OPERATOR_KEY"),
+            buyer_operator_key=read.required_secret(env, "BUYER_OPERATOR_KEY"),
             ca_bundle=read.optional_path(env, "SSL_CERT_FILE"),
-            operator_key=read.secret(env, "OPERATOR_KEY"),
             secrets=tuple(
                 env[name] for name in SECRET_VARIABLES if len(env.get(name, "")) >= _SHORTEST_SECRET
             ),

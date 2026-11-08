@@ -40,7 +40,18 @@ from runner.report import (
     schema,
 )
 from runner.settings import RunnerSettings
-from tests.stack import BUYER, CFBOT, OPERATOR, RESELLER, SELLER, TOKEN, Stack
+from shared.settings import SettingsError
+from tests.stack import (
+    BUYER,
+    BUYER_OPERATOR,
+    CFBOT,
+    RESELLER,
+    SELLER,
+    SELLER_OPERATOR,
+    TOKEN,
+    Stack,
+)
+from transport.control import OPERATOR_HEADER
 
 SCHEMA_FILE = Path(__file__).resolve().parent.parent / "site" / "report.schema.json"
 SCHEMA = json.loads(SCHEMA_FILE.read_text())
@@ -57,8 +68,9 @@ def _settings(stack: Stack, out: Path) -> RunnerSettings:
         buyer_db=str(stack.buyer_dir / "buyer.db"),
         out_dir=out,
         interval=0,
-        operator_key=SecretStr(OPERATOR["X-Operator-Key"]),
-        secrets=(OPERATOR["X-Operator-Key"], TOKEN),
+        seller_operator_key=SecretStr(SELLER_OPERATOR[OPERATOR_HEADER]),
+        buyer_operator_key=SecretStr(BUYER_OPERATOR[OPERATOR_HEADER]),
+        secrets=(SELLER_OPERATOR[OPERATOR_HEADER], BUYER_OPERATOR[OPERATOR_HEADER], TOKEN),
     )
 
 
@@ -436,11 +448,31 @@ def test_a_cfbot_refusal_fails_the_cloudflare_step(stack: Stack, tmp_path: Path)
     assert [s.id for s in report.steps if not s.ok] == ["cloudflare"]
 
 
-def test_the_runner_refuses_to_start_without_an_operator_key(
-    monkeypatch: pytest.MonkeyPatch,
+def test_each_agent_refuses_another_partys_operator_key(stack: Stack) -> None:
+    """Each agent's controls take its own key only, so a run passes only when the runner
+    sends each agent its own."""
+    issue = {"principal_id": "buyer-wba"}
+
+    def seller(key: dict[str, str]) -> int:
+        response: httpx.Response = stack.seller.post("/operator/issue", json=issue, headers=key)
+        return response.status_code
+
+    def buyer(key: dict[str, str]) -> int:
+        response: httpx.Response = stack.buyer.get("/operator/keys", headers=key)
+        return response.status_code
+
+    assert (seller(BUYER_OPERATOR), buyer(SELLER_OPERATOR)) == (403, 403)
+    assert (seller(SELLER_OPERATOR), buyer(BUYER_OPERATOR)) == (200, 200)
+
+
+@pytest.mark.parametrize("name", ["SELLER_OPERATOR_KEY", "BUYER_OPERATOR_KEY"])
+def test_the_runner_refuses_to_start_without_each_agents_operator_key(
+    monkeypatch: pytest.MonkeyPatch, name: str
 ) -> None:
-    monkeypatch.delenv("OPERATOR_KEY", raising=False)
-    with pytest.raises(SystemExit, match="OPERATOR_KEY is not set"):
+    monkeypatch.setenv("SELLER_OPERATOR_KEY", "seller-key")
+    monkeypatch.setenv("BUYER_OPERATOR_KEY", "buyer-key")
+    monkeypatch.delenv(name)
+    with pytest.raises(SettingsError, match=f"^{name}: "):
         main()
 
 

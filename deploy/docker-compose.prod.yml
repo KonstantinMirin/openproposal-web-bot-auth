@@ -11,13 +11,14 @@
 # DNS and that Caddy, as any outside party does.
 #
 # Paths default to the host layout of deploy/README.md, relative to this file:
-# ../../iab-agentic-primitives (the library checkout), ../../wba-demo.env (the
-# secrets), and ../../run (the runner's reports, which Caddy serves).
+# ../../iab-agentic-primitives (the library checkout) and ../../run (the runner's
+# reports, which Caddy serves). The secrets come from the file passed with
+# `--env-file` (deploy/make-env.sh writes it): each agent gets its own operator
+# key, and the runner the seller's and the buyer's.
 name: wba-demo-live
 
 x-live: &live
   image: wba-demo-python:live
-  env_file: ${WBA_ENV_FILE:-../../wba-demo.env}
   restart: unless-stopped
 
 services:
@@ -46,7 +47,6 @@ services:
   cfbot:
     extends: { file: compose.base.yml, service: cfbot }
     image: wba-demo-cfbot:live
-    env_file: ${WBA_ENV_FILE:-../../wba-demo.env}
     restart: unless-stopped
     ports: ["127.0.0.1:18083:8000"]
 
@@ -63,6 +63,9 @@ services:
       PEER_CFBOT_ORIGIN: https://cfbot.wba-demo.noetis.dev
       SELLER_CONTROL: http://seller:8000
       BUYER_CONTROL: http://buyer:8000
+      SELLER_OPERATOR_KEY: ${SELLER_OPERATOR_KEY:?set in the secrets file}
+      BUYER_OPERATOR_KEY: ${BUYER_OPERATOR_KEY:?set in the secrets file}
+      DEMO_BEARER_TOKEN: ${DEMO_BEARER_TOKEN:?set in the secrets file}
       RUN_INTERVAL: ${RUN_INTERVAL:-900}
       OUT_DIR: /out
     volumes:

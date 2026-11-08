@@ -83,6 +83,14 @@ def secret(env: Environment, name: str) -> SecretStr | None:
     return SecretStr(value) if value else None
 
 
+def required_secret(env: Environment, name: str) -> SecretStr:
+    """`name` as a secret, which must be set and not empty."""
+    value = secret(env, name)
+    if value is None:
+        raise SettingsError(name, "is required")
+    return value
+
+
 def path(env: Environment, name: str, default: str) -> Path:
     return Path(env.get(name, default))
 

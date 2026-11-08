@@ -323,7 +323,7 @@ fresh stack:
 | 8 | No credential | A commit with no credential gets `403 not_eligible`. An invalid token gets `401`, never "no credential". A failing credential is refused at the boundary even with a body that isn't JSON. |
 | 9 | Buyer refuses an unverifiable answer | With the seller's test-only fault toggle, the buyer refuses an unsigned answer, an unbound one, one bound to another request, and one whose `Content-Digest` doesn't match its body, on a read and on a commit, by signature and by bearer token (a bearer request has no signature to bind to, so only the unsigned and the wrong-digest answers apply). On a commit, the seller accepted on the first attempt; each re-sent `Commit` keeps its `idempotency_key`, the seller answers from its stored result and writes no second entry, and the buyer agrees once the answer verifies. |
 | 10 | Key rotation | The standard order. The buyer publishes a new key and keeps signing with the old one, which the seller accepts. Once no verifier can still hold a copy without the new key, it switches; the seller fetches the directory again and accepts the new key. Once the old key's signatures have expired the buyer removes it, and after the seller's next refresh a request signed with it gets `403 key-not-found`. The stack waits 20 s. Production waits 600 s: the directory's `Cache-Control: max-age=300` plus the verifier's `max_cache_age` of 300 s. |
-| 11 | Operator controls | The front never routes an agent's own controls (`/operator/`, cfbot's `/run/`), and each agent refuses a call without its `OPERATOR_KEY`. The seller issues a fresh proposal on an operator call, which the live runner uses. |
+| 11 | Operator controls | The front never routes an agent's own controls (`/operator/`, cfbot's `/run/`), and each agent refuses a call without its own `OPERATOR_KEY`, another party's included. The seller issues a fresh proposal on an operator call, which the live runner uses. |
 
 ## Run it locally
 
@@ -344,8 +344,8 @@ make e2e
 ```
 
 The script writes a throwaway CA, a leaf for `*.wba-demo.noetis.dev` and
-`wba-demo.noetis.dev`, a random bearer token, and a random operator key to
-`e2e/generated/`, which is gitignored.
+`wba-demo.noetis.dev`, a random bearer token, and a random operator key for
+each agent to `e2e/generated/`, which is gitignored.
 
 To drive the stack by hand, start it and call the buyer's operator trigger from
 inside the network:
@@ -355,11 +355,12 @@ cd e2e
 uv run --project .. python gen_demo_tls.py
 python3 ../deploy/local_caddy.py ../deploy/Caddyfile.snippet generated/Caddyfile
 mkdir -p generated/logs
-docker compose up --detach --wait seller buyer cfbot front
-docker compose run --rm scenarios python -c "import os, httpx; print(httpx.post(
-    'http://buyer:8000/operator/commit', headers={'X-Operator-Key': os.environ['OPERATOR_KEY']},
+compose=(docker compose --env-file generated/demo.env)
+"${compose[@]}" up --detach --wait seller buyer cfbot front
+"${compose[@]}" run --rm scenarios python -c "import os, httpx; print(httpx.post(
+    'http://buyer:8000/operator/commit', headers={'X-Operator-Key': os.environ['BUYER_OPERATOR_KEY']},
     json={'proposal_id': 'demo-wba-1', 'line_item_ids': ['business-daily-display']}).text)"
-docker compose --profile test down --volumes
+"${compose[@]}" --profile test down --volumes
 ```
 
 To rehearse the live deployment on your machine, run `make live-local`. It

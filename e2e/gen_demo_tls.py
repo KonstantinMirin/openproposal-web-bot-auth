@@ -8,8 +8,10 @@
 - `bundle.pem`: the public roots (certifi) followed by the demo CA. Every
   container points `SSL_CERT_FILE` at it, because that variable replaces the
   default trust file instead of adding to it.
-- `demo.env`: the bearer token the seller issues the bearer buyer, and the
-  operator key every agent's own controls require, both random per run.
+- `demo.env`: the bearer token the seller issues the bearer buyer, and each
+  agent's own operator key (`SELLER_OPERATOR_KEY`, `BUYER_OPERATOR_KEY`,
+  `CFBOT_OPERATOR_KEY`), all random per run. e2e/run-e2e.sh hands the file to
+  Compose, which gives each service only the values it names.
 
 Nothing here is a real secret, and e2e/generated/ is gitignored.
 """
@@ -95,9 +97,8 @@ def main() -> None:
         leaf_key.private_bytes(pem, serialization.PrivateFormat.PKCS8, serialization.NoEncryption())
     )
     (OUT / "bundle.pem").write_bytes(Path(certifi.where()).read_bytes() + b"\n" + ca_pem)
-    (OUT / "demo.env").write_text(
-        f"DEMO_BEARER_TOKEN={secrets.token_urlsafe(32)}\nOPERATOR_KEY={secrets.token_urlsafe(32)}\n"
-    )
+    names = ("DEMO_BEARER_TOKEN", "SELLER_OPERATOR_KEY", "BUYER_OPERATOR_KEY", "CFBOT_OPERATOR_KEY")
+    (OUT / "demo.env").write_text("".join(f"{n}={secrets.token_urlsafe(32)}\n" for n in names))
     print(f"wrote {OUT}")
 
 

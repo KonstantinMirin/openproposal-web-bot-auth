@@ -36,7 +36,7 @@ from persistence.values import Origin
 from protocol.record import compose, digest_input, items_by_id
 from protocol.values import JsonObject
 from tests._tools import load_yaml
-from tests.stack import BUYER, CFBOT, OPERATOR, RESELLER, SELLER, Lines, Origins, Stack, lines
+from tests.stack import BUYER, BUYER_OPERATOR, CFBOT, RESELLER, SELLER, Lines, Origins, Stack, lines
 
 DISPLAY = "business-daily-display"
 CTV = "weather-app-ctv"
@@ -231,7 +231,7 @@ def test_a_trigger_for_another_seller_is_refused_unsent(stack: Stack) -> None:
         ("/operator/read", read),
         ("/operator/commit", read | {"line_item_ids": [DISPLAY]}),
     ):
-        outcome = stack.buyer.post(route, json=trigger, headers=OPERATOR).json()
+        outcome = stack.buyer.post(route, json=trigger, headers=BUYER_OPERATOR).json()
         assert (outcome["state"], outcome["reason"]) == ("refused", "unknown-seller")
         assert outcome["seller"] is None
     assert stack.requests == []
@@ -252,7 +252,7 @@ def test_a_trigger_for_another_seller_is_refused_unsent(stack: Stack) -> None:
 def test_a_trigger_that_names_no_origin_is_invalid(stack: Stack, seller: str, route: str) -> None:
     """A seller is named by its origin, `https://<host>`, and nothing else."""
     trigger = {"seller": seller, "proposal_id": "demo-wba-1", "line_item_ids": [DISPLAY]}
-    response = stack.buyer.post(route, json=trigger, headers=OPERATOR)
+    response = stack.buyer.post(route, json=trigger, headers=BUYER_OPERATOR)
     assert response.status_code == 422, response.text
     assert stack.requests == []
 
@@ -274,7 +274,7 @@ def test_a_commit_to_a_proposal_the_seller_wont_show_is_refused(stack: Stack) ->
 
 def test_a_commit_trigger_names_at_least_one_line_item(stack: Stack) -> None:
     trigger = {"proposal_id": "demo-wba-1", "line_item_ids": []}
-    response = stack.buyer.post("/operator/commit", json=trigger, headers=OPERATOR)
+    response = stack.buyer.post("/operator/commit", json=trigger, headers=BUYER_OPERATOR)
     assert response.status_code == 422
     assert stack.requests == []
 
@@ -575,7 +575,7 @@ def test_an_answer_to_a_bearer_request_needs_no_binding(tmp_path: Path, mode: st
 
 
 def test_the_buyer_signs_for_cfbot_at_its_configured_origin(stack: Stack) -> None:
-    check = stack.buyer.post("/operator/cloudflare-check", headers=OPERATOR).json()
+    check = stack.buyer.post("/operator/cloudflare-check", headers=BUYER_OPERATOR).json()
     assert check["status"] == 200
     assert check["verdict"]["ok"] is True and check["verdict"]["identity"] == BUYER
     (sent,) = stack.requests
@@ -585,5 +585,5 @@ def test_the_buyer_signs_for_cfbot_at_its_configured_origin(stack: Stack) -> Non
 
 def test_an_unreadable_cfbot_verdict_is_reported_as_text(stack: Stack) -> None:
     stack.cfbot = lambda _: httpx.Response(502, content=b"bad gateway")
-    check = stack.buyer.post("/operator/cloudflare-check", headers=OPERATOR).json()
+    check = stack.buyer.post("/operator/cloudflare-check", headers=BUYER_OPERATOR).json()
     assert check == {"status": 502, "verdict": "bad gateway"}

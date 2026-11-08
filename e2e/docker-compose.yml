@@ -1,6 +1,7 @@
 # The demo stack. Run it with ./e2e/run-e2e.sh (or `make e2e`), which first
 # writes e2e/generated/: the throwaway TLS material and secrets
-# (gen_demo_tls.py), and the front's Caddyfile (deploy/local_caddy.py).
+# (gen_demo_tls.py), and the front's Caddyfile (deploy/local_caddy.py). It runs
+# Compose with `--env-file generated/demo.env`, the secrets each service names.
 #
 # The services are deploy/compose.base.yml's; this file adds what the test
 # needs: the demo CA in every trust store, the short timings, the test-only
@@ -26,7 +27,6 @@ x-rotation: &rotation
 
 x-test: &test
   image: wba-demo-python:local
-  env_file: generated/demo.env
   healthcheck: { interval: 2s }
 
 services:
@@ -54,7 +54,6 @@ services:
   cfbot:
     extends: { file: ../deploy/compose.base.yml, service: cfbot }
     image: wba-demo-cfbot:local
-    env_file: generated/demo.env
     environment:
       NODE_EXTRA_CA_CERTS: /certs/ca.pem
     volumes:
@@ -96,6 +95,11 @@ services:
       PEER_SELLER_ORIGIN: https://seller.wba-demo.noetis.dev
       PEER_BUYER_ORIGIN: https://buyer.wba-demo.noetis.dev
       PEER_CFBOT_ORIGIN: https://cfbot.wba-demo.noetis.dev
+      # Each agent's own operator key, to reach its controls, and the bearer token.
+      SELLER_OPERATOR_KEY: ${SELLER_OPERATOR_KEY:?}
+      BUYER_OPERATOR_KEY: ${BUYER_OPERATOR_KEY:?}
+      CFBOT_OPERATOR_KEY: ${CFBOT_OPERATOR_KEY:?}
+      DEMO_BEARER_TOKEN: ${DEMO_BEARER_TOKEN:?}
     volumes:
       - ./generated/bundle.pem:/certs/bundle.pem:ro
       # Read-only: the scenarios inspect what each party stored, and sign with

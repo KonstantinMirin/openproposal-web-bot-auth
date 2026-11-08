@@ -15,6 +15,14 @@ from shared.settings import SettingsError
 
 Reader = Callable[[Mapping[str, str]], object]
 
+#: The runner's required secrets, so a test of another variable reaches that variable.
+RUNNER_KEYS = {"SELLER_OPERATOR_KEY": "seller-secret-value", "BUYER_OPERATOR_KEY": "buyer-key"}
+
+
+def runner(env: Mapping[str, str]) -> RunnerSettings:
+    return RunnerSettings.from_env({**RUNNER_KEYS, **env})
+
+
 #: Every origin variable, with the settings reader that parses it.
 ORIGINS: list[tuple[str, Reader]] = [
     ("SELF_ORIGIN", SellerSettings.from_env),
@@ -22,9 +30,9 @@ ORIGINS: list[tuple[str, Reader]] = [
     ("SELF_ORIGIN", BuyerSettings.from_env),
     ("PEER_SELLER_ORIGIN", BuyerSettings.from_env),
     ("PEER_CFBOT_ORIGIN", BuyerSettings.from_env),
-    ("PEER_SELLER_ORIGIN", RunnerSettings.from_env),
-    ("PEER_BUYER_ORIGIN", RunnerSettings.from_env),
-    ("PEER_CFBOT_ORIGIN", RunnerSettings.from_env),
+    ("PEER_SELLER_ORIGIN", runner),
+    ("PEER_BUYER_ORIGIN", runner),
+    ("PEER_CFBOT_ORIGIN", runner),
 ]
 
 NOT_ORIGINS = [
@@ -122,12 +130,12 @@ def test_the_buyer_defaults_to_the_production_rotation() -> None:
 
 
 def test_the_runner_keeps_its_secrets_out_of_its_repr() -> None:
-    settings = RunnerSettings.from_env(
-        {"OPERATOR_KEY": "operator-secret-value", "DEMO_BEARER_TOKEN": "short", "RUN_INTERVAL": "0"}
-    )
-    assert settings.secrets == ("operator-secret-value",)  # too short to search for: skipped
+    settings = runner({"DEMO_BEARER_TOKEN": "short", "RUN_INTERVAL": "0"})
+    assert settings.secrets == ("seller-secret-value", "buyer-key")  # too short: skipped
     assert settings.interval == 0
-    assert "operator-secret-value" not in repr(settings)
+    assert "seller-secret-value" not in repr(settings)
+    assert settings.seller_operator_key.get_secret_value() == "seller-secret-value"
+    assert settings.buyer_operator_key.get_secret_value() == "buyer-key"
     assert str(settings.seller) == "https://seller.wba-demo.noetis.dev"
 
 
@@ -159,7 +167,9 @@ def test_a_buyer_origin_without_a_scheme_stops_the_seller_at_its_settings() -> N
         ("WBA_ROTATION_WAIT", "-1", BuyerSettings.from_env),
         ("WBA_ROTATION_WAIT", "nan", BuyerSettings.from_env),
         ("WBA_ROTATION_WAIT", "later", BuyerSettings.from_env),
-        ("RUN_INTERVAL", "hourly", RunnerSettings.from_env),
+        ("RUN_INTERVAL", "hourly", runner),
+        ("SELLER_OPERATOR_KEY", "", runner),
+        ("BUYER_OPERATOR_KEY", "", runner),
     ],
 )
 def test_a_bad_number_fails_naming_the_variable(name: str, value: str, read: Reader) -> None:

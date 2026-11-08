@@ -22,7 +22,7 @@ from pydantic import SecretStr
 
 from buyer.app import create_app
 from shared.keyring import KeyStore, NoKeysError, RotationError
-from tests.stack import OPERATOR, buyer_settings
+from tests.stack import BUYER_OPERATOR, buyer_settings
 
 #: The rotation wait and the signature lifetime the tests run with.
 WAIT, LIFETIME = 20.0, 10
@@ -43,14 +43,14 @@ class Buyer:
     keys_dir: Path
 
     def keys(self) -> dict[str, object]:
-        response = self.client.get("/operator/keys", headers=OPERATOR)
+        response = self.client.get("/operator/keys", headers=BUYER_OPERATOR)
         assert response.status_code == 200, response.text
         state: dict[str, object] = response.json()
         return state
 
     def call(self, method: str, path: str) -> int:
         response: httpx.Response = self.client.request(
-            method, f"/operator/keys{path}", headers=OPERATOR
+            method, f"/operator/keys{path}", headers=BUYER_OPERATOR
         )
         return response.status_code
 
@@ -74,7 +74,7 @@ def buyer(tmp_path: Path) -> Iterator[Buyer]:
 
 def test_rotation_follows_the_order_and_its_waits(buyer: Buyer) -> None:
     old = buyer.keys()["active"]
-    published = buyer.client.post("/operator/keys", headers=OPERATOR).json()
+    published = buyer.client.post("/operator/keys", headers=BUYER_OPERATOR).json()
     new = published["published_kid"]
     assert published["active"] == old  # the old key keeps signing
     assert set(buyer.directory()) == {old, new}
@@ -92,7 +92,7 @@ def test_rotation_follows_the_order_and_its_waits(buyer: Buyer) -> None:
 
 
 def test_a_rotation_step_out_of_order_is_a_control_error(buyer: Buyer) -> None:
-    response = buyer.client.post("/operator/keys/no-such-kid/activate", headers=OPERATOR)
+    response = buyer.client.post("/operator/keys/no-such-kid/activate", headers=BUYER_OPERATOR)
     assert response.status_code == 409
     assert response.json()["error"] == "rotation"
     assert buyer.client.get("/operator/keys").status_code == 403  # no operator key
@@ -103,9 +103,9 @@ def test_publish_retire_publish_keeps_every_key(tmp_path: Path) -> None:
     with _buyer(tmp_path, clock, wait=0, lifetime=0) as client:
         buyer = Buyer(client, clock, tmp_path / "keys")
         original = buyer.keys()["active"]
-        first = client.post("/operator/keys", headers=OPERATOR).json()["published_kid"]
+        first = client.post("/operator/keys", headers=BUYER_OPERATOR).json()["published_kid"]
         assert buyer.call("DELETE", f"/{first}") == 200  # never signed, so it can go at once
-        second = client.post("/operator/keys", headers=OPERATOR).json()["published_kid"]
+        second = client.post("/operator/keys", headers=BUYER_OPERATOR).json()["published_kid"]
         assert second != first
         assert buyer.call("POST", f"/{second}/activate") == 200
         assert buyer.call("POST", f"/{original}/activate") == 200
@@ -118,7 +118,7 @@ def test_publish_retire_publish_keeps_every_key(tmp_path: Path) -> None:
 def test_a_restart_keeps_the_keys_and_the_rotation_state(tmp_path: Path) -> None:
     clock = Clock()
     with _buyer(tmp_path, clock) as client:
-        published = client.post("/operator/keys", headers=OPERATOR).json()
+        published = client.post("/operator/keys", headers=BUYER_OPERATOR).json()
     clock.now += WAIT + 1
     with _buyer(tmp_path, clock) as client:
         after = Buyer(client, clock, tmp_path / "keys")
@@ -132,7 +132,7 @@ def test_the_scenarios_read_any_key_by_kid_published_or_retired(tmp_path: Path) 
     with _buyer(tmp_path, clock, wait=0, lifetime=0) as client:
         buyer = Buyer(client, clock, tmp_path / "keys")
         old = buyer.keys()["active"]
-        new = client.post("/operator/keys", headers=OPERATOR).json()["published_kid"]
+        new = client.post("/operator/keys", headers=BUYER_OPERATOR).json()["published_kid"]
         assert buyer.call("POST", f"/{new}/activate") == 200
         assert buyer.call("DELETE", f"/{old}") == 200
     assert isinstance(old, str) and isinstance(new, str)
@@ -164,7 +164,7 @@ def test_a_deleted_active_key_is_refused_never_minted_again(tmp_path: Path) -> N
     clock = Clock()
     with _buyer(tmp_path, clock, wait=0, lifetime=0) as client:
         active = Buyer(client, clock, tmp_path / "keys").keys()["active"]
-        assert client.post("/operator/keys", headers=OPERATOR).status_code == 200
+        assert client.post("/operator/keys", headers=BUYER_OPERATOR).status_code == 200
     (tmp_path / "keys" / f"{active}.jwk").unlink()
     with pytest.raises(RotationError):
         KeyStore.open(tmp_path / "keys").active()
@@ -174,4 +174,4 @@ def test_a_deleted_active_key_is_refused_never_minted_again(tmp_path: Path) -> N
 def test_the_operator_key_comes_from_the_settings(tmp_path: Path) -> None:
     other = replace(buyer_settings(tmp_path), operator_key=SecretStr("another-key"))
     with TestClient(create_app(other)) as client:
-        assert client.get("/operator/keys", headers=OPERATOR).status_code == 403
+        assert client.get("/operator/keys", headers=BUYER_OPERATOR).status_code == 403

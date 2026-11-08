@@ -20,10 +20,11 @@ from pathlib import Path
 import httpx
 import pytest
 from iab_agentic_primitives.web_bot_auth import Ed25519Key, HTTPRequest, RequestSigner
-from settings import BUYER, CFBOT, OPERATOR_KEY, SELLER
+from settings import BUYER, CFBOT, OPERATOR_KEYS, SELLER
 
 from persistence.observe import BuyerRecords, SellerRecords
 from shared.keyring import KeyStore
+from transport.control import OPERATOR_HEADER
 
 __all__ = ["BUYER", "CFBOT", "SELLER"]  # the stack's addresses, re-exported for the scenarios
 # Operator and test controls, reached inside the network, not through the TLS front.
@@ -78,9 +79,10 @@ def commit_body(amount: float) -> bytes:
 
 
 def _operator_key(request: httpx.Request) -> None:
-    """Adds the operator key to the agents' controls, which the runner reaches over plain http."""
+    """Adds each agent's own operator key to a call to its controls, which the scenarios reach
+    inside the network over plain http."""
     if request.url.scheme == "http":
-        request.headers["X-Operator-Key"] = OPERATOR_KEY
+        request.headers[OPERATOR_HEADER] = OPERATOR_KEYS[request.url.host]
 
 
 @pytest.fixture

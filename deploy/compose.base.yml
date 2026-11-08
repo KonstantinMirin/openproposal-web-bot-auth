@@ -6,6 +6,10 @@
 # Each agent keeps its signing keys (/keys) and its database (/data) on
 # separate volumes, so that an observer can mount a party's database without
 # its keys. The overlays declare the volumes and the `agents` network.
+#
+# The secrets come from the file Compose reads with `--env-file` (deploy/make-env.sh
+# writes it live, e2e/gen_demo_tls.py for the e2e stack). Each agent gets its own
+# operator key as OPERATOR_KEY, and no other party's.
 
 x-python: &python
   image: wba-demo-python
@@ -28,6 +32,8 @@ services:
     environment:
       SELF_ORIGIN: https://seller.wba-demo.noetis.dev
       PEER_BUYER_ORIGIN: https://buyer.wba-demo.noetis.dev
+      OPERATOR_KEY: ${SELLER_OPERATOR_KEY:?set in the secrets file}
+      DEMO_BEARER_TOKEN: ${DEMO_BEARER_TOKEN:?set in the secrets file}
     volumes:
       - seller-keys:/keys
       - seller-db:/data
@@ -39,6 +45,8 @@ services:
       SELF_ORIGIN: https://buyer.wba-demo.noetis.dev
       PEER_SELLER_ORIGIN: https://seller.wba-demo.noetis.dev
       PEER_CFBOT_ORIGIN: https://cfbot.wba-demo.noetis.dev
+      OPERATOR_KEY: ${BUYER_OPERATOR_KEY:?set in the secrets file}
+      DEMO_BEARER_TOKEN: ${DEMO_BEARER_TOKEN:?set in the secrets file}
     volumes:
       - buyer-keys:/keys
       - buyer-db:/data
@@ -49,6 +57,7 @@ services:
     environment:
       SELF_ORIGIN: https://cfbot.wba-demo.noetis.dev
       PEER_SELLER_ORIGIN: https://seller.wba-demo.noetis.dev
+      OPERATOR_KEY: ${CFBOT_OPERATOR_KEY:?set in the secrets file}
     volumes:
       - cfbot-data:/data
     networks: [agents]

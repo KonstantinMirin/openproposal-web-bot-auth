@@ -19,8 +19,8 @@ mkdir -p "$gen/run" "$gen/logs"
 # The production snippet, pointed at the containers and given the throwaway certificate.
 python3 "$repo/deploy/local_caddy.py" "$repo/deploy/Caddyfile.snippet" "$gen/Caddyfile"
 
-export WBA_ENV_FILE="$gen/wba-demo.env" WBA_RUN_DIR="$gen/run"
-compose=(docker compose -f "$repo/deploy/docker-compose.prod.yml"
+export WBA_RUN_DIR="$gen/run"
+compose=(docker compose --env-file "$gen/wba-demo.env" -f "$repo/deploy/docker-compose.prod.yml"
          -f "$repo/deploy/localhost/docker-compose.localhost.yml" -p wba-demo-rehearsal)
 if [[ -z "${KEEP:-}" ]]; then
     trap '"${compose[@]}" down --volumes --remove-orphans >/dev/null 2>&1' EXIT

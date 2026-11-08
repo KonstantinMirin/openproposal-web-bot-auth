@@ -3,7 +3,8 @@
 The controls are the party's own, never another agent's, so they sit outside
 the identity boundary. No front routes them (the Caddy snippet in deploy/, which
 the e2e front serves too), and each call also carries `X-Operator-Key`, which must equal the
-`OPERATOR_KEY` the agent's settings hold. An agent without `OPERATOR_KEY`
+`OPERATOR_KEY` the agent's settings hold. Each party has a key of its own, so one
+party's key opens no other party's controls. An agent without `OPERATOR_KEY`
 refuses every operator call.
 
 A control route that fails raises `ControlError`, which `render_control`

@@ -52,8 +52,9 @@ live-local:
 	./deploy/localhost/run.sh
 
 # Validate the production compose file, and keep the test-only fault switch
-# (seller/faults.py) out of it.
+# (seller/faults.py) out of it. The secrets are stand-ins: Compose requires each one.
+LIVE_CONFIG := SELLER_OPERATOR_KEY=- BUYER_OPERATOR_KEY=- CFBOT_OPERATOR_KEY=- \
+	DEMO_BEARER_TOKEN=- docker compose --env-file /dev/null -f deploy/docker-compose.prod.yml config
 live-config:
-	WBA_ENV_FILE=/dev/null docker compose -f deploy/docker-compose.prod.yml config --quiet
-	WBA_ENV_FILE=/dev/null docker compose -f deploy/docker-compose.prod.yml config \
-		| { ! grep -q DEMO_FAULT_INJECTION; }
+	$(LIVE_CONFIG) --quiet
+	$(LIVE_CONFIG) | { ! grep -q DEMO_FAULT_INJECTION; }

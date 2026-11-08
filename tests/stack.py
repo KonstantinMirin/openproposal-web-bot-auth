@@ -58,6 +58,7 @@ from persistence.values import Origin
 from seller.app import create_app as create_seller
 from seller.settings import SellerSettings
 from shared.keyring import KeyStore
+from transport.control import OPERATOR_HEADER
 from transport.wba import directory_resolver, http_client, tls_context
 
 SELLER = "https://seller.wba-demo.noetis.dev"
@@ -65,7 +66,9 @@ BUYER = "https://buyer.wba-demo.noetis.dev"
 CFBOT = "https://cfbot.wba-demo.noetis.dev"
 #: A third party with its own key and directory, and no seller of the buyer's.
 RESELLER = "https://reseller.wba-demo.noetis.dev"
-OPERATOR = {"X-Operator-Key": "operator-key-for-tests"}
+#: Each agent's own operator key, distinct per party, as the header its controls require.
+SELLER_OPERATOR = {OPERATOR_HEADER: "seller-operator-key-for-tests"}
+BUYER_OPERATOR = {OPERATOR_HEADER: "buyer-operator-key-for-tests"}
 TOKEN = "bearer-token-for-tests"  # noqa: S105 -- a test value, not a deployed secret
 
 
@@ -92,7 +95,7 @@ def seller_settings(
         self_origin=origins.seller,
         peer_buyer_origin=origins.buyer,
         data_dir=data_dir,
-        operator_key=SecretStr(OPERATOR["X-Operator-Key"]),
+        operator_key=SecretStr(SELLER_OPERATOR[OPERATOR_HEADER]),
         bearer_token=SecretStr(TOKEN),
         faults=faults,
     )
@@ -104,7 +107,7 @@ def buyer_settings(data_dir: Path, *, origins: Origins = DEMO, token: bool = Tru
         peer_seller_origin=origins.seller,
         peer_cfbot_origin=Origin.parse(CFBOT),
         data_dir=data_dir,
-        operator_key=SecretStr(OPERATOR["X-Operator-Key"]),
+        operator_key=SecretStr(BUYER_OPERATOR[OPERATOR_HEADER]),
         bearer_token=SecretStr(TOKEN) if token else None,
     )
 
@@ -318,13 +321,15 @@ class Stack:
             "credential": credential,
         }
         response: httpx.Response = self.buyer.post(
-            "/operator/commit", json=trigger, headers=OPERATOR
+            "/operator/commit", json=trigger, headers=BUYER_OPERATOR
         )
         return response
 
     def read(self, proposal_id: str, credential: str = "web_bot_auth") -> httpx.Response:
         trigger = {"proposal_id": proposal_id, "credential": credential}
-        response: httpx.Response = self.buyer.post("/operator/read", json=trigger, headers=OPERATOR)
+        response: httpx.Response = self.buyer.post(
+            "/operator/read", json=trigger, headers=BUYER_OPERATOR
+        )
         return response
 
     # What each party kept
