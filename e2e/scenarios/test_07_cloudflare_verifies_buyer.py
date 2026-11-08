@@ -5,18 +5,21 @@ directory, checks its signatures with http-message-sig, and verifies the
 request with web-bot-auth's verify().
 """
 
-import httpx
-from conftest import BUYER, BUYER_OPERATOR, buyer_key
+from conftest import BUYER, buyer_key
+
+from transport.client import ControlClient
+from transport.control import CLOUDFLARE_CHECK, CfbotAccepted, DirectorySignature
 
 
-def test_cloudflare_accepts_the_buyers_signature(web: httpx.Client) -> None:
-    check = web.post(f"{BUYER_OPERATOR}/cloudflare-check").json()
-    assert check["status"] == 200, check
-    verdict = check["verdict"]
-    assert verdict["ok"] is True
-    assert verdict["verifier"] == "web-bot-auth@0.2.0 verify()"
-    assert verdict["identity"] == BUYER
-    assert verdict["keyid"] == buyer_key().thumbprint
-    assert verdict["content_digest_matches"] is True
+def test_cloudflare_accepts_the_buyers_signature(buyer_control: ControlClient) -> None:
+    check = buyer_control.call(CLOUDFLARE_CHECK, None)
+    assert check.status == 200, check
+    verdict = check.verdict
+    assert isinstance(verdict, CfbotAccepted), verdict
+    assert verdict.verifier == "web-bot-auth@0.2.0 verify()"
+    assert verdict.identity == BUYER
+    assert verdict.keyid == buyer_key().thumbprint
+    assert verdict.content_digest_matches is True
     # cfbot verified the directory's own signature by that key before using the key.
-    assert {"label": "key1", "keyid": buyer_key().thumbprint} in verdict["directory_signatures"]
+    signed_by = DirectorySignature(label="key1", keyid=buyer_key().thumbprint)
+    assert signed_by in verdict.directory_signatures

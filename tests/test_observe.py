@@ -23,18 +23,17 @@ from iab_agentic_primitives.web_bot_auth import (
 from persistence.evidence import NoEvidenceError
 from persistence.observe import BuyerRecords, KeptOriginCredential, SellerRecords
 from persistence.values import Origin
-from tests.stack import BUYER, SELLER, Stack
+from tests.stack import BUYER, SELLER, Stack, as_state
+from transport.control import Agreed
 from transport.reverify import reverify_request, reverify_response
 
 DISPLAY = "business-daily-display"
 
 
 @pytest.fixture
-def agreed(tmp_path: Path) -> Iterator[tuple[Stack, dict[str, object]]]:
+def agreed(tmp_path: Path) -> Iterator[tuple[Stack, Agreed]]:
     with Stack(tmp_path / "agents") as stack:
-        outcome = stack.commit("demo-wba-1", [DISPLAY]).json()
-        assert outcome["state"] == "agreed", outcome
-        yield stack, outcome
+        yield stack, as_state(Agreed, stack.commit("demo-wba-1", [DISPLAY]))
 
 
 def _tampered(path: Path, copy: Path, statement: str) -> Path:
@@ -49,7 +48,7 @@ def _tampered(path: Path, copy: Path, statement: str) -> Path:
 
 
 def test_the_seller_records_read_the_commit_as_the_boundary_resolved_it(
-    agreed: tuple[Stack, dict[str, object]],
+    agreed: tuple[Stack, Agreed],
 ) -> None:
     stack, _ = agreed
     with stack.seller_records() as seller:
@@ -66,7 +65,7 @@ def test_the_seller_records_read_the_commit_as_the_boundary_resolved_it(
 def test_one_directory_fetch_verified_twice_is_kept_once(tmp_path: Path) -> None:
     with Stack(tmp_path / "agents") as stack:
         for proposal_id in ("demo-wba-1", "demo-wba-2"):
-            assert stack.commit(proposal_id, [DISPLAY]).json()["state"] == "agreed"
+            as_state(Agreed, stack.commit(proposal_id, [DISPLAY]))
         served = stack.buyer.get(DIRECTORY_PATH).content
     with stack.seller_records() as seller:
         # Two signatures, one cached fetch: one row, with the exact body bytes verified.
@@ -81,7 +80,7 @@ def test_one_directory_fetch_verified_twice_is_kept_once(tmp_path: Path) -> None
 
 
 def test_both_parties_kept_evidence_verifies_again_offline(
-    agreed: tuple[Stack, dict[str, object]],
+    agreed: tuple[Stack, Agreed],
 ) -> None:
     stack, outcome = agreed
     with stack.seller_records() as seller:
@@ -94,12 +93,8 @@ def test_both_parties_kept_evidence_verifies_again_offline(
     assert again.keyid == stack.buyer_keys.active().thumbprint
 
     with stack.buyer_records() as buyer:
-        evidence_id = outcome["evidence_id"]
-        assert isinstance(evidence_id, int)
-        answered = asyncio.run(reverify_response(buyer.response(evidence_id)))
-        commit_id = outcome["commit_id"]
-        assert isinstance(commit_id, int)
-        commit = buyer.commit(commit_id)
+        answered = asyncio.run(reverify_response(buyer.response(outcome.evidence_id)))
+        commit = buyer.commit(outcome.commit_id)
         # The scenarios find a commit by its proposal and line items, in any order.
         assert buyer.commits("demo-wba-1", [DISPLAY]) == [commit]
         assert buyer.commits("demo-wba-1", ["weather-app-ctv"]) == []
@@ -117,7 +112,7 @@ def test_both_parties_kept_evidence_verifies_again_offline(
     ids=["body", "url"],
 )
 def test_a_tampered_kept_request_fails_to_verify_again(
-    agreed: tuple[Stack, dict[str, object]], tmp_path: Path, statement: str
+    agreed: tuple[Stack, Agreed], tmp_path: Path, statement: str
 ) -> None:
     stack, _ = agreed
     copy = _tampered(stack.seller_dir / "seller.db", tmp_path / "copy.db", statement)
@@ -130,19 +125,16 @@ def test_a_tampered_kept_request_fails_to_verify_again(
 
 
 def test_a_tampered_kept_answer_fails_to_verify_again(
-    agreed: tuple[Stack, dict[str, object]], tmp_path: Path
+    agreed: tuple[Stack, Agreed], tmp_path: Path
 ) -> None:
     stack, outcome = agreed
     statement = "UPDATE signed_responses SET status = 201"
     copy = _tampered(stack.buyer_dir / "buyer.db", tmp_path / "copy.db", statement)
-    with BuyerRecords.open(copy) as buyer:
-        evidence_id = outcome["evidence_id"]
-        assert isinstance(evidence_id, int)
-        with pytest.raises(WebBotAuthError):
-            asyncio.run(reverify_response(buyer.response(evidence_id)))
+    with BuyerRecords.open(copy) as buyer, pytest.raises(WebBotAuthError):
+        asyncio.run(reverify_response(buyer.response(outcome.evidence_id)))
 
 
-def test_an_unknown_id_is_no_evidence(agreed: tuple[Stack, dict[str, object]]) -> None:
+def test_an_unknown_id_is_no_evidence(agreed: tuple[Stack, Agreed]) -> None:
     stack, _ = agreed
     with stack.buyer_records() as buyer:
         with pytest.raises(NoEvidenceError):

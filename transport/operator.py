@@ -8,6 +8,10 @@ the e2e front serves too), and each call also carries `X-Operator-Key`, which mu
 party's key opens no other party's controls. An agent without `OPERATOR_KEY`
 refuses every operator call.
 
+An agent registers each control route from its `ControlOp` (transport/control.py)
+with `control_route`, so the route serves the operation's method and path, and
+mypy holds its answer to the operation's answer model.
+
 `install_control_handlers` makes an agent's HTTP seam total: a control route
 that fails raises `ControlError`; a body or parameter FastAPI refuses, a path
 or method the agent doesn't serve, and any exception nothing else handles are
@@ -18,27 +22,47 @@ carries no traceback: the exception goes to the server's log.
 from __future__ import annotations
 
 import hmac
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from http import HTTPStatus
-from typing import Annotated
+from typing import Annotated, Protocol
 
-from fastapi import FastAPI, Header
+from fastapi import APIRouter, FastAPI, Header
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from pydantic import SecretStr
+from pydantic import BaseModel, SecretStr
 from starlette.exceptions import HTTPException
 
 from protocol.values import validation_detail
 
-from .control import OPERATOR_HEADER, ControlCode, ErrorBody
+from .control import OPERATOR_HEADER, ControlCode, ControlOp, ErrorBody
 from .handlers import on_error
 
 __all__ = [
     "ControlError",
+    "control_route",
     "OperatorKey",
     "error_response",
     "install_control_handlers",
 ]
+
+
+class _Register[A](Protocol):
+    """Registers an endpoint that answers `A`, and returns it unchanged."""
+
+    def __call__[**P](
+        self, endpoint: Callable[P, Awaitable[A]], /
+    ) -> Callable[P, Awaitable[A]]: ...
+
+
+def control_route[B: BaseModel | None, A](router: APIRouter, op: ControlOp[B, A]) -> _Register[A]:
+    """Registers the decorated endpoint on `router` as `op`: its method, at its path. The
+    endpoint answers `op`'s answer model, which mypy holds it to."""
+
+    def register[**P](endpoint: Callable[P, Awaitable[A]]) -> Callable[P, Awaitable[A]]:
+        router.add_api_route(op.path, endpoint, methods=[op.method])
+        return endpoint
+
+    return register
 
 
 class ControlError(Exception):

@@ -2,6 +2,9 @@
 
 import httpx
 from conftest import SELLER, signed
+from openproposal import Proposal
+
+from transport.control import ErrorBody
 
 
 def test_replayed_request_is_refused(web: httpx.Client) -> None:
@@ -10,8 +13,8 @@ def test_replayed_request_is_refused(web: httpx.Client) -> None:
 
     first = web.get(url, headers=headers)
     assert first.status_code == 200
-    assert first.json()["proposal_id"] == "demo-wba-1"
+    assert Proposal.model_validate_json(first.content).proposal_id == "demo-wba-1"
 
     again = web.get(url, headers=headers)
     assert again.status_code == 429
-    assert again.json()["error"] == "nonce-replayed"
+    assert ErrorBody.model_validate_json(again.content).code == "nonce-replayed"

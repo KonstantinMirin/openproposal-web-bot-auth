@@ -37,11 +37,12 @@ from iab_agentic_primitives.web_bot_auth.asgi import DirectoryMiddleware, Respon
 from starlette.types import ASGIApp
 
 from protocol.documents import loads_yaml
-from transport.control import Health, Issued, IssueRequest
+from transport.control import HEALTH, ISSUE, Health, Issued, IssueRequest
 from transport.lifespan import lifespan, resolver_or_default
-from transport.operator import ControlError, OperatorKey
+from transport.operator import ControlError, OperatorKey, control_route
 
 from .boundary import IdentityBoundary
+from .caller import WhoAmI
 from .errors import Rejected, UnknownPrincipal
 from .faults import FaultInjection
 from .http import CallerDep, ProvenanceDep, RawBodyDep, answer, install_handlers
@@ -78,21 +79,21 @@ async def post_commit(
 
 
 @api.get("/whoami")
-async def whoami(caller: CallerDep) -> JSONResponse:
-    """What the identity boundary resolved for this request."""
-    return JSONResponse(caller.model_dump(mode="json"))
+async def whoami(caller: CallerDep) -> WhoAmI:
+    """What the identity boundary resolved for this request, as `WhoAmI` shows it."""
+    return caller
 
 
-@api.get("/health")
+@control_route(api, HEALTH)
 async def health() -> Health:
     return Health(ok=True)
 
 
 #: The seller's own controls. `create_app` puts the operator-key guard on them.
-operator = APIRouter(prefix="/operator")
+operator = APIRouter()
 
 
-@operator.post("/issue")
+@control_route(operator, ISSUE)
 async def issue_proposal(body: IssueRequest, store: OnboardingDep, issuer: IssuerDep) -> Issued:
     """Issues a fresh copy of the seed proposal to a buyer this seller knows (§ 4.3).
 

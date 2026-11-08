@@ -16,7 +16,7 @@ to `OUT_DIR`, which the explainer site serves.
 
 The runner reaches each agent's own controls inside the compose network
 (`SELLER_CONTROL`, `BUYER_CONTROL`) with that agent's own operator key, through
-one client per agent, so neither agent ever sees the other's key. It reads both
+one `AsyncControlClient` per agent, so neither agent ever sees the other's key. It reads both
 parties' databases from read-only mounts of their database volumes. It mounts
 neither agent's key volume, so it holds no agent's signing key.
 """
@@ -35,10 +35,10 @@ from pathlib import Path
 from typing import TypeVar
 
 import httpx
-from pydantic import SecretStr, ValidationError
+from pydantic import ValidationError
 
 from persistence.values import AuthMethod
-from transport.control import OPERATOR_HEADER
+from transport.client import AsyncControlClient
 from transport.wba import Transport, http_client, tls_context
 
 from .checks import Done
@@ -167,12 +167,6 @@ async def _path(run: Run, observer: Observer, path: CredentialPath) -> FlowRun:
     )
 
 
-def _control(url: httpx.URL, key: SecretStr, transport: Transport | None) -> httpx.AsyncClient:
-    """A client for one agent's controls, which carries that agent's operator key only."""
-    headers = {OPERATOR_HEADER: key.get_secret_value()}
-    return httpx.AsyncClient(base_url=url, timeout=60, headers=headers, transport=transport)
-
-
 async def run_once(settings: RunnerSettings, *, transport: Transport | None = None) -> Report:
     """One run of every step. Never raises: a failure is a step outcome.
 
@@ -180,10 +174,11 @@ async def run_once(settings: RunnerSettings, *, transport: Transport | None = No
     """
     run, started = Run(), time.time()
     async with (
-        _control(settings.seller_control, settings.seller_operator_key, transport) as seller,
-        _control(settings.buyer_control, settings.buyer_operator_key, transport) as buyer,
+        httpx.AsyncClient(timeout=60, transport=transport) as control,
         http_client(tls_context(settings.ca_bundle), timeout=10, transport=transport) as web,
     ):
+        seller = AsyncControlClient(control, settings.seller_control, settings.seller_operator_key)
+        buyer = AsyncControlClient(control, settings.buyer_control, settings.buyer_operator_key)
         observer = Observer(settings, seller=seller, buyer=buyer, web=web)
         parties = {
             "seller": settings.peer_seller_origin,

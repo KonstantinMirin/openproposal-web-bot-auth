@@ -2,10 +2,11 @@
 
 The keyring enforces the rotation order and its waits, and never loses or
 overwrites a key. Each test builds the buyer with `create_app` over tmp_path,
-with a clock the test moves, and rotates through `/operator/keys`, as an
-operator does. The directory answers what the keyring publishes. The e2e
-scenarios read the buyer's keys with the read-only `KeyStore`, as the last tests
-do: it never writes, and never mints a key it doesn't find.
+with a clock the test moves, and rotates through the buyer's key controls
+(`KEYS`, `PUBLISH`, `ACTIVATE`, `RETIRE`), as an operator does. The directory
+answers what the keyring publishes. The e2e scenarios read the buyer's keys
+with the read-only `KeyStore`, as the last tests do: it never writes, and never
+mints a key it doesn't find.
 """
 
 from __future__ import annotations
@@ -14,15 +15,17 @@ from collections.abc import Iterator
 from dataclasses import dataclass, replace
 from pathlib import Path
 
-import httpx
 import pytest
 from fastapi.testclient import TestClient
 from iab_agentic_primitives.web_bot_auth import DIRECTORY_PATH
 from pydantic import SecretStr
 
 from buyer.app import create_app
+from protocol.values import objects, read_json
 from shared.keyring import KeyStore, NoKeysError, RotationError
-from tests.stack import BUYER_OPERATOR, buyer_settings
+from tests.stack import BUYER_KEY, buyer_settings
+from transport.client import ControlClient, ControlFailed
+from transport.control import ACTIVATE, KEYS, PUBLISH, RETIRE, ControlOp, ErrorBody, KeyState
 
 #: The rotation wait and the signature lifetime the tests run with.
 WAIT, LIFETIME = 20.0, 10
@@ -42,20 +45,29 @@ class Buyer:
     clock: Clock
     keys_dir: Path
 
-    def keys(self) -> dict[str, object]:
-        response = self.client.get("/operator/keys", headers=BUYER_OPERATOR)
-        assert response.status_code == 200, response.text
-        state: dict[str, object] = response.json()
-        return state
+    @property
+    def control(self) -> ControlClient:
+        return ControlClient(self.client, operator_key=BUYER_KEY)
 
-    def call(self, method: str, path: str) -> int:
-        response: httpx.Response = self.client.request(
-            method, f"/operator/keys{path}", headers=BUYER_OPERATOR
-        )
-        return response.status_code
+    def keys(self) -> KeyState:
+        return self.control.call(KEYS, None)
+
+    def publish(self) -> str:
+        """Publishes a new key; its kid."""
+        return self.control.call(PUBLISH, None).published_kid
+
+    def step(self, op: ControlOp[None, KeyState], kid: str) -> int:
+        """The status of a rotation step on `kid`: 200, or the refusal's."""
+        try:
+            self.control.call(op, None, kid=kid)
+        except ControlFailed as e:
+            return e.status
+        return 200
 
     def directory(self) -> list[str]:
-        return [k["kid"] for k in self.client.get(DIRECTORY_PATH).json()["keys"]]
+        """The kids the buyer's directory lists."""
+        keys = objects(read_json(self.client.get(DIRECTORY_PATH).content).get("keys"))
+        return [str(k.get("kid")) for k in keys]
 
 
 def _buyer(
@@ -73,43 +85,46 @@ def buyer(tmp_path: Path) -> Iterator[Buyer]:
 
 
 def test_rotation_follows_the_order_and_its_waits(buyer: Buyer) -> None:
-    old = buyer.keys()["active"]
-    published = buyer.client.post("/operator/keys", headers=BUYER_OPERATOR).json()
-    new = published["published_kid"]
-    assert published["active"] == old  # the old key keeps signing
+    old = buyer.keys().active
+    published = buyer.control.call(PUBLISH, None)
+    new = published.published_kid
+    assert published.active == old  # the old key keeps signing
     assert set(buyer.directory()) == {old, new}
 
-    assert buyer.call("POST", f"/{new}/activate") == 409  # a verifier may not list it yet
+    assert buyer.step(ACTIVATE, new) == 409  # a verifier may not list it yet
     buyer.clock.now += WAIT + 1
-    assert buyer.call("POST", f"/{new}/activate") == 200
-    assert buyer.keys()["active"] == new
+    assert buyer.step(ACTIVATE, new) == 200
+    assert buyer.keys().active == new
 
-    assert buyer.call("DELETE", f"/{old}") == 409  # its signatures may not have expired
-    assert buyer.call("DELETE", f"/{new}") == 409  # it signs
+    assert buyer.step(RETIRE, old) == 409  # its signatures may not have expired
+    assert buyer.step(RETIRE, new) == 409  # it signs
     buyer.clock.now += LIFETIME + 1
-    assert buyer.call("DELETE", f"/{old}") == 200
+    assert buyer.step(RETIRE, old) == 200
     assert buyer.directory() == [new]
 
 
 def test_a_rotation_step_out_of_order_is_a_control_error(buyer: Buyer) -> None:
-    response = buyer.client.post("/operator/keys/no-such-kid/activate", headers=BUYER_OPERATOR)
-    assert response.status_code == 409
-    assert response.json()["error"] == "rotation"
-    assert buyer.client.get("/operator/keys").status_code == 403  # no operator key
+    with pytest.raises(ControlFailed) as failed:
+        buyer.control.call(ACTIVATE, None, kid="no-such-kid")
+    assert failed.value.status == 409
+    assert failed.value.error is not None and failed.value.error.error == "rotation"
+    with pytest.raises(ControlFailed) as failed:
+        ControlClient(buyer.client).call(KEYS, None)  # no operator key
+    assert failed.value.status == 403
 
 
 def test_publish_retire_publish_keeps_every_key(tmp_path: Path) -> None:
     clock = Clock()
     with _buyer(tmp_path, clock, wait=0, lifetime=0) as client:
         buyer = Buyer(client, clock, tmp_path / "keys")
-        original = buyer.keys()["active"]
-        first = client.post("/operator/keys", headers=BUYER_OPERATOR).json()["published_kid"]
-        assert buyer.call("DELETE", f"/{first}") == 200  # never signed, so it can go at once
-        second = client.post("/operator/keys", headers=BUYER_OPERATOR).json()["published_kid"]
+        original = buyer.keys().active
+        first = buyer.publish()
+        assert buyer.step(RETIRE, first) == 200  # never signed, so it can go at once
+        second = buyer.publish()
         assert second != first
-        assert buyer.call("POST", f"/{second}/activate") == 200
-        assert buyer.call("POST", f"/{original}/activate") == 200
-        assert buyer.call("DELETE", f"/{second}") == 200
+        assert buyer.step(ACTIVATE, second) == 200
+        assert buyer.step(ACTIVATE, original) == 200
+        assert buyer.step(RETIRE, second) == 200
         assert buyer.directory() == [original]
     # Both retired keys are kept, and neither overwrote the other.
     assert {p.stem for p in (tmp_path / "keys" / "retired").glob("*.jwk")} == {first, second}
@@ -118,24 +133,23 @@ def test_publish_retire_publish_keeps_every_key(tmp_path: Path) -> None:
 def test_a_restart_keeps_the_keys_and_the_rotation_state(tmp_path: Path) -> None:
     clock = Clock()
     with _buyer(tmp_path, clock) as client:
-        published = client.post("/operator/keys", headers=BUYER_OPERATOR).json()
+        published = Buyer(client, clock, tmp_path / "keys").control.call(PUBLISH, None)
     clock.now += WAIT + 1
     with _buyer(tmp_path, clock) as client:
         after = Buyer(client, clock, tmp_path / "keys")
-        assert after.keys() == {k: published[k] for k in ("published", "active")}
+        assert after.keys() == KeyState(published=published.published, active=published.active)
         # The publish time survived the restart, so the wait counts from it.
-        assert after.call("POST", f"/{published['published_kid']}/activate") == 200
+        assert after.step(ACTIVATE, published.published_kid) == 200
 
 
 def test_the_scenarios_read_any_key_by_kid_published_or_retired(tmp_path: Path) -> None:
     clock = Clock()
     with _buyer(tmp_path, clock, wait=0, lifetime=0) as client:
         buyer = Buyer(client, clock, tmp_path / "keys")
-        old = buyer.keys()["active"]
-        new = client.post("/operator/keys", headers=BUYER_OPERATOR).json()["published_kid"]
-        assert buyer.call("POST", f"/{new}/activate") == 200
-        assert buyer.call("DELETE", f"/{old}") == 200
-    assert isinstance(old, str) and isinstance(new, str)
+        old = buyer.keys().active
+        new = buyer.publish()
+        assert buyer.step(ACTIVATE, new) == 200
+        assert buyer.step(RETIRE, old) == 200
     # As e2e/scenarios/conftest.py reads the buyer's keys volume.
     keys = KeyStore.open(tmp_path / "keys")
     assert keys.active().thumbprint == new
@@ -163,8 +177,9 @@ def test_the_key_store_reads_a_directory_without_keys_and_writes_nothing(tmp_pat
 def test_a_deleted_active_key_is_refused_never_minted_again(tmp_path: Path) -> None:
     clock = Clock()
     with _buyer(tmp_path, clock, wait=0, lifetime=0) as client:
-        active = Buyer(client, clock, tmp_path / "keys").keys()["active"]
-        assert client.post("/operator/keys", headers=BUYER_OPERATOR).status_code == 200
+        buyer = Buyer(client, clock, tmp_path / "keys")
+        active = buyer.keys().active
+        buyer.publish()
     (tmp_path / "keys" / f"{active}.jwk").unlink()
     with pytest.raises(RotationError):
         KeyStore.open(tmp_path / "keys").active()
@@ -173,5 +188,9 @@ def test_a_deleted_active_key_is_refused_never_minted_again(tmp_path: Path) -> N
 
 def test_the_operator_key_comes_from_the_settings(tmp_path: Path) -> None:
     other = replace(buyer_settings(tmp_path), operator_key=SecretStr("another-key"))
-    with TestClient(create_app(other)) as client:
-        assert client.get("/operator/keys", headers=BUYER_OPERATOR).status_code == 403
+    with TestClient(create_app(other)) as client, pytest.raises(ControlFailed) as failed:
+        ControlClient(client, operator_key=BUYER_KEY).call(KEYS, None)
+    assert (failed.value.status, failed.value.error) == (
+        403,
+        ErrorBody(error="operator-key", detail="operator key required"),
+    )

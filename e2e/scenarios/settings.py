@@ -28,9 +28,9 @@ CFBOT_CONTROL = read.url(_ENV, "CFBOT_CONTROL", "http://cfbot:8000")
 #: What each agent's own controls require (transport/operator.py), one key per party, by
 #: the host its controls answer on.
 OPERATOR_KEYS = {
-    SELLER_CONTROL.host: RUNNER.seller_operator_key.get_secret_value(),
-    BUYER_CONTROL.host: RUNNER.buyer_operator_key.get_secret_value(),
-    CFBOT_CONTROL.host: read.required_secret(_ENV, "CFBOT_OPERATOR_KEY").get_secret_value(),
+    SELLER_CONTROL.host: RUNNER.seller_operator_key,
+    BUYER_CONTROL.host: RUNNER.buyer_operator_key,
+    CFBOT_CONTROL.host: read.required_secret(_ENV, "CFBOT_OPERATOR_KEY"),
 }
 
 #: Both parties' databases, and the buyer's key directory, mounted read-only.

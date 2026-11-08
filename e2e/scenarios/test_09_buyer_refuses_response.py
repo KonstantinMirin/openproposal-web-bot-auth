@@ -15,23 +15,37 @@ entry (§ 5.6.1). Once the answer verifies, the buyer records the agreement.
 
 from collections.abc import Callable, Iterator
 
-import httpx
 import pytest
-from conftest import BUYER_OPERATOR, SELLER_FAULTS
 from openproposal import AssentEntryRole
 
 from persistence.observe import BuyerRecords, SellerRecords
-from transport.control import CommitTrigger, ReadTrigger
+from persistence.values import AuthMethod
+from transport.client import ControlClient
+from transport.control import (
+    COMMIT,
+    FAULT,
+    READ,
+    Agreed,
+    CommitTrigger,
+    FaultMode,
+    FaultName,
+    FaultTarget,
+    Read,
+    ReadTrigger,
+    Refused,
+)
 
+#: Sets the seller's fault, and which answers it breaks.
+SetFault = Callable[[FaultName, FaultTarget], None]
 #: Each credential's own proposal and line item, which no earlier scenario commits to.
-TRIGGER = {
+TRIGGER: dict[AuthMethod, CommitTrigger] = {
     "web_bot_auth": CommitTrigger(proposal_id="demo-wba-2", line_item_ids=["weather-app-ctv"]),
     "bearer": CommitTrigger(
         proposal_id="demo-bearer-1", line_item_ids=["weather-app-ctv"], credential="bearer"
     ),
 }
 #: The faults each credential must refuse, with the library's reason for each.
-FAULTS = {
+FAULTS: dict[AuthMethod, list[tuple[FaultName, str]]] = {
     "web_bot_auth": [
         ("strip", "signature-missing"),
         ("unbound", "response-not-bound"),
@@ -44,12 +58,17 @@ CREDENTIALS = list(TRIGGER)
 
 
 @pytest.fixture
-def fault(web: httpx.Client) -> Iterator[Callable[[str, str], None]]:
-    def set_fault(mode: str, on: str = "commit") -> None:
-        assert web.put(SELLER_FAULTS, json={"mode": mode, "on": on}).status_code == 200
+def fault(seller_control: ControlClient) -> Iterator[SetFault]:
+    def set_fault(mode: FaultName, on: FaultTarget) -> None:
+        seller_control.call(FAULT, FaultMode(mode=mode, on=on))
 
     yield set_fault
     set_fault("none", "commit")
+
+
+def _refused(outcome: object) -> Refused:
+    assert isinstance(outcome, Refused), outcome
+    return outcome
 
 
 def _seller_state(
@@ -61,27 +80,27 @@ def _seller_state(
 
 @pytest.mark.parametrize("credential", CREDENTIALS)
 def test_buyer_refuses_unverifiable_reads(
-    web: httpx.Client, fault: Callable[[str, str], None], credential: str
+    buyer_control: ControlClient, fault: SetFault, credential: AuthMethod
 ) -> None:
     trigger = TRIGGER[credential]
-    read = ReadTrigger(proposal_id=trigger.proposal_id, credential=trigger.credential).model_dump()
+    read = ReadTrigger(proposal_id=trigger.proposal_id, credential=trigger.credential)
     for mode, reason in FAULTS[credential]:
         fault(mode, "read")
-        outcome = web.post(f"{BUYER_OPERATOR}/read", json=read).json()
-        assert (outcome["state"], outcome["reason"]) == ("refused", reason), (mode, outcome)
-        assert outcome["authentication_method"] == credential
+        outcome = _refused(buyer_control.call(READ, read))
+        assert outcome.code == reason, (mode, outcome)
+        assert outcome.authentication_method == credential
 
     fault("none", "commit")
-    assert web.post(f"{BUYER_OPERATOR}/read", json=read).json()["state"] == "read"
+    assert isinstance(buyer_control.call(READ, read), Read)
 
 
 @pytest.mark.parametrize("credential", CREDENTIALS)
 def test_buyer_refuses_unverifiable_commit_answers(
-    web: httpx.Client,
-    fault: Callable[[str, str], None],
+    buyer_control: ControlClient,
+    fault: SetFault,
     seller_records: SellerRecords,
     buyer_records: BuyerRecords,
-    credential: str,
+    credential: AuthMethod,
 ) -> None:
     trigger = TRIGGER[credential]
     proposal_id, items = trigger.proposal_id, trigger.line_item_ids
@@ -89,8 +108,8 @@ def test_buyer_refuses_unverifiable_commit_answers(
     accepted = None
     for mode, reason in FAULTS[credential]:
         fault(mode, "commit")
-        outcome = web.post(f"{BUYER_OPERATOR}/commit", json=trigger.model_dump()).json()
-        assert (outcome["state"], outcome["reason"]) == ("refused", reason), (mode, outcome)
+        outcome = _refused(buyer_control.call(COMMIT, trigger))
+        assert outcome.code == reason, (mode, outcome)
 
         pending = buyer_records.commits(proposal_id, items)
         assert [p.state for p in pending] == ["pending"]  # one Commit, still unconfirmed
@@ -108,7 +127,7 @@ def test_buyer_refuses_unverifiable_commit_answers(
             assert state == accepted
 
     fault("none", "commit")
-    outcome = web.post(f"{BUYER_OPERATOR}/commit", json=trigger.model_dump()).json()
-    assert outcome["state"] == "agreed", outcome
-    assert outcome["authentication_method"] == credential
+    agreed = buyer_control.call(COMMIT, trigger)
+    assert isinstance(agreed, Agreed), agreed
+    assert agreed.authentication_method == credential
     assert _seller_state(seller_records, proposal_id) == accepted

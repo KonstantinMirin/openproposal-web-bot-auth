@@ -6,8 +6,9 @@ the only caller of `BuyerSettings.from_env()`.
 
 Agents reach `buyer.wba-demo.noetis.dev` only for the directory, which
 `DirectoryMiddleware` serves from the key store, which holds the keys in memory. The
-`/operator/` routes are the buyer's own controls: no front routes them, so they
-are reachable only inside the network, and each call carries the operator key
+`/operator/` routes are the buyer's own controls, each registered from its
+`ControlOp` (transport/control.py): no front routes them, so they are reachable
+only inside the network, and each call carries the operator key
 (transport/operator.py).
 """
 
@@ -29,6 +30,14 @@ from persistence.values import Origin
 from protocol.documents import loads_yaml
 from shared.keyring import Keyring, SigningIdentity
 from transport.control import (
+    ACTIVATE,
+    CLOUDFLARE_CHECK,
+    COMMIT,
+    HEALTH,
+    KEYS,
+    PUBLISH,
+    READ,
+    RETIRE,
     CloudflareCheck,
     CommitTrigger,
     Health,
@@ -38,7 +47,7 @@ from transport.control import (
     ReadTrigger,
 )
 from transport.lifespan import lifespan, resolver_or_default
-from transport.operator import ControlError, OperatorKey
+from transport.operator import ControlError, OperatorKey, control_route
 from transport.wba import Transport
 
 from .cfbot import Cfbot
@@ -54,20 +63,20 @@ from .settings import BuyerSettings
 api = APIRouter()
 
 
-@api.get("/health")
+@control_route(api, HEALTH)
 async def health() -> Health:
     return Health(ok=True)
 
 
 #: The buyer's own controls. `create_app` puts the operator-key guard on them.
-operator = APIRouter(prefix="/operator")
+operator = APIRouter()
 
 
 def _seller(trigger: ReadTrigger, settings: BuyerSettings) -> Origin:
     return settings.peer_seller_origin if trigger.seller is None else trigger.seller
 
 
-@operator.post("/commit")
+@control_route(operator, COMMIT)
 async def operator_commit(trigger: CommitTrigger, flow: FlowDep, settings: SettingsDep) -> Outcome:
     """Runs the whole flow: read, commit, verify the signed answer, keep the evidence.
 
@@ -86,7 +95,7 @@ async def operator_commit(trigger: CommitTrigger, flow: FlowDep, settings: Setti
         raise ControlError(HTTPStatus.CONFLICT, "not-pending", detail) from e
 
 
-@operator.post("/read")
+@control_route(operator, READ)
 async def operator_read(trigger: ReadTrigger, flow: FlowDep, settings: SettingsDep) -> Outcome:
     """Reads the proposal and verifies the seller's signed response."""
     return await flow.read(_seller(trigger, settings), trigger.proposal_id, trigger.credential)
@@ -99,33 +108,33 @@ def _keys(keyring: Keyring) -> KeyState:
     )
 
 
-@operator.get("/keys")
+@control_route(operator, KEYS)
 async def list_keys(keyring: KeyringDep) -> KeyState:
     return _keys(keyring)
 
 
-@operator.post("/keys")
+@control_route(operator, PUBLISH)
 async def publish_key(keyring: KeyringDep) -> PublishedKey:
     """Rotation, step 1: publish a new key next to the old one, which keeps signing."""
     kid = keyring.publish().thumbprint
     return PublishedKey(published_kid=kid, **_keys(keyring).model_dump())
 
 
-@operator.post("/keys/{kid}/activate")
+@control_route(operator, ACTIVATE)
 async def activate_key(kid: str, keyring: KeyringDep) -> KeyState:
     """Rotation, step 2: sign with the new key, once verifiers' caches list it."""
     keyring.activate(kid)
     return _keys(keyring)
 
 
-@operator.delete("/keys/{kid}")
+@control_route(operator, RETIRE)
 async def retire_key(kid: str, keyring: KeyringDep) -> KeyState:
     """Rotation, step 3: take the old key out of the directory, once its signatures expired."""
     keyring.retire(kid)
     return _keys(keyring)
 
 
-@operator.post("/cloudflare-check")
+@control_route(operator, CLOUDFLARE_CHECK)
 async def cloudflare_check(cfbot: CfbotDep, settings: SettingsDep) -> CloudflareCheck:
     """Signs a request to cfbot, whose verifier is Cloudflare's library, and returns its verdict."""
     body = json.dumps({"from": str(settings.self_origin), "says": "verify me"}).encode()

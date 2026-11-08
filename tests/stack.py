@@ -2,8 +2,9 @@
 
 Each app is built by its own `create_app`, with the library's real signer and
 verifiers. The buyer's one client reaches the seller app through `Stack.route`,
-an in-process transport, so a test drives the buyer's operator routes and
-reads what each party kept through its read model (`seller_records`,
+an in-process transport, so a test drives the buyer's operator routes through
+`ControlClient` (`seller_control`, `buyer_control`, `commit`, `read`), whose
+answers are typed, and reads what each party kept through its read model (`seller_records`,
 `buyer_records`), as an observer outside the party reads it. A test can stand
 in for the seller (`answer`), for example to send a correctly signed answer
 that is malformed, or one signed by the reseller, a third party with its own
@@ -55,12 +56,24 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 from buyer.app import create_app as create_buyer
 from buyer.settings import BuyerSettings
 from persistence.observe import BuyerRecords, SellerRecords
-from persistence.values import Origin
+from persistence.values import AuthMethod, Origin
 from seller.app import create_app as create_seller
 from seller.settings import SellerSettings
 from shared.keyring import KeyStore
 from shared.settings import DEFAULT_ORIGINS
-from transport.control import OPERATOR_HEADER
+from transport.client import ControlClient
+from transport.control import (
+    COMMIT,
+    FAULT,
+    OPERATOR_HEADER,
+    READ,
+    CommitTrigger,
+    FaultMode,
+    FaultName,
+    FaultTarget,
+    Outcome,
+    ReadTrigger,
+)
 from transport.wba import directory_resolver, http_client, tls_context
 
 SELLER = str(DEFAULT_ORIGINS["seller"])
@@ -71,6 +84,9 @@ RESELLER = "https://reseller.wba-demo.noetis.dev"
 #: Each agent's own operator key, distinct per party, as the header its controls require.
 SELLER_OPERATOR = {OPERATOR_HEADER: "seller-operator-key-for-tests"}
 BUYER_OPERATOR = {OPERATOR_HEADER: "buyer-operator-key-for-tests"}
+#: The same keys, as `ControlClient` takes them.
+SELLER_KEY = SecretStr(SELLER_OPERATOR[OPERATOR_HEADER])
+BUYER_KEY = SecretStr(BUYER_OPERATOR[OPERATOR_HEADER])
 TOKEN = "bearer-token-for-tests"  # noqa: S105 -- a test value, not a deployed secret
 
 
@@ -99,7 +115,7 @@ def seller_settings(
         peer_buyer_origin=origins.buyer,
         data_dir=data_dir,
         keys_dir=data_dir,
-        operator_key=SecretStr(SELLER_OPERATOR[OPERATOR_HEADER]),
+        operator_key=SELLER_KEY,
         bearer_token=SecretStr(TOKEN),
         faults=faults,
     )
@@ -112,7 +128,7 @@ def buyer_settings(data_dir: Path, *, origins: Origins = DEMO, token: bool = Tru
         peer_seller_origin=origins.seller,
         data_dir=data_dir,
         keys_dir=data_dir / "keys",
-        operator_key=SecretStr(BUYER_OPERATOR[OPERATOR_HEADER]),
+        operator_key=BUYER_KEY,
         bearer_token=SecretStr(TOKEN) if token else None,
     )
 
@@ -145,6 +161,27 @@ class Recorder:
         if scope["type"] == "http":
             self.received.append(Received(scope["method"], scope["path"], lines(scope["headers"])))
         await self.app(scope, receive, send)
+
+
+def as_state[T](kind: type[T], outcome: Outcome) -> T:
+    """The outcome, read as the state `kind` it must be."""
+    assert isinstance(outcome, kind), outcome
+    return outcome
+
+
+def cfbot_accepts(identity: str, *, keyid: str = "kid-of-the-test") -> httpx.Response:
+    """cfbot's answer when it verifies a signature as `identity`, in the shape
+    cfbot/server.mjs answers."""
+    verdict = {
+        "ok": True,
+        "verifier": "web-bot-auth (test)",
+        "identity": identity,
+        "keyid": keyid,
+        "nonce": "nonce-of-the-test",
+        "directory_signatures": [{"label": "key1", "keyid": keyid}],
+        "content_digest_matches": True,
+    }
+    return httpx.Response(200, json=verdict)
 
 
 def _directory_of(key: Ed25519Key, host: str) -> httpx.Response:
@@ -183,9 +220,8 @@ class Stack:
         #: Stands in for the seller when set; see `Answer`.
         self.answer: Answer | None = None
         #: What cfbot answers the buyer's signed check.
-        self.cfbot: Callable[[httpx.Request], httpx.Response] = lambda _: httpx.Response(
-            200,
-            json={"ok": True, "identity": str(origins.buyer), "verifier": "web-bot-auth (test)"},
+        self.cfbot: Callable[[httpx.Request], httpx.Response] = lambda _: cfbot_accepts(
+            str(origins.buyer)
         )
         buyer = create_buyer(
             buyer_settings(self.buyer_dir, origins=origins, token=token),
@@ -206,6 +242,9 @@ class Stack:
             self._seller, base_url=str(origins.seller), raise_server_exceptions=False
         )
         self.buyer = TestClient(buyer, base_url=str(origins.buyer), raise_server_exceptions=False)
+        #: Each agent's controls, called with that agent's own operator key.
+        self.seller_control = ControlClient(self.seller, operator_key=SELLER_KEY)
+        self.buyer_control = ControlClient(self.buyer, operator_key=BUYER_KEY)
 
     def __enter__(self) -> Stack:
         self.seller.__enter__()
@@ -319,27 +358,23 @@ class Stack:
         signed = ResponseSigner(key, by).sign(answer)
         return httpx.Response(status, headers=signed.headers.items(), content=body)
 
-    # The buyer's controls
+    # The agents' controls
 
     def commit(
-        self, proposal_id: str, line_item_ids: list[str], credential: str = "web_bot_auth"
-    ) -> httpx.Response:
-        trigger = {
-            "proposal_id": proposal_id,
-            "line_item_ids": line_item_ids,
-            "credential": credential,
-        }
-        response: httpx.Response = self.buyer.post(
-            "/operator/commit", json=trigger, headers=BUYER_OPERATOR
+        self, proposal_id: str, line_item_ids: list[str], credential: AuthMethod = "web_bot_auth"
+    ) -> Outcome:
+        trigger = CommitTrigger(
+            proposal_id=proposal_id, line_item_ids=line_item_ids, credential=credential
         )
-        return response
+        return self.buyer_control.call(COMMIT, trigger)
 
-    def read(self, proposal_id: str, credential: str = "web_bot_auth") -> httpx.Response:
-        trigger = {"proposal_id": proposal_id, "credential": credential}
-        response: httpx.Response = self.buyer.post(
-            "/operator/read", json=trigger, headers=BUYER_OPERATOR
-        )
-        return response
+    def read(self, proposal_id: str, credential: AuthMethod = "web_bot_auth") -> Outcome:
+        trigger = ReadTrigger(proposal_id=proposal_id, credential=credential)
+        return self.buyer_control.call(READ, trigger)
+
+    def fault(self, mode: FaultName, on: FaultTarget = "commit") -> None:
+        """TEST ONLY: sets the seller's fault (seller/faults.py); needs `faults=True`."""
+        self.seller_control.call(FAULT, FaultMode(mode=mode, on=on))
 
     # What each party kept
 

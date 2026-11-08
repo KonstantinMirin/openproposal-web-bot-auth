@@ -21,13 +21,16 @@ import httpx
 import pytest
 from iab_agentic_primitives.web_bot_auth import HTTPRequest, RequestSigner
 
-from tests.stack import BUYER, SELLER, TOKEN, Stack
+from persistence.values import AuthMethod
+from protocol.operations import parse_errors
+from tests.stack import BUYER, SELLER, TOKEN, Stack, as_state
+from transport.control import Refused
 
 DISPLAY = "business-daily-display"
 #: Each number as JSON text: NaN, a number beyond a double, an integer beyond 2**53.
 NUMBERS = {"nan": "NaN", "beyond-a-double": "1e400", "beyond-2**53": str(2**60)}
 #: The proposal each credential's principal commits to.
-PROPOSAL = {"web_bot_auth": "demo-wba-1", "bearer": "demo-bearer-1"}
+PROPOSAL: dict[AuthMethod, str] = {"web_bot_auth": "demo-wba-1", "bearer": "demo-bearer-1"}
 
 
 @pytest.fixture
@@ -62,7 +65,7 @@ def _commit(amount: str, extension: str) -> bytes:
     return ('{"x_note": ' + extension + ", " + text[1:]).encode()
 
 
-def _headers(stack: Stack, credential: str, url: str, body: bytes) -> dict[str, str]:
+def _headers(stack: Stack, credential: AuthMethod, url: str, body: bytes) -> dict[str, str]:
     headers = {"Content-Type": "application/json"}
     if credential == "bearer":
         return headers | {"Authorization": f"Bearer {TOKEN}"}
@@ -74,16 +77,16 @@ def _headers(stack: Stack, credential: str, url: str, body: bytes) -> dict[str, 
 @pytest.mark.parametrize("number", NUMBERS.values(), ids=NUMBERS.keys())
 @pytest.mark.parametrize("credential", ["web_bot_auth", "bearer"])
 def test_the_seller_rejects_a_commit_that_holds_one_as_validation(
-    stack: Stack, credential: str, number: str, place: str
+    stack: Stack, credential: AuthMethod, number: str, place: str
 ) -> None:
     proposal_id = PROPOSAL[credential]
     body = _commit(number, "1") if place == "amount" else _commit("1000", number)
     url = f"{SELLER}/proposals/{proposal_id}/commit"
     answer = stack.seller.post(url, content=body, headers=_headers(stack, credential, url, body))
     assert answer.status_code == 400, answer.text
-    (error,) = answer.json()["errors"]
-    assert (error["code"], error["retry"]) == ("validation", "none")
-    assert "RFC 8785" in error["detail"]
+    (error,) = parse_errors(answer.content)
+    assert (error.code, error.retry) == ("validation", "none")
+    assert "RFC 8785" in error.detail
     with stack.seller_records() as records:
         assert records.entries(proposal_id) == []
         assert records.processed(proposal_id) == []
@@ -106,27 +109,23 @@ def _holding(stack: Stack, method: str, number: str) -> None:
 @pytest.mark.parametrize("number", NUMBERS.values(), ids=NUMBERS.keys())
 @pytest.mark.parametrize("credential", ["web_bot_auth", "bearer"])
 def test_the_buyer_refuses_a_read_that_holds_one(
-    stack: Stack, credential: str, number: str
+    stack: Stack, credential: AuthMethod, number: str
 ) -> None:
     _holding(stack, "GET", number)
-    response = stack.read(PROPOSAL[credential], credential)
-    assert response.status_code == 200
-    outcome = response.json()
-    assert (outcome["state"], outcome["reason"]) == ("refused", "malformed-answer"), outcome
-    assert "RFC 8785" in outcome["detail"]
+    outcome = as_state(Refused, stack.read(PROPOSAL[credential], credential))
+    assert outcome.code == "malformed-answer"
+    assert "RFC 8785" in outcome.detail
 
 
 @pytest.mark.parametrize("number", NUMBERS.values(), ids=NUMBERS.keys())
 @pytest.mark.parametrize("credential", ["web_bot_auth", "bearer"])
 def test_the_buyer_refuses_a_commit_answer_that_holds_one_and_settles_nothing(
-    stack: Stack, credential: str, number: str
+    stack: Stack, credential: AuthMethod, number: str
 ) -> None:
     proposal_id = PROPOSAL[credential]
     _holding(stack, "POST", number)
-    response = stack.commit(proposal_id, [DISPLAY], credential)
-    assert response.status_code == 200
-    outcome = response.json()
-    assert (outcome["state"], outcome["reason"]) == ("refused", "malformed-answer"), outcome
+    outcome = as_state(Refused, stack.commit(proposal_id, [DISPLAY], credential))
+    assert outcome.code == "malformed-answer"
     assert stack.commit_states(proposal_id, [DISPLAY]) == ["pending"]
     with stack.buyer_records() as records:
         assert records.messages() == 0

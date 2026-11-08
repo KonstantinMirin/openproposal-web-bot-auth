@@ -8,9 +8,11 @@ import httpx
 from conftest import SELLER, signed
 from iab_agentic_primitives.web_bot_auth import Ed25519Key
 
+from transport.control import ErrorBody
+
 
 def test_key_not_in_the_directory_is_refused(web: httpx.Client) -> None:
     url = f"{SELLER}/proposals/demo-wba-1"
     response = web.get(url, headers=signed("GET", url, key=Ed25519Key.generate()))
     assert response.status_code == 403
-    assert response.json()["error"] == "key-not-found"
+    assert ErrorBody.model_validate_json(response.content).code == "key-not-found"

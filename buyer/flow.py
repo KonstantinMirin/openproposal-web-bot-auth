@@ -15,7 +15,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from openproposal import Commit, LineItemWrites, dump
+from openproposal import Commit, LineItemWrites
 
 from persistence.values import AuthMethod, Origin
 from protocol.attribution import attributes
@@ -54,7 +54,7 @@ class _Call:
         return Rejected(
             seller=self.view,
             authentication_method=self.credential.method,
-            errors=[dump(e) for e in rejection.errors],
+            errors=tuple(rejection.errors),
             commit_id=commit_id,
         )
 
@@ -193,7 +193,7 @@ class Buyer:
             authentication_method=call.credential.method,
             keyid=call.credential.keyid,
             record_digest=acceptance.record_digest,
-            entries=[dump(e) for e in answer.result.entries],
+            entries=tuple(answer.result.entries),
             attributed=attributed,
             commit_id=pending.id,
             evidence_id=evidence_id,

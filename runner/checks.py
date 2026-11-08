@@ -15,8 +15,7 @@ from openproposal import AssentEntryRoles
 
 from persistence.observe import KeptAgreement, KeptCommit, KeptEntry
 from persistence.values import AuthMethod
-from protocol.values import JsonObject
-from transport.control import Agreed, CloudflareCheck, Outcome
+from transport.control import Agreed, CfbotAccepted, CfbotRefused, CloudflareCheck, Outcome
 
 
 @dataclass(frozen=True)
@@ -91,14 +90,11 @@ def same_digest(
     return agreement
 
 
-def cfbot_accepted(check: CloudflareCheck, buyer: str) -> JsonObject:
+def cfbot_accepted(check: CloudflareCheck, buyer: str) -> CfbotAccepted:
     """cfbot verified the buyer's signature as the buyer's origin."""
     verdict = check.verdict
-    if (
-        check.status != HTTPStatus.OK
-        or not isinstance(verdict, dict)
-        or verdict.get("ok") is not True
-    ):
-        fail(f"cfbot refused: {check.status} {verdict}")
-    expect(verdict.get("identity") == buyer, f"cfbot saw {verdict.get('identity')}")
+    if isinstance(verdict, CfbotRefused):
+        fail(f"cfbot refused: {check.status} {verdict.error}")
+    expect(check.status == HTTPStatus.OK, f"cfbot accepted with status {check.status}")
+    expect(verdict.identity == buyer, f"cfbot saw {verdict.identity}")
     return verdict

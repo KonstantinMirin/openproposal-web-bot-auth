@@ -14,7 +14,8 @@ apart by `method`: a bearer credential can't carry an origin, and a
 `PublicCaller` can carry only a signature, the identity a verified origin
 establishes without a principal. A `ResolvedCaller` carries the `Provenance`
 storage keeps with an entry it writes, which names the same principal, method,
-and attribution.
+and attribution. `/whoami` answers a `WhoAmI`: the caller without its
+provenance.
 """
 
 from __future__ import annotations
@@ -22,7 +23,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Annotated, Literal, NoReturn, Self
 
-from pydantic import Field, model_validator
+from pydantic import Field, TypeAdapter, model_validator
 
 from persistence.values import BearerMethod, Origin, Provenance, SignatureMethod
 from protocol.values import AmendedValueError, Value
@@ -74,9 +75,8 @@ class BearerCredential(_Frozen):
 Credential = Annotated[SignatureCredential | BearerCredential, Field(discriminator="method")]
 
 
-class ResolvedCaller(_Frozen):
-    """A confirmed credential that names a principal in this seller's records, as the store
-    read it."""
+class ResolvedView(_Frozen):
+    """What `/whoami` shows of a resolved caller: everything but the provenance."""
 
     kind: Literal["resolved"] = "resolved"
     principal: Principal
@@ -84,6 +84,12 @@ class ResolvedCaller(_Frozen):
     #: § 4.1.2: the signature attributes the body's entries to the principal: it covers
     #: the body, and the signing host is the principal's domain or a subdomain of it.
     attributed: bool
+
+
+class ResolvedCaller(ResolvedView):
+    """A confirmed credential that names a principal in this seller's records, as the store
+    read it."""
+
     #: What storage keeps with an entry this caller writes, the signed request included;
     #: not part of the caller's view.
     provenance: Provenance = Field(exclude=True)
@@ -109,3 +115,8 @@ class PublicCaller(_Frozen):
 
 #: The caller the boundary returns, told apart by `kind`.
 Caller = Annotated[ResolvedCaller | PublicCaller, Field(discriminator="kind")]
+#: What `/whoami` answers: the caller, without the provenance storage keeps.
+WhoAmI = Annotated[ResolvedView | PublicCaller, Field(discriminator="kind")]
+#: Reads a `/whoami` answer. A view it reads carries no provenance, so it is no caller the
+#: offer logic would take.
+WHOAMI: TypeAdapter[ResolvedView | PublicCaller] = TypeAdapter(WhoAmI)

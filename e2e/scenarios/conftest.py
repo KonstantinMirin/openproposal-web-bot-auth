@@ -1,6 +1,8 @@
 """What every scenario uses.
 
-The stack's addresses, a signer that holds the buyer's key, and each party's records.
+The stack's addresses, each agent's controls (`ControlClient`, with that
+agent's own operator key), a signer that holds the buyer's key, and each
+party's records.
 
 The scenarios service (e2e/docker-compose.yml) reads the buyer's key volume and
 both parties' database volumes from read-only mounts. Holding the buyer's key
@@ -34,14 +36,9 @@ from settings import (
 
 from persistence.observe import BuyerRecords, SellerRecords
 from shared.keyring import KeyStore
-from transport.control import OPERATOR_HEADER
+from transport.client import ControlClient
 
 __all__ = ["BUYER", "CFBOT", "SELLER"]  # the stack's addresses, re-exported for the scenarios
-# Operator and test controls, reached inside the network, not through the TLS front.
-SELLER_OPERATOR = str(SELLER_CONTROL.join("/operator"))
-BUYER_OPERATOR = str(BUYER_CONTROL.join("/operator"))
-SELLER_FAULTS = str(SELLER_CONTROL.join("/test/fault"))
-CFBOT_RUN = str(CFBOT_CONTROL.join("/run"))
 
 
 def buyer_key(kid: str | None = None) -> Ed25519Key:
@@ -86,20 +83,32 @@ def commit_body(amount: float) -> bytes:
     ).encode()
 
 
-def _operator_key(request: httpx.Request) -> None:
-    """Adds each agent's own operator key to a call to its controls, which the scenarios reach
-    inside the network over plain http."""
-    if request.url.scheme == "http":
-        request.headers[OPERATOR_HEADER] = OPERATOR_KEYS[request.url.host]
-
-
 @pytest.fixture
 def web() -> Iterator[httpx.Client]:
     """A client that trusts the public roots plus the demo CA, as every container does."""
-    with httpx.Client(
-        verify=ssl.create_default_context(), timeout=30, event_hooks={"request": [_operator_key]}
-    ) as client:
+    with httpx.Client(verify=ssl.create_default_context(), timeout=30) as client:
         yield client
+
+
+def control(web: httpx.Client, base: httpx.URL) -> ControlClient:
+    """One agent's controls, reached inside the network over plain http, with its own
+    operator key."""
+    return ControlClient(web, base, OPERATOR_KEYS[base.host])
+
+
+@pytest.fixture
+def seller_control(web: httpx.Client) -> ControlClient:
+    return control(web, SELLER_CONTROL)
+
+
+@pytest.fixture
+def buyer_control(web: httpx.Client) -> ControlClient:
+    return control(web, BUYER_CONTROL)
+
+
+@pytest.fixture
+def cfbot_control(web: httpx.Client) -> ControlClient:
+    return control(web, CFBOT_CONTROL)
 
 
 @pytest.fixture

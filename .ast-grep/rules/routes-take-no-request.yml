@@ -1,6 +1,8 @@
 # A route receives `caller` and its parsed inputs, never a Request, which would
 # hand it the credential headers. A route that needs the body takes RawBodyDep
-# (seller/http.py). No route is allowlisted.
+# (seller/http.py). A route is declared with its router's method decorator, or
+# with control_route (transport/operator.py) from its ControlOp. No route is
+# allowlisted.
 id: routes-take-no-request
 language: Python
 severity: error
@@ -11,7 +13,7 @@ rule:
   all:
     - has:
         kind: decorator
-        regex: '^@(api|operator)\.(get|post|put|patch|delete)\('
+        regex: '^@((api|operator|router)\.(get|post|put|patch|delete)|control_route)\('
     - has:
         kind: function_definition
         has:

@@ -12,15 +12,12 @@ from http import HTTPStatus
 
 import httpx
 from iab_agentic_primitives.web_bot_auth.httpx import WebBotAuth
-from pydantic import TypeAdapter, ValidationError
+from pydantic import ValidationError
 
 from persistence.values import Origin
-from protocol.values import JsonValue
 from shared.keyring import SigningIdentity
-from transport.control import CloudflareCheck
+from transport.control import CFBOT_VERDICT, CloudflareCheck
 from transport.operator import ControlError
-
-_VERDICT: TypeAdapter[JsonValue] = TypeAdapter(JsonValue)
 
 
 class Cfbot:
@@ -29,7 +26,8 @@ class Cfbot:
 
     async def verify(self, body: bytes) -> CloudflareCheck:
         """Signs `body` to cfbot's `/verify` and returns its status and verdict. A cfbot that
-        doesn't answer is a 502 `cfbot-unreachable`."""
+        doesn't answer is a 502 `cfbot-unreachable`; an answer that is no verdict, a 502
+        `cfbot-malformed`."""
         try:
             response = await self._http.post(
                 self._url,
@@ -41,7 +39,8 @@ class Cfbot:
             detail = f"cfbot didn't answer: {e}"
             raise ControlError(HTTPStatus.BAD_GATEWAY, "cfbot-unreachable", detail) from e
         try:
-            verdict = _VERDICT.validate_json(response.content)
-        except ValidationError:
-            verdict = response.content.decode("utf-8", "replace")
+            verdict = CFBOT_VERDICT.validate_json(response.content)
+        except ValidationError as e:
+            detail = f"cfbot answered {response.status_code} with no verdict: {e}"
+            raise ControlError(HTTPStatus.BAD_GATEWAY, "cfbot-malformed", detail) from e
         return CloudflareCheck(status=response.status_code, verdict=verdict)

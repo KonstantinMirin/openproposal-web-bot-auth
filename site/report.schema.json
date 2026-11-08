@@ -22,10 +22,7 @@
         },
         "entries": {
           "items": {
-            "additionalProperties": {
-              "$ref": "#/$defs/JsonValue"
-            },
-            "type": "object"
+            "$ref": "#/$defs/AssentEntry"
           },
           "title": "Entries",
           "type": "array"
@@ -105,6 +102,113 @@
       "title": "Answer",
       "type": "object"
     },
+    "AssentEntry": {
+      "additionalProperties": false,
+      "description": "The `AssentEntry` object of the `commercial` module.",
+      "properties": {
+        "at": {
+          "$ref": "#/$defs/Instant",
+          "description": "When the party wrote the entry, by its own statement. No rule reads order from it"
+        },
+        "ground": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AssentEntryGround"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Why the seller declined. Core terms: `availability` | `exclusivity` | `terms`, the grounds of \u00a7 4.3.2. Absent on any other entry. A receiver that doesn't know a term still reads the entry as a `decline`"
+        },
+        "idempotency_key": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PlainString"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Buyer-generated, unique per `commit`, opaque, and scoped to one buyer and seller pair. The seller MUST NOT interpret it (\u00a7 5.6.1)"
+        },
+        "line_item_ids": {
+          "description": "The line items the entry names. MUST be non-empty",
+          "items": {
+            "$ref": "#/$defs/PlainString"
+          },
+          "title": "Line Item Ids",
+          "type": "array"
+        },
+        "record_digest": {
+          "$ref": "#/$defs/Digest",
+          "description": "Of the binding record for the line items in `line_item_ids[]` (\u00a7 4.1.1)"
+        },
+        "role": {
+          "$ref": "#/$defs/AssentEntryRole",
+          "description": "`commitment` | `acceptance` | `withdrawal` | `decline`. It says what the entry does, and it implies the party"
+        },
+        "version": {
+          "$ref": "#/$defs/PlainInteger",
+          "description": "The `version` of the record the digest was computed over. `version` is outside the binding record, so the entry binds it"
+        }
+      },
+      "required": [
+        "at",
+        "line_item_ids",
+        "record_digest",
+        "role",
+        "version"
+      ],
+      "title": "AssentEntry",
+      "type": "object"
+    },
+    "AssentEntryGround": {
+      "anyOf": [
+        {
+          "enum": [
+            "availability",
+            "exclusivity",
+            "terms"
+          ],
+          "type": "string"
+        },
+        {
+          "$ref": "#/$defs/NamespacedTerm"
+        }
+      ]
+    },
+    "AssentEntryRole": {
+      "enum": [
+        "commitment",
+        "acceptance",
+        "withdrawal",
+        "decline"
+      ],
+      "type": "string"
+    },
+    "BothDigests": {
+      "additionalProperties": false,
+      "description": "Both parties' digest input, and the record_digest over it.",
+      "properties": {
+        "digest_input_bytes": {
+          "title": "Digest Input Bytes",
+          "type": "integer"
+        },
+        "record_digest": {
+          "title": "Record Digest",
+          "type": "string"
+        }
+      },
+      "required": [
+        "record_digest",
+        "digest_input_bytes"
+      ],
+      "title": "BothDigests",
+      "type": "object"
+    },
     "BuyerSide": {
       "additionalProperties": false,
       "description": "The request as the buyer sent it, and the seller's signed answer as it arrived.",
@@ -139,6 +243,76 @@
       "title": "BuyerSide",
       "type": "object"
     },
+    "CfbotAccepted": {
+      "additionalProperties": false,
+      "description": "cfbot verified the signature (cfbot/server.mjs `verifyRequest`).",
+      "properties": {
+        "content_digest_matches": {
+          "title": "Content Digest Matches",
+          "type": "boolean"
+        },
+        "directory_signatures": {
+          "items": {
+            "$ref": "#/$defs/DirectorySignature"
+          },
+          "title": "Directory Signatures",
+          "type": "array"
+        },
+        "identity": {
+          "title": "Identity",
+          "type": "string"
+        },
+        "keyid": {
+          "title": "Keyid",
+          "type": "string"
+        },
+        "nonce": {
+          "title": "Nonce",
+          "type": "string"
+        },
+        "ok": {
+          "const": true,
+          "title": "Ok",
+          "type": "boolean"
+        },
+        "verifier": {
+          "title": "Verifier",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ok",
+        "verifier",
+        "identity",
+        "keyid",
+        "nonce",
+        "directory_signatures",
+        "content_digest_matches"
+      ],
+      "title": "CfbotAccepted",
+      "type": "object"
+    },
+    "CfbotRefused": {
+      "additionalProperties": false,
+      "description": "cfbot refused the signature, and why.",
+      "properties": {
+        "error": {
+          "title": "Error",
+          "type": "string"
+        },
+        "ok": {
+          "const": false,
+          "title": "Ok",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "ok",
+        "error"
+      ],
+      "title": "CfbotRefused",
+      "type": "object"
+    },
     "CloudflareCheck": {
       "additionalProperties": false,
       "description": "cfbot's answer to a request the buyer signed: its status and its verdict.",
@@ -148,7 +322,22 @@
           "type": "integer"
         },
         "verdict": {
-          "$ref": "#/$defs/JsonValue"
+          "discriminator": {
+            "mapping": {
+              "false": "#/$defs/CfbotRefused",
+              "true": "#/$defs/CfbotAccepted"
+            },
+            "propertyName": "ok"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/CfbotAccepted"
+            },
+            {
+              "$ref": "#/$defs/CfbotRefused"
+            }
+          ],
+          "title": "Verdict"
         }
       },
       "required": [
@@ -159,24 +348,8 @@
       "type": "object"
     },
     "Digest": {
-      "additionalProperties": false,
-      "description": "Both parties' digest input, and the record_digest over it.",
-      "properties": {
-        "digest_input_bytes": {
-          "title": "Digest Input Bytes",
-          "type": "integer"
-        },
-        "record_digest": {
-          "title": "Record Digest",
-          "type": "string"
-        }
-      },
-      "required": [
-        "record_digest",
-        "digest_input_bytes"
-      ],
-      "title": "Digest",
-      "type": "object"
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "type": "string"
     },
     "Directory": {
       "additionalProperties": false,
@@ -249,6 +422,26 @@
       "title": "Directory",
       "type": "object"
     },
+    "DirectorySignature": {
+      "additionalProperties": false,
+      "description": "A signature of the buyer's directory that cfbot verified.",
+      "properties": {
+        "keyid": {
+          "title": "Keyid",
+          "type": "string"
+        },
+        "label": {
+          "title": "Label",
+          "type": "string"
+        }
+      },
+      "required": [
+        "label",
+        "keyid"
+      ],
+      "title": "DirectorySignature",
+      "type": "object"
+    },
     "FlowRun": {
       "additionalProperties": false,
       "description": "One credential's run of the flow: signature or bearer.",
@@ -267,7 +460,7 @@
         "digest": {
           "anyOf": [
             {
-              "$ref": "#/$defs/Digest"
+              "$ref": "#/$defs/BothDigests"
             },
             {
               "type": "null"
@@ -360,6 +553,10 @@
       "title": "Headers",
       "type": "object"
     },
+    "Instant": {
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+      "type": "string"
+    },
     "JsonValue": {},
     "Message": {
       "additionalProperties": false,
@@ -401,9 +598,21 @@
       "title": "Message",
       "type": "object"
     },
+    "NamespacedTerm": {
+      "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*:[A-Za-z0-9_-]+$",
+      "type": "string"
+    },
     "Origin": {
       "description": "https://<host>",
       "title": "Origin",
+      "type": "string"
+    },
+    "PlainInteger": {
+      "ge": -9007199254740991,
+      "le": 9007199254740991,
+      "type": "integer"
+    },
+    "PlainString": {
       "type": "string"
     },
     "Reverified": {

@@ -32,11 +32,37 @@ import httpx
 import pytest
 from openproposal import LineItemWrites
 
-from persistence.values import Origin
+from persistence.values import AuthMethod, Origin
 from protocol.record import compose, digest_input, items_by_id
-from protocol.values import JsonObject
+from protocol.values import JsonObject, JsonValue, read_json
 from tests._tools import load_yaml
-from tests.stack import BUYER, BUYER_OPERATOR, CFBOT, RESELLER, SELLER, Lines, Origins, Stack, lines
+from tests.stack import (
+    BUYER,
+    BUYER_OPERATOR,
+    CFBOT,
+    RESELLER,
+    SELLER,
+    Lines,
+    Origins,
+    Stack,
+    as_state,
+    lines,
+)
+from transport.client import ControlFailed
+from transport.control import (
+    CLOUDFLARE_CHECK,
+    COMMIT,
+    READ,
+    Agreed,
+    CfbotAccepted,
+    CommitTrigger,
+    ErrorBody,
+    FaultName,
+    Read,
+    ReadTrigger,
+    Refused,
+    Rejected,
+)
 
 DISPLAY = "business-daily-display"
 CTV = "weather-app-ctv"
@@ -68,19 +94,17 @@ def _sent(stack: Stack) -> list[tuple[str, str]]:
 
 
 def test_a_signed_commit_is_agreed_and_both_parties_keep_it(stack: Stack) -> None:
-    response = stack.commit("demo-wba-1", [DISPLAY])
-    assert response.status_code == 200
-    outcome = response.json()
-    assert outcome["state"] == "agreed", outcome
-    assert outcome["authentication_method"] == "web_bot_auth"
-    assert outcome["keyid"] == stack.buyer_keys.active().thumbprint
-    assert outcome["seller"] == {
-        "origin": SELLER,
-        "domain": "seller.wba-demo.noetis.dev",
-        "legal_name": "Demo Seller Inc.",
-    }
-    assert outcome["attributed"] is True  # the verified host is the proposal's seller domain
-    assert [e["role"] for e in outcome["entries"]] == ["commitment", "acceptance"]
+    outcome = as_state(Agreed, stack.commit("demo-wba-1", [DISPLAY]))
+    assert outcome.authentication_method == "web_bot_auth"
+    assert outcome.keyid == stack.buyer_keys.active().thumbprint
+    seller = outcome.seller
+    assert (str(seller.origin), seller.domain, seller.legal_name) == (
+        SELLER,
+        "seller.wba-demo.noetis.dev",
+        "Demo Seller Inc.",
+    )
+    assert outcome.attributed is True  # the verified host is the proposal's seller domain
+    assert [e.role for e in outcome.entries] == ["commitment", "acceptance"]
     # The trigger named no seller, so it went to the configured one.
     assert _sent(stack) == [
         ("GET", f"{SELLER}/proposals/demo-wba-1"),
@@ -88,25 +112,24 @@ def test_a_signed_commit_is_agreed_and_both_parties_keep_it(stack: Stack) -> Non
     ]
     with stack.seller_records() as records:
         (agreed,) = records.agreed("demo-wba-1")
-    assert agreed.record_digest == outcome["record_digest"]
+    assert agreed.record_digest == outcome.record_digest
     assert _commits(stack, "demo-wba-1") == ["agreed"]
     with stack.buyer_records() as records:
-        kept = records.response(outcome["evidence_id"])
+        kept = records.response(outcome.evidence_id)
     assert (str(kept.signer.origin), kept.response.status) == (SELLER, 200)
     assert kept.signer.keyid == stack.seller_key.thumbprint
-    _assert_kept_as_carried(stack, "demo-wba-1", outcome["evidence_id"])
+    _assert_kept_as_carried(stack, "demo-wba-1", outcome.evidence_id)
 
 
 def test_a_bearer_commit_is_agreed_with_no_signing_key(stack: Stack) -> None:
-    outcome = stack.commit("demo-bearer-1", [DISPLAY], "bearer").json()
-    assert outcome["state"] == "agreed", outcome
-    assert outcome["authentication_method"] == "bearer"
-    assert outcome["keyid"] is None
+    outcome = as_state(Agreed, stack.commit("demo-bearer-1", [DISPLAY], "bearer"))
+    assert outcome.authentication_method == "bearer"
+    assert outcome.keyid is None
     (_, commit) = stack.requests
     assert commit.headers["authorization"].startswith("Bearer ")
     assert "signature" not in commit.headers
     with stack.buyer_records() as records:
-        kept = records.response(outcome["evidence_id"])
+        kept = records.response(outcome.evidence_id)
     sent = kept.response.request.lines
     assert all(name.lower() != "authorization" for name, _ in sent)  # the token is never kept
     assert list(sent) == _sent_lines(commit)
@@ -124,19 +147,17 @@ ELSEWHERE = Origins(
     [("demo-wba-1", "web_bot_auth"), ("demo-bearer-1", "bearer")],
 )
 def test_a_deployment_under_other_origins_reads_and_commits(
-    tmp_path: Path, proposal_id: str, credential: str
+    tmp_path: Path, proposal_id: str, credential: AuthMethod
 ) -> None:
     """Each agent takes its own origin from its settings: the seller issues in its name."""
     with Stack(tmp_path, origins=ELSEWHERE) as stack:
-        read = stack.read(proposal_id, credential).json()
-        assert read["state"] == "read", read
-        assert read["proposal"]["seller"] == {
+        read = as_state(Read, stack.read(proposal_id, credential))
+        assert read.proposal.get("seller") == {
             "domain": "sell-side.wba-demo.noetis.dev",
             "legal_name": "Demo Seller Inc.",
         }
-        outcome = stack.commit(proposal_id, [DISPLAY], credential).json()
-    assert outcome["state"] == "agreed", outcome
-    assert outcome["seller"]["origin"] == "https://sell-side.wba-demo.noetis.dev"
+        outcome = as_state(Agreed, stack.commit(proposal_id, [DISPLAY], credential))
+    assert str(outcome.seller.origin) == "https://sell-side.wba-demo.noetis.dev"
     assert {r.url.host for r in stack.requests} == {"sell-side.wba-demo.noetis.dev"}
 
 
@@ -148,9 +169,9 @@ def _outside_line_items(proposal: JsonObject) -> JsonObject:
 def test_a_commit_saves_the_agreed_proposal_and_leaves_what_it_was_decided_on(
     stack: Stack,
 ) -> None:
-    issued = stack.read("demo-wba-2").json()["proposal"]
-    assert stack.commit("demo-wba-2", [DISPLAY]).json()["state"] == "agreed"
-    agreed = stack.read("demo-wba-2").json()["proposal"]
+    issued = as_state(Read, stack.read("demo-wba-2")).proposal
+    as_state(Agreed, stack.commit("demo-wba-2", [DISPLAY]))
+    agreed = as_state(Read, stack.read("demo-wba-2")).proposal
 
     # The named line item is the composed one, agreed; the rest of the proposal is as issued,
     # and its status follows § 4.3.3: the other line item is still published.
@@ -158,7 +179,7 @@ def test_a_commit_saves_the_agreed_proposal_and_leaves_what_it_was_decided_on(
     composed = compose(issued, writes)
     assert items_by_id(agreed)[DISPLAY] == {**items_by_id(composed)[DISPLAY], "status": "agreed"}
     assert items_by_id(agreed)[CTV] == items_by_id(issued)[CTV]
-    assert agreed["status"] == "published"
+    assert agreed.get("status") == "published"
     assert _outside_line_items(agreed) == _outside_line_items(issued)
 
     # The seller decided on the proposal as issued: the digest input it stored is the one
@@ -168,11 +189,11 @@ def test_a_commit_saves_the_agreed_proposal_and_leaves_what_it_was_decided_on(
     assert stored.digest_input == digest_input(composed, [DISPLAY])
 
     # The next commit is decided on the agreed proposal, and agrees the last line item.
-    assert stack.commit("demo-wba-2", [CTV]).json()["state"] == "agreed"
-    final = stack.read("demo-wba-2").json()["proposal"]
+    as_state(Agreed, stack.commit("demo-wba-2", [CTV]))
+    final = as_state(Read, stack.read("demo-wba-2")).proposal
     assert items_by_id(final)[DISPLAY] == items_by_id(agreed)[DISPLAY]
-    assert items_by_id(final)[CTV]["status"] == "agreed"
-    assert final["status"] == "agreed"
+    assert items_by_id(final)[CTV].get("status") == "agreed"
+    assert final.get("status") == "agreed"
 
 
 def _sent_lines(request: httpx.Request) -> Lines:
@@ -198,42 +219,43 @@ def _assert_kept_as_carried(stack: Stack, proposal_id: str, evidence_id: int) ->
 
 
 def test_a_read_answers_the_proposal_as_received(stack: Stack) -> None:
-    outcome = stack.read("demo-wba-2").json()
-    assert outcome["state"] == "read", outcome
-    assert outcome["proposal"]["seller"]["domain"] == "seller.wba-demo.noetis.dev"
-    assert [i["line_item_id"] for i in outcome["proposal"]["line_items"]] == [DISPLAY, CTV]
-    assert stack.read("demo-bearer-1", "bearer").json()["keyid"] is None
+    outcome = as_state(Read, stack.read("demo-wba-2"))
+    assert outcome.proposal.get("seller") == {
+        "domain": "seller.wba-demo.noetis.dev",
+        "legal_name": "Demo Seller Inc.",
+    }
+    assert list(items_by_id(outcome.proposal)) == [DISPLAY, CTV]
+    assert as_state(Read, stack.read("demo-bearer-1", "bearer")).keyid is None
 
 
 def test_a_read_the_seller_refuses_is_rejected_with_its_errors(stack: Stack) -> None:
-    outcome = stack.read("no-such-proposal").json()
-    assert outcome["state"] == "rejected"
-    assert [e["code"] for e in outcome["errors"]] == ["not_found"]
-    assert outcome["commit_id"] is None
+    outcome = as_state(Rejected, stack.read("no-such-proposal"))
+    assert [e.code for e in outcome.errors] == ["not_found"]
+    assert outcome.commit_id is None
 
 
 # Refused before anything is sent
 
 
 def test_an_unknown_line_item_is_refused_unsent(stack: Stack) -> None:
-    response = stack.commit("demo-wba-1", ["no-such-item"])
-    assert response.status_code == 200
-    outcome = response.json()
-    assert (outcome["state"], outcome["reason"]) == ("refused", "unknown-line-item")
-    assert "no-such-item" in outcome["detail"]
+    outcome = as_state(Refused, stack.commit("demo-wba-1", ["no-such-item"]))
+    assert outcome.code == "unknown-line-item"
+    assert "no-such-item" in outcome.detail
     assert stack.requests == []
 
 
 def test_a_trigger_for_another_seller_is_refused_unsent(stack: Stack) -> None:
     """The seller is resolved once, from the buyer's own records."""
-    read = {"seller": "https://other.example", "proposal_id": "p-1"}
-    for route, trigger in (
-        ("/operator/read", read),
-        ("/operator/commit", read | {"line_item_ids": [DISPLAY]}),
-    ):
-        outcome = stack.buyer.post(route, json=trigger, headers=BUYER_OPERATOR).json()
-        assert (outcome["state"], outcome["reason"]) == ("refused", "unknown-seller")
-        assert outcome["seller"] is None
+    other = Origin.parse("https://other.wba-demo.noetis.dev")
+    outcomes = [
+        stack.buyer_control.call(READ, ReadTrigger(seller=other, proposal_id="p-1")),
+        stack.buyer_control.call(
+            COMMIT, CommitTrigger(seller=other, proposal_id="p-1", line_item_ids=[DISPLAY])
+        ),
+    ]
+    for outcome in outcomes:
+        refused = as_state(Refused, outcome)
+        assert (refused.code, refused.seller) == ("unknown-seller", None)
     assert stack.requests == []
 
 
@@ -248,34 +270,36 @@ def test_a_trigger_for_another_seller_is_refused_unsent(stack: Stack) -> None:
     ],
     ids=["uppercase", "trailing-slash", "port", "no-scheme", "http"],
 )
-@pytest.mark.parametrize("route", ["/operator/read", "/operator/commit"])
+@pytest.mark.parametrize("route", [READ.path, COMMIT.path])
 def test_a_trigger_that_names_no_origin_is_invalid(stack: Stack, seller: str, route: str) -> None:
     """A seller is named by its origin, `https://<host>`, and nothing else."""
     trigger = {"seller": seller, "proposal_id": "demo-wba-1", "line_item_ids": [DISPLAY]}
     response = stack.buyer.post(route, json=trigger, headers=BUYER_OPERATOR)
     assert response.status_code == 422, response.text
+    assert ErrorBody.model_validate_json(response.content).error == "validation"
     assert stack.requests == []
 
 
 def test_a_bearer_call_without_an_issued_token_is_refused_unsent(tmp_path: Path) -> None:
     with Stack(tmp_path, token=False) as stack:
-        outcome = stack.commit("demo-bearer-1", [DISPLAY], "bearer").json()
-        assert (outcome["state"], outcome["reason"]) == ("refused", "credential-not-issued")
-        assert outcome["authentication_method"] == "bearer"
+        outcome = as_state(Refused, stack.commit("demo-bearer-1", [DISPLAY], "bearer"))
+        assert outcome.code == "credential-not-issued"
+        assert outcome.authentication_method == "bearer"
         assert stack.requests == []
 
 
 def test_a_commit_to_a_proposal_the_seller_wont_show_is_refused(stack: Stack) -> None:
-    outcome = stack.commit("no-such-proposal", [DISPLAY]).json()
-    assert (outcome["state"], outcome["reason"]) == ("refused", "unreadable-proposal")
-    assert "not_found" in outcome["detail"]
+    outcome = as_state(Refused, stack.commit("no-such-proposal", [DISPLAY]))
+    assert outcome.code == "unreadable-proposal"
+    assert "not_found" in outcome.detail
     assert [m for m, _ in _sent(stack)] == ["GET"]  # nothing to commit to, so nothing sent
 
 
 def test_a_commit_trigger_names_at_least_one_line_item(stack: Stack) -> None:
     trigger = {"proposal_id": "demo-wba-1", "line_item_ids": []}
-    response = stack.buyer.post("/operator/commit", json=trigger, headers=BUYER_OPERATOR)
+    response = stack.buyer.post(COMMIT.path, json=trigger, headers=BUYER_OPERATOR)
     assert response.status_code == 422
+    assert ErrorBody.model_validate_json(response.content).error == "validation"
     assert stack.requests == []
 
 
@@ -302,12 +326,9 @@ BOUNDARY = json.dumps({"error": "invalid-token", "detail": "no principal"}).enco
 )
 def test_a_malformed_read_is_refused(stack: Stack, status: int, body: bytes) -> None:
     _replace(stack, "GET", status, body)
-    response = stack.read("demo-wba-1")
-    assert response.status_code == 200
-    outcome = response.json()
-    assert (outcome["state"], outcome["reason"]) == ("refused", "malformed-answer"), outcome
+    assert as_state(Refused, stack.read("demo-wba-1")).code == "malformed-answer"
     # The commit flow refuses at the read, so it composes and sends nothing.
-    assert stack.commit("demo-wba-1", [DISPLAY]).json()["reason"] == "malformed-answer"
+    assert as_state(Refused, stack.commit("demo-wba-1", [DISPLAY])).code == "malformed-answer"
     assert [m for m, _ in _sent(stack)] == ["GET", "GET"]
     assert _commits(stack, "demo-wba-1") == []
 
@@ -329,10 +350,7 @@ def test_a_malformed_answer_to_a_commit_is_refused_and_settles_nothing(
     stack: Stack, status: int, body: bytes, reason: str
 ) -> None:
     _replace(stack, "POST", status, body)
-    response = stack.commit("demo-wba-1", [DISPLAY])
-    assert response.status_code == 200
-    outcome = response.json()
-    assert (outcome["state"], outcome["reason"]) == ("refused", reason), outcome
+    assert as_state(Refused, stack.commit("demo-wba-1", [DISPLAY])).code == reason
     assert _commits(stack, "demo-wba-1") == ["pending"]
     assert _kept_nothing(stack)
 
@@ -344,18 +362,17 @@ def _down(request: httpx.Request) -> httpx.Response:
 
 def test_an_unreachable_seller_is_refused(stack: Stack) -> None:
     stack.answer = _down
-    outcome = stack.read("demo-wba-1").json()
-    assert (outcome["state"], outcome["reason"]) == ("refused", "unreachable")
+    assert as_state(Refused, stack.read("demo-wba-1")).code == "unreachable"
 
 
-def _edited(stack: Stack, method: str, edit: Callable[[dict[str, object]], None]) -> None:
+def _edited(stack: Stack, method: str, edit: Callable[[JsonObject], None]) -> None:
     """The seller's own answers to `method` requests, edited, then signed again."""
 
     def answer(request: httpx.Request) -> httpx.Response | None:
         if request.method != method:
             return None
         real = stack.forward(request)
-        document = real.json()
+        document = read_json(real.content)
         edit(document)
         return stack.signed(request, real.status_code, json.dumps(document).encode())
 
@@ -365,44 +382,53 @@ def _edited(stack: Stack, method: str, edit: Callable[[dict[str, object]], None]
 def test_a_proposal_that_names_another_seller_is_refused(stack: Stack) -> None:
     """A correctly signed proposal from this seller that names another seller."""
     _edited(stack, "GET", lambda d: d.update(seller={"domain": "other.example", "legal_name": "X"}))
-    outcome = stack.commit("demo-wba-1", [DISPLAY]).json()
-    assert (outcome["state"], outcome["reason"]) == ("refused", "wrong-seller"), outcome
-    assert "other.example" in outcome["detail"]
+    outcome = as_state(Refused, stack.commit("demo-wba-1", [DISPLAY]))
+    assert outcome.code == "wrong-seller"
+    assert "other.example" in outcome.detail
     assert _commits(stack, "demo-wba-1") == []
 
 
-def _entries(
-    edit: Callable[[list[dict[str, object]]], object],
-) -> Callable[[dict[str, object]], None]:
-    def apply(document: dict[str, object]) -> None:
-        entries = document["entries"]
+def _entries(edit: Callable[[list[JsonValue]], object]) -> Callable[[JsonObject], None]:
+    def apply(document: JsonObject) -> None:
+        entries = document.get("entries")
         assert isinstance(entries, list)
         edit(entries)
 
     return apply
 
 
+def _member(index: int, **members: JsonValue) -> Callable[[list[JsonValue]], None]:
+    """Sets `members` on the entry at `index`."""
+
+    def set_members(entries: list[JsonValue]) -> None:
+        entry = entries[index]
+        assert isinstance(entry, dict)
+        entry.update(members)
+
+    return set_members
+
+
 @pytest.mark.parametrize(
     ("edit", "rule"),
     [
         # The result doesn't start with the commit's own entry.
-        (_entries(lambda e: e[0].update(at="2020-01-01T00:00:00Z")), "doesn't start with"),
+        (_entries(_member(0, at="2020-01-01T00:00:00Z")), "doesn't start with"),
         (_entries(lambda e: e.pop()), "no acceptance"),
-        (_entries(lambda e: e[1].update(line_item_ids=[CTV])), "no acceptance"),
+        (_entries(_member(1, line_item_ids=[CTV])), "no acceptance"),
     ],
     ids=["first-entry", "no-acceptance", "acceptance-for-other-items"],
 )
 def test_a_result_that_doesnt_answer_the_commit_is_refused_then_replayed(
-    stack: Stack, edit: Callable[[dict[str, object]], None], rule: str
+    stack: Stack, edit: Callable[[JsonObject], None], rule: str
 ) -> None:
     _edited(stack, "POST", edit)
-    outcome = stack.commit("demo-wba-1", [DISPLAY]).json()
-    assert (outcome["state"], outcome["reason"]) == ("refused", "result-mismatch"), outcome
-    assert rule in outcome["detail"]
+    outcome = as_state(Refused, stack.commit("demo-wba-1", [DISPLAY]))
+    assert outcome.code == "result-mismatch"
+    assert rule in outcome.detail
     assert _commits(stack, "demo-wba-1") == ["pending"] and _kept_nothing(stack)
     # The same commit, re-sent whole, gets the seller's stored result.
     stack.answer = None
-    assert stack.commit("demo-wba-1", [DISPLAY]).json()["state"] == "agreed"
+    as_state(Agreed, stack.commit("demo-wba-1", [DISPLAY]))
     assert _commits(stack, "demo-wba-1") == ["agreed"]
 
 
@@ -422,12 +448,12 @@ def test_a_settlement_that_fails_keeps_no_evidence(stack: Stack) -> None:
         return stack.forward(request)
 
     stack.answer = settled_meanwhile
-    response = stack.commit("demo-wba-1", [DISPLAY])
-    assert response.status_code == 409
-    assert response.json() == {
-        "error": "not-pending",
-        "detail": "commit 1 is no longer pending, so it stays settled",
-    }
+    with pytest.raises(ControlFailed) as failed:
+        stack.commit("demo-wba-1", [DISPLAY])
+    assert failed.value.status == 409
+    assert failed.value.error == ErrorBody(
+        error="not-pending", detail="commit 1 is no longer pending, so it stays settled"
+    )
     assert _kept_nothing(stack)
 
 
@@ -448,14 +474,13 @@ def test_a_digest_that_doesnt_recompute_from_the_kept_input_is_refused(stack: St
     """The seller's acceptance matches the commit, but its record_digest isn't the digest of
     the input the buyer kept for that commit."""
     stack.answer = lambda request: _down(request) if request.method == "POST" else None
-    first = stack.commit("demo-wba-1", [DISPLAY]).json()
-    assert (first["state"], first["reason"]) == ("refused", "unreachable"), first
+    assert as_state(Refused, stack.commit("demo-wba-1", [DISPLAY])).code == "unreachable"
     assert _commits(stack, "demo-wba-1") == ["pending"]
     _corrupt_digest_input(stack, 1)
     stack.answer = None
-    outcome = stack.commit("demo-wba-1", [DISPLAY]).json()
-    assert (outcome["state"], outcome["reason"]) == ("refused", "result-mismatch"), outcome
-    assert "record_digest doesn't recompute" in outcome["detail"]
+    outcome = as_state(Refused, stack.commit("demo-wba-1", [DISPLAY]))
+    assert outcome.code == "result-mismatch"
+    assert "record_digest doesn't recompute" in outcome.detail
     assert _commits(stack, "demo-wba-1") == ["pending"] and _kept_nothing(stack)
 
 
@@ -478,17 +503,17 @@ def _signed_by_the_reseller(stack: Stack, method: str) -> None:
 @pytest.mark.parametrize("credential", ["web_bot_auth", "bearer"])
 @pytest.mark.parametrize("on", ["read", "commit"])
 def test_an_answer_signed_by_another_origin_is_refused(
-    stack: Stack, credential: str, on: str
+    stack: Stack, credential: AuthMethod, on: str
 ) -> None:
     proposal_id = PROPOSAL[credential]
     _signed_by_the_reseller(stack, "GET" if on == "read" else "POST")
     if on == "read":
-        outcome = stack.read(proposal_id, credential).json()
+        outcome = as_state(Refused, stack.read(proposal_id, credential))
     else:
-        outcome = stack.commit(proposal_id, [CTV], credential).json()
-    assert (outcome["state"], outcome["reason"]) == ("refused", "origin-mismatch"), outcome
-    assert RESELLER in outcome["detail"]
-    assert outcome["authentication_method"] == credential
+        outcome = as_state(Refused, stack.commit(proposal_id, [CTV], credential))
+    assert outcome.code == "origin-mismatch"
+    assert RESELLER in outcome.detail
+    assert outcome.authentication_method == credential
     assert _kept_nothing(stack)
     assert stack.commit_states(proposal_id, [CTV]) == ([] if on == "read" else ["pending"])
 
@@ -496,10 +521,9 @@ def test_an_answer_signed_by_another_origin_is_refused(
 def test_a_pending_commit_is_found_whatever_the_order_of_its_line_items(stack: Stack) -> None:
     later = {"errors": [{"code": "not_committable", "detail": "busy", "retry": "same"}]}
     _replace(stack, "POST", 503, json.dumps(later).encode())
-    assert stack.commit("demo-wba-1", [DISPLAY, CTV]).json()["state"] == "rejected"
+    as_state(Rejected, stack.commit("demo-wba-1", [DISPLAY, CTV]))
     stack.answer = None
-    agreed = stack.commit("demo-wba-1", [CTV, DISPLAY]).json()
-    assert agreed["state"] == "agreed", agreed
+    as_state(Agreed, stack.commit("demo-wba-1", [CTV, DISPLAY]))
     first, again = (r.content for r in stack.requests if r.method == "POST")
     assert first == again  # the pending commit, re-sent whole
     assert stack.commit_states("demo-wba-1", [DISPLAY, CTV]) == ["agreed"]
@@ -509,23 +533,20 @@ def test_a_pending_commit_is_found_whatever_the_order_of_its_line_items(stack: S
 
 
 def test_a_stored_rejection_settles_the_commit(stack: Stack) -> None:
-    assert stack.commit("demo-wba-1", [DISPLAY]).json()["state"] == "agreed"
+    as_state(Agreed, stack.commit("demo-wba-1", [DISPLAY]))
     # An agreed line item can't be committed to again; the seller stores that answer.
-    outcome = stack.commit("demo-wba-1", [DISPLAY]).json()
-    assert outcome["state"] == "rejected", outcome
-    assert [(e["code"], e["retry"]) for e in outcome["errors"]] == [("not_committable", "none")]
+    outcome = as_state(Rejected, stack.commit("demo-wba-1", [DISPLAY]))
+    assert [(e.code, e.retry) for e in outcome.errors] == [("not_committable", "none")]
     assert _commits(stack, "demo-wba-1") == ["agreed", "rejected"]
 
 
 def test_a_retry_same_rejection_keeps_the_commit_pending(stack: Stack) -> None:
     later = {"errors": [{"code": "not_committable", "detail": "busy", "retry": "same"}]}
     _replace(stack, "POST", 503, json.dumps(later).encode())
-    outcome = stack.commit("demo-wba-1", [DISPLAY]).json()
-    assert outcome["state"] == "rejected" and outcome["commit_id"] == 1
+    assert as_state(Rejected, stack.commit("demo-wba-1", [DISPLAY])).commit_id == 1
     assert _commits(stack, "demo-wba-1") == ["pending"]
     stack.answer = None
-    agreed = stack.commit("demo-wba-1", [DISPLAY]).json()
-    assert (agreed["state"], agreed["commit_id"]) == ("agreed", 1)
+    assert as_state(Agreed, stack.commit("demo-wba-1", [DISPLAY])).commit_id == 1
     first, again = (json.loads(r.content) for r in stack.requests if r.method == "POST")
     assert first == again  # re-sent whole, with the same idempotency_key
 
@@ -534,7 +555,7 @@ def test_a_retry_same_rejection_keeps_the_commit_pending(stack: Stack) -> None:
 
 #: What each mode breaks, per credential. A bearer request is unsigned, so there is no
 #: request signature to bind to: unbound and rebound answers are what it should get.
-FAULTS = [
+FAULTS: list[tuple[AuthMethod, FaultName, str]] = [
     ("web_bot_auth", "strip", "signature-missing"),
     ("web_bot_auth", "unbound", "response-not-bound"),
     ("web_bot_auth", "rebound", "signature-invalid"),
@@ -548,42 +569,48 @@ PROPOSAL = {"web_bot_auth": "demo-wba-2", "bearer": "demo-bearer-1"}
 @pytest.mark.parametrize(("credential", "mode", "reason"), FAULTS)
 @pytest.mark.parametrize("on", ["read", "commit"])
 def test_each_fault_is_refused(
-    tmp_path: Path, credential: str, mode: str, reason: str, on: str
+    tmp_path: Path, credential: AuthMethod, mode: FaultName, reason: str, on: str
 ) -> None:
     proposal_id = PROPOSAL[credential]
     with Stack(tmp_path, faults=True) as stack:
-        assert stack.seller.put("/test/fault", json={"mode": mode, "on": on}).status_code == 200
+        stack.fault(mode, "read" if on == "read" else "commit")
         if on == "read":
-            outcome = stack.read(proposal_id, credential).json()
+            outcome = as_state(Refused, stack.read(proposal_id, credential))
         else:
-            outcome = stack.commit(proposal_id, [CTV], credential).json()
-        assert (outcome["state"], outcome["reason"]) == ("refused", reason), outcome
-        assert outcome["authentication_method"] == credential
+            outcome = as_state(Refused, stack.commit(proposal_id, [CTV], credential))
+        assert outcome.code == reason
+        assert outcome.authentication_method == credential
         assert _kept_nothing(stack)
-        assert stack.seller.put("/test/fault", json={"mode": "none"}).status_code == 200
-        assert stack.commit(proposal_id, [CTV], credential).json()["state"] == "agreed"
+        stack.fault("none")
+        as_state(Agreed, stack.commit(proposal_id, [CTV], credential))
 
 
 @pytest.mark.parametrize("mode", ["unbound", "rebound"])
-def test_an_answer_to_a_bearer_request_needs_no_binding(tmp_path: Path, mode: str) -> None:
+def test_an_answer_to_a_bearer_request_needs_no_binding(tmp_path: Path, mode: FaultName) -> None:
     with Stack(tmp_path, faults=True) as stack:
-        stack.seller.put("/test/fault", json={"mode": mode})
-        assert stack.commit("demo-bearer-1", [CTV], "bearer").json()["state"] == "agreed"
+        stack.fault(mode)
+        as_state(Agreed, stack.commit("demo-bearer-1", [CTV], "bearer"))
 
 
 # cfbot
 
 
 def test_the_buyer_signs_for_cfbot_at_its_configured_origin(stack: Stack) -> None:
-    check = stack.buyer.post("/operator/cloudflare-check", headers=BUYER_OPERATOR).json()
-    assert check["status"] == 200
-    assert check["verdict"]["ok"] is True and check["verdict"]["identity"] == BUYER
+    check = stack.buyer_control.call(CLOUDFLARE_CHECK, None)
+    assert check.status == 200
+    assert isinstance(check.verdict, CfbotAccepted) and check.verdict.identity == BUYER
     (sent,) = stack.requests
     assert str(sent.url) == f"{CFBOT}/verify"
     assert f'"{BUYER}' in sent.headers["signature-agent"]
 
 
-def test_an_unreadable_cfbot_verdict_is_reported_as_text(stack: Stack) -> None:
+def test_an_answer_from_cfbot_that_is_no_verdict_is_a_bad_gateway(stack: Stack) -> None:
     stack.cfbot = lambda _: httpx.Response(502, content=b"bad gateway")
-    check = stack.buyer.post("/operator/cloudflare-check", headers=BUYER_OPERATOR).json()
-    assert check == {"status": 502, "verdict": "bad gateway"}
+    with pytest.raises(ControlFailed) as failed:
+        stack.buyer_control.call(CLOUDFLARE_CHECK, None)
+    assert failed.value.status == 502
+    assert failed.value.error is not None and failed.value.error.error == "cfbot-malformed"
+    # A verdict in another shape than cfbot's is no verdict either.
+    stack.cfbot = lambda _: httpx.Response(200, json={"ok": True})
+    with pytest.raises(ControlFailed):
+        stack.buyer_control.call(CLOUDFLARE_CHECK, None)

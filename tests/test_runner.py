@@ -50,8 +50,19 @@ from tests.stack import (
     SELLER_OPERATOR,
     TOKEN,
     Stack,
+    cfbot_accepts,
 )
-from transport.control import OPERATOR_HEADER
+from transport.client import ControlClient, ControlFailed
+from transport.control import (
+    COMMIT,
+    ISSUE,
+    KEYS,
+    OPERATOR_HEADER,
+    OUTCOME,
+    Agreed,
+    ErrorBody,
+    IssueRequest,
+)
 
 SCHEMA_FILE = Path(__file__).resolve().parent.parent / "site" / "report.schema.json"
 SCHEMA = json.loads(SCHEMA_FILE.read_text())
@@ -182,7 +193,7 @@ def _after_commit(*changes: Callable[[Stack], None]) -> Corruption:
 
     def corrupt(stack: Stack) -> After:
         def after(request: httpx.Request, response: httpx.Response) -> httpx.Response:
-            if request.url.path == "/operator/commit":
+            if request.url.path == COMMIT.path:
                 for change in changes:
                     change(stack)
             return response
@@ -221,10 +232,10 @@ def _answer_bound_to_nothing(stack: Stack) -> After:
     bound to nothing."""
 
     def after(request: httpx.Request, response: httpx.Response) -> httpx.Response:
-        if request.url.path == "/operator/commit":
-            outcome = json.loads(response.read())
-            if outcome.get("authentication_method") == "web_bot_auth":
-                _unbind(stack, outcome["evidence_id"])
+        if request.url.path == COMMIT.path:
+            outcome = OUTCOME.validate_json(response.read())
+            if isinstance(outcome, Agreed) and outcome.authentication_method == "web_bot_auth":
+                _unbind(stack, outcome.evidence_id)
         return response
 
     return after
@@ -265,7 +276,7 @@ def _signed_commit_reported_as_bearer(_stack: Stack) -> After:
     """The network rewrites the buyer's outcome of a signed commit to name the bearer token."""
 
     def after(request: httpx.Request, response: httpx.Response) -> httpx.Response:
-        if request.url.path != "/operator/commit":
+        if request.url.path != COMMIT.path:
             return response
         outcome = json.loads(response.read())
         if outcome.get("authentication_method") == "web_bot_auth":
@@ -277,9 +288,7 @@ def _signed_commit_reported_as_bearer(_stack: Stack) -> After:
 
 def _cfbot_sees_the_reseller(stack: Stack) -> After:
     """cfbot verifies the buyer's signature as another origin's."""
-    stack.cfbot = lambda _: httpx.Response(
-        200, json={"ok": True, "identity": RESELLER, "verifier": "web-bot-auth (test)"}
-    )
+    stack.cfbot = lambda _: cfbot_accepts(RESELLER)
     return lambda _request, response: response
 
 
@@ -291,20 +300,24 @@ class Corrupted:
     corrupt: Corruption
     step: str
     detail: str
+    #: What the step raised: a check that failed, or a control call that answered an error.
+    failure: str = "CheckFailed"
 
 
 CORRUPTED = [
     Corrupted(
         "the seller fails to issue",
-        _answered("/operator/issue", 500),
+        _answered(ISSUE.path, 500),
         "signature-issue",
-        "issue returned 500: down",
+        "POST /operator/issue answered 500: down",
+        failure="ControlFailed",
     ),
     Corrupted(
         "the buyer fails to commit",
-        _answered("/operator/commit", 500),
+        _answered(COMMIT.path, 500),
         "signature-commit",
-        "commit returned 500: down",
+        "POST /operator/commit answered 500: down",
+        failure="ControlFailed",
     ),
     Corrupted(
         "the buyer used another credential",
@@ -437,32 +450,35 @@ def test_a_run_fails_when_the_parties_records_dont_add_up(
     transport = httpx.MockTransport(route)
     report = asyncio.run(run_once(_settings(stack, tmp_path / "out"), transport=transport))
     failed = {s.id: s.detail for s in report.steps if not s.ok}
-    assert failed.get(row.step) == f"CheckFailed: {row.detail}", failed
+    assert failed.get(row.step) == f"{row.failure}: {row.detail}", failed
 
 
 def test_a_cfbot_refusal_fails_the_cloudflare_step(stack: Stack, tmp_path: Path) -> None:
-    stack.cfbot = lambda _: httpx.Response(403, json={"ok": False, "reason": "signature-invalid"})
+    stack.cfbot = lambda _: httpx.Response(403, json={"ok": False, "error": "signature-invalid"})
     report = _run(stack, tmp_path / "out")
     (cloudflare,) = [s for s in report.steps if s.id == "cloudflare"]
-    assert not cloudflare.ok and "cfbot refused: 403" in (cloudflare.detail or "")
+    assert cloudflare.detail == "CheckFailed: cfbot refused: 403 signature-invalid"
     assert [s.id for s in report.steps if not s.ok] == ["cloudflare"]
 
 
 def test_each_agent_refuses_another_partys_operator_key(stack: Stack) -> None:
     """Each agent's controls take its own key only, so a run passes only when the runner
     sends each agent its own."""
-    issue = {"principal_id": "buyer-wba"}
-
-    def seller(key: dict[str, str]) -> int:
-        response: httpx.Response = stack.seller.post("/operator/issue", json=issue, headers=key)
-        return response.status_code
-
-    def buyer(key: dict[str, str]) -> int:
-        response: httpx.Response = stack.buyer.get("/operator/keys", headers=key)
-        return response.status_code
-
-    assert (seller(BUYER_OPERATOR), buyer(SELLER_OPERATOR)) == (403, 403)
-    assert (seller(SELLER_OPERATOR), buyer(BUYER_OPERATOR)) == (200, 200)
+    seller_key = SecretStr(SELLER_OPERATOR[OPERATOR_HEADER])
+    buyer_key = SecretStr(BUYER_OPERATOR[OPERATOR_HEADER])
+    refused = ErrorBody(error="operator-key", detail="operator key required")
+    with pytest.raises(ControlFailed) as failed:
+        ControlClient(stack.seller, operator_key=buyer_key).call(
+            ISSUE, IssueRequest(principal_id="buyer-wba")
+        )
+    assert (failed.value.status, failed.value.error) == (403, refused)
+    with pytest.raises(ControlFailed) as failed:
+        ControlClient(stack.buyer, operator_key=seller_key).call(KEYS, None)
+    assert (failed.value.status, failed.value.error) == (403, refused)
+    ControlClient(stack.seller, operator_key=seller_key).call(
+        ISSUE, IssueRequest(principal_id="buyer-wba")
+    )
+    ControlClient(stack.buyer, operator_key=buyer_key).call(KEYS, None)
 
 
 @pytest.mark.parametrize("name", ["SELLER_OPERATOR_KEY", "BUYER_OPERATOR_KEY"])

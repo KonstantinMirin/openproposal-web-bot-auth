@@ -47,14 +47,16 @@ from starlette.types import ASGIApp
 
 from persistence.observe import KeptEntry, SellerRecords
 from persistence.values import Origin
-from protocol.operations import compose_commit
-from protocol.values import JsonObject
+from protocol.operations import compose_commit, parse_errors
+from protocol.values import JsonObject, read_json
 from seller.app import create_app
+from seller.caller import WHOAMI, BearerCredential, ResolvedView
 from seller.seed import seed
 from seller.settings import SellerSettings
 from seller.sqlite_store import SqliteSellerStore
 from tests._tools import load_yaml, seed_issuer
 from tests.stack import TOKEN, Origins, Recorder, seller_settings
+from transport.control import ErrorBody
 from transport.wba import directory_resolver, http_client, tls_context
 
 SELLER = "https://seller.example.com"
@@ -210,7 +212,7 @@ def test_a_failing_credential_is_refused_never_downgraded(
     response = seller.get("/whoami", headers=row.headers(parties))
     assert response.status_code == row.status
     # The library's refusal body, whose error is its reason or the boundary's own.
-    assert response.json() | {"detail": ""} == {"error": row.reason, "detail": ""}
+    assert ErrorBody.model_validate_json(response.content).code == row.reason
     assert {name: response.headers.get(name) for name in row.hint} == row.hint
 
 
@@ -218,9 +220,10 @@ def test_a_replayed_signature_is_refused_with_429_and_asked_to_sign_again(
     seller: TestClient, parties: Parties
 ) -> None:
     headers = signed("GET", "/whoami", parties.buyer)
-    assert seller.get("/whoami", headers=headers).json()["kind"] == "resolved"
+    assert WHOAMI.validate_json(seller.get("/whoami", headers=headers).content).kind == "resolved"
     again = seller.get("/whoami", headers=headers)
-    assert again.status_code == 429 and again.json()["error"] == "nonce-replayed"
+    assert again.status_code == 429
+    assert ErrorBody.model_validate_json(again.content).code == "nonce-replayed"
     assert again.headers["accept-signature"] == accept_signature(has_body=False)
 
 
@@ -230,7 +233,7 @@ def test_a_nonce_store_that_is_down_is_refused_with_503_and_retry_after(
     with TestClient(_app(tmp_path, parties, DownNonceStore()), base_url=SELLER) as client:
         response = client.get("/whoami", headers=signed("GET", "/whoami", parties.buyer))
     assert response.status_code == 503
-    assert response.json()["error"] == "nonce-store-unavailable"
+    assert ErrorBody.model_validate_json(response.content).code == "nonce-store-unavailable"
     assert response.headers["retry-after"] == "1"
     assert "accept-signature" not in response.headers
 
@@ -240,10 +243,11 @@ def test_no_credential_is_a_public_caller(seller: TestClient) -> None:
 
 
 def test_a_token_resolves_its_principal(seller: TestClient) -> None:
-    caller = seller.get("/whoami", headers={"Authorization": f"Bearer {TOKEN}"}).json()
-    assert caller["kind"] == "resolved" and caller["principal"]["id"] == "buyer-bearer"
-    assert caller["credential"] == {"method": "bearer"}  # no origin, no evidence
-    assert caller["attributed"] is False
+    response = seller.get("/whoami", headers={"Authorization": f"Bearer {TOKEN}"})
+    caller = WHOAMI.validate_json(response.content)
+    assert isinstance(caller, ResolvedView) and caller.principal.id == "buyer-bearer"
+    assert isinstance(caller.credential, BearerCredential)  # no origin, no evidence
+    assert caller.attributed is False
 
 
 def test_a_verified_origin_with_a_principal_resolves_it(
@@ -298,8 +302,7 @@ def test_a_verified_origin_without_a_principal_is_public_and_writes_nothing(
 def _issued(client: TestClient, headers: dict[str, str]) -> JsonObject:
     response = client.get("/proposals/demo-wba-1", headers=headers)
     assert response.status_code == 200, response.text
-    document: JsonObject = response.json()
-    return document
+    return read_json(response.content)
 
 
 def _commit_body(document: JsonObject, *, key: str, at: datetime) -> bytes:
@@ -357,7 +360,7 @@ def test_a_rejected_commit_keeps_no_evidence(
     body = json.dumps(commit).encode()
     answer = seller.post(path, content=body, headers=signed("POST", path, parties.buyer, body=body))
     assert answer.status_code == 409
-    assert answer.json()["errors"][0]["code"] == "record_mismatch"
+    assert [e.code for e in parse_errors(answer.content)] == ["record_mismatch"]
     with SellerRecords.open(tmp_path / "seller.db") as records:
         assert records.entries("demo-wba-1") == []
     assert _kept(tmp_path) == (0, 0)
@@ -414,7 +417,7 @@ def test_a_signature_and_a_token_get_the_same_result_for_the_same_commit(
             )
             answer = client.post(path, content=body, headers=headers)
             assert answer.status_code == 200, answer.text
-            results.append(_without_acceptance_time(answer.json()))
+            results.append(_without_acceptance_time(read_json(answer.content)))
         rows.append([(e.role, e.principal_id) for e in _assent(data_dir)])
     assert results[0] == results[1]
     assert rows[0] == rows[1] == [("commitment", "buyer-wba"), ("acceptance", None)]

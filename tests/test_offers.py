@@ -28,9 +28,9 @@ from pydantic import SecretStr
 
 from persistence.observe import KeptEntry, SellerRecords
 from persistence.values import Origin
-from protocol.operations import compose_commit
+from protocol.operations import compose_commit, parse_errors, parse_result
 from protocol.record import items_by_id
-from protocol.values import JsonObject, JsonValue
+from protocol.values import JsonObject, JsonValue, read_json
 from seller.app import create_app
 from seller.seed import seed
 from seller.sqlite_store import SqliteSellerStore
@@ -93,7 +93,7 @@ class Seller:
 
     def composed(self, key: str = "k-1") -> JsonObject:
         """The buyer's correct commit to ITEM, composed on the document the seller serves."""
-        document = self.client.get("/proposals/demo-wba-1", headers=TOKEN).json()
+        document = read_json(self.client.get("/proposals/demo-wba-1", headers=TOKEN).content)
         writes = {ITEM: LineItemWrites.model_validate(PLAN[ITEM])}
         at = datetime.now(UTC)
         made = compose_commit(Proposal.model_validate(document), document, writes, at=at, key=key)
@@ -112,6 +112,11 @@ class Seller:
         """The idempotency keys of the commits the seller processed on `proposal_id`."""
         with self.records() as records:
             return records.processed(proposal_id)
+
+
+def _codes(answer: httpx.Response) -> list[str]:
+    """The codes of a § 2.4 `errors[]` answer."""
+    return [e.code for e in parse_errors(answer.content)]
 
 
 #: A change to the template before it is issued, or to a commit before it is sent.
@@ -340,9 +345,8 @@ def test_each_check_rejects_with_its_code(seller_with: StartSeller, row: Row) ->
     row.change(commit)
     answer = seller.commit(commit)
     assert answer.status_code == row.status, answer.text
-    (error,) = answer.json()["errors"]
-    assert error["code"] == row.code and error["version"] == 1
-    assert error["retry"] == row.retry
+    (error,) = parse_errors(answer.content)
+    assert (error.code, error.version, error.retry) == (row.code, 1, row.retry)
     assert seller.ledger() == (["k-1"] if row.stored else [])
     # Nothing was written to the record.
     assert [e.role for e in seller.entries() if e.idempotency_key == "k-1"] == []
@@ -352,7 +356,7 @@ def test_a_caller_with_no_principal_is_not_eligible(seller_with: StartSeller) ->
     seller = seller_with()
     answer = seller.commit(seller.composed(), headers={})
     assert answer.status_code == 403
-    assert answer.json()["errors"][0]["code"] == "not_eligible"
+    assert _codes(answer) == ["not_eligible"]
     assert seller.ledger() == []
 
 
@@ -365,7 +369,7 @@ def test_an_unparsable_body_is_a_validation_error(seller_with: StartSeller, body
     seller = seller_with()
     answer = seller.client.post(PATH, content=body, headers=TOKEN)
     assert answer.status_code == 400
-    assert answer.json()["errors"][0]["code"] == "validation"
+    assert _codes(answer) == ["validation"]
 
 
 def test_writes_for_a_line_item_the_entry_doesnt_name_are_a_validation_error(
@@ -377,15 +381,15 @@ def test_writes_for_a_line_item_the_entry_doesnt_name_are_a_validation_error(
     writes["weather-app-ctv"] = writes[ITEM]  # § 5.6.1: keyed by exactly the named items
     answer = seller.commit(commit)
     assert answer.status_code == 400
-    (error,) = answer.json()["errors"]
-    assert error["code"] == "validation" and "writes are keyed" in error["detail"]
+    (error,) = parse_errors(answer.content)
+    assert error.code == "validation" and "writes are keyed" in error.detail
 
 
 def test_a_proposal_issued_to_another_buyer_is_not_found(seller_with: StartSeller) -> None:
     seller = seller_with()
     answer = seller.commit(seller.composed(), path="/proposals/demo-bearer-1/commit")
     assert answer.status_code == 404
-    assert answer.json()["errors"][0]["code"] == "not_found"
+    assert _codes(answer) == ["not_found"]
     assert seller.ledger("demo-bearer-1") == seller.ledger() == []
 
 
@@ -399,23 +403,24 @@ def test_an_accepted_commit_writes_the_pair_and_the_agreed_record(
     commit = seller.composed()
     answer = seller.commit(commit)
     assert answer.status_code == 200, answer.text
-    commitment, acceptance = answer.json()["entries"]
-    assert commitment == commit["entry"]
-    assert acceptance["role"] == "acceptance"
-    assert acceptance["record_digest"] == commitment["record_digest"]
+    commitment, acceptance = parse_result(answer.content).entries
+    assert commitment == AssentEntry.model_validate(commit["entry"])
+    assert acceptance.role == "acceptance"
+    assert acceptance.record_digest == commitment.record_digest
 
     assert [e.role for e in seller.entries()] == ["commitment", "acceptance"]
     with seller.records() as records:
         (agreed,) = records.agreed("demo-wba-1")
-    assert agreed.record_digest == commitment["record_digest"]
+    assert agreed.record_digest == commitment.record_digest
     assert seller.ledger() == ["k-1"]
-    agreed = seller.client.get("/proposals/demo-wba-1", headers=TOKEN).json()
-    assert items_by_id(agreed)[ITEM]["status"] == "agreed"
-    assert [e["role"] for e in agreed["assent"]] == ["commitment", "acceptance"]
+    proposal = seller.client.get("/proposals/demo-wba-1", headers=TOKEN).content
+    assert items_by_id(read_json(proposal))[ITEM].get("status") == "agreed"
+    assent = Proposal.model_validate_json(proposal).assent or []
+    assert [e.role for e in assent] == ["commitment", "acceptance"]
 
     # The same commit again is a replay: the same result, and nothing written.
     again = seller.commit(commit)
-    assert again.json() == answer.json()
+    assert again.content == answer.content
     assert len(seller.entries()) == 2
 
 
@@ -429,7 +434,7 @@ def test_a_stored_rejection_is_replayed_as_stored(seller_with: StartSeller) -> N
     first = seller.commit(commit)
     assert first.status_code == 409
     again = seller.commit(commit)
-    assert (again.status_code, again.json()) == (409, first.json())
+    assert (again.status_code, again.content) == (409, first.content)
     assert seller.ledger() == ["k-1"]
 
 
@@ -443,7 +448,7 @@ def test_a_key_reused_with_another_commit_is_an_idempotency_conflict(
     assert seller.commit(wrong).status_code == 409  # stored under k-1
     answer = seller.commit(commit)  # the same key, another commit
     assert answer.status_code == 422
-    assert answer.json()["errors"][0]["code"] == "idempotency_conflict"
+    assert _codes(answer) == ["idempotency_conflict"]
 
 
 def test_a_key_reused_on_another_proposal_is_an_idempotency_conflict(
@@ -454,7 +459,7 @@ def test_a_key_reused_on_another_proposal_is_an_idempotency_conflict(
     assert seller.commit(commit).status_code == 200
     answer = seller.commit(commit, path="/proposals/demo-wba-2/commit")
     assert answer.status_code == 422
-    assert answer.json()["errors"][0]["code"] == "idempotency_conflict"
+    assert _codes(answer) == ["idempotency_conflict"]
 
 
 def test_a_retry_same_rejection_is_not_stored_and_the_same_key_then_succeeds(
@@ -464,7 +469,8 @@ def test_a_retry_same_rejection_is_not_stored_and_the_same_key_then_succeeds(
     seller = seller_with(prior=[earlier])
     commit = seller.composed()
     refused = seller.commit(commit)
-    assert refused.status_code == 503 and refused.json()["errors"][0]["retry"] == "same"
+    assert refused.status_code == 503
+    assert [e.retry for e in parse_errors(refused.content)] == ["same"]
     assert seller.ledger() == []
 
     # The earlier commitment is withdrawn, so the same request can now succeed.

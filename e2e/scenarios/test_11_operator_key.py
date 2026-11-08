@@ -8,48 +8,75 @@ inside the network that doesn't carry its own `OPERATOR_KEY`. Each party has a
 key of its own, so one party's key is refused at another.
 """
 
+from collections.abc import Callable
+
 import httpx
 import pytest
-from conftest import BUYER, BUYER_OPERATOR, CFBOT, CFBOT_RUN, SELLER, SELLER_OPERATOR
-from settings import BUYER_CONTROL, OPERATOR_KEYS, SELLER_CONTROL
+from conftest import BUYER, CFBOT, SELLER
+from pydantic import SecretStr
+from settings import BUYER_CONTROL, CFBOT_CONTROL, OPERATOR_KEYS, SELLER_CONTROL
 
-from transport.control import OPERATOR_HEADER
+from transport.client import ControlClient, ControlFailed
+from transport.control import (
+    CFBOT_WHOAMI,
+    FAULT,
+    ISSUE,
+    KEYS,
+    READ,
+    ErrorBody,
+    IssueRequest,
+    Read,
+    ReadTrigger,
+)
 
-#: Each party's controls, and another party, whose key they must refuse.
-INSIDE = [
-    ("GET", f"{BUYER_OPERATOR}/keys", SELLER_CONTROL.host),
-    ("POST", f"{SELLER_OPERATOR}/issue", BUYER_CONTROL.host),
-    ("POST", f"{CFBOT_RUN}/whoami", BUYER_CONTROL.host),
+#: Each party's controls, one call to them, and another party, whose key they must refuse.
+INSIDE: list[tuple[str, httpx.URL, Callable[[ControlClient], object], httpx.URL]] = [
+    ("buyer keys", BUYER_CONTROL, lambda c: c.call(KEYS, None), SELLER_CONTROL),
+    (
+        "seller issue",
+        SELLER_CONTROL,
+        lambda c: c.call(ISSUE, IssueRequest(principal_id="buyer-wba")),
+        BUYER_CONTROL,
+    ),
+    ("cfbot whoami", CFBOT_CONTROL, lambda c: c.call(CFBOT_WHOAMI, None), BUYER_CONTROL),
 ]
+KEYS_SENT = {"none": None, "a wrong key": SecretStr("not-the-operator-key")}
 
 
-@pytest.mark.parametrize(("method", "url", "other"), INSIDE)
+@pytest.mark.parametrize(("name", "base", "call", "other"), INSIDE, ids=[r[0] for r in INSIDE])
 @pytest.mark.parametrize("key", ["none", "a wrong key", "another party's key"])
 def test_operator_controls_refuse_a_call_without_the_partys_key(
-    method: str, url: str, other: str, key: str
+    name: str,
+    base: httpx.URL,
+    call: Callable[[ControlClient], object],
+    other: httpx.URL,
+    key: str,
 ) -> None:
-    sent = {"none": None, "a wrong key": "not-the-operator-key"}.get(key, OPERATOR_KEYS[other])
-    headers = {} if sent is None else {OPERATOR_HEADER: sent}
-    with httpx.Client(timeout=30) as client:  # no operator-key hook
-        response = client.request(method, url, headers=headers, json={"principal_id": "buyer-wba"})
-    assert response.status_code == 403, response.text
+    del name
+    sent = KEYS_SENT.get(key, OPERATOR_KEYS[other.host])
+    with httpx.Client(timeout=30) as client, pytest.raises(ControlFailed) as failed:
+        call(ControlClient(client, base, sent))
+    assert failed.value.status == 403, failed.value
+    assert failed.value.error == ErrorBody(error="operator-key", detail="operator key required")
 
 
 @pytest.mark.parametrize(
     "url",
     [
-        f"{BUYER}/operator/keys",
-        f"{SELLER}/operator/issue",
-        f"{SELLER}/test/fault",
-        f"{CFBOT}/run/whoami",
+        f"{BUYER}{KEYS.path}",
+        f"{SELLER}{ISSUE.path}",
+        f"{SELLER}{FAULT.path}",
+        f"{CFBOT}{CFBOT_WHOAMI.path}",
     ],
 )
 def test_the_front_never_routes_operator_controls(web: httpx.Client, url: str) -> None:
     assert web.post(url).status_code == 404
 
 
-def test_the_seller_issues_a_fresh_proposal_with_the_key(web: httpx.Client) -> None:
-    issued = web.post(f"{SELLER_OPERATOR}/issue", json={"principal_id": "buyer-wba"}).json()
-    assert issued["proposal_id"].startswith("live-buyer-wba-")
-    read = web.post(f"{BUYER_OPERATOR}/read", json={"proposal_id": issued["proposal_id"]}).json()
-    assert read["state"] == "read", read
+def test_the_seller_issues_a_fresh_proposal_with_the_key(
+    seller_control: ControlClient, buyer_control: ControlClient
+) -> None:
+    issued = seller_control.call(ISSUE, IssueRequest(principal_id="buyer-wba"))
+    assert issued.proposal_id.startswith("live-buyer-wba-")
+    read = buyer_control.call(READ, ReadTrigger(proposal_id=issued.proposal_id))
+    assert isinstance(read, Read), read

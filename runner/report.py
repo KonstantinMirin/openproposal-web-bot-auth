@@ -115,7 +115,7 @@ class BuyerSide(_Part):
     directory: Directory | None
 
 
-class Digest(_Part):
+class BothDigests(_Part):
     """Both parties' digest input, and the record_digest over it."""
 
     record_digest: str
@@ -137,7 +137,7 @@ class FlowRun(_Part):
     outcome: Agreed | None = None
     seller: SellerSide | None = None
     buyer: BuyerSide | None = None
-    digest: Digest | None = None
+    digest: BothDigests | None = None
     reverify: Reverified | None = None
 
 

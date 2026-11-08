@@ -31,17 +31,34 @@ from iab_agentic_primitives.web_bot_auth import (
 )
 from iab_agentic_primitives.web_bot_auth import Origin as LibraryOrigin
 from iab_agentic_primitives.web_bot_auth.sync import SyncResponseVerifier
+from pydantic import SecretStr
 from starlette.types import ASGIApp
 
 from buyer.app import create_app as create_buyer
 from buyer.resources import BuyerResources
 from buyer.settings import BuyerSettings
 from persistence.values import Origin
+from protocol.values import objects, read_json
 from seller.app import create_app as create_seller
+from seller.caller import WHOAMI, ResolvedView
 from seller.resources import SellerResources
 from seller.settings import SellerSettings
 from tests import stack
-from tests.stack import BUYER_OPERATOR, SELLER_OPERATOR, TOKEN, Origins
+from tests.stack import BUYER_KEY, SELLER_KEY, TOKEN, Origins, as_state
+from transport.client import ControlClient, ControlFailed
+from transport.control import (
+    FAULT,
+    HEALTH,
+    ISSUE,
+    READ,
+    ErrorBody,
+    FaultMode,
+    FaultName,
+    Health,
+    IssueRequest,
+    ReadTrigger,
+    Refused,
+)
 
 SELLER = "https://seller.example"
 BUYER = "https://buyer.example"
@@ -81,20 +98,32 @@ def signed(method: str, url: str, key: Ed25519Key) -> dict[str, str]:
     return dict(RequestSigner(key, BUYER).sign(HTTPRequest(method, url, {}, b"")).headers.items())
 
 
+def _resolved(client: TestClient, headers: dict[str, str]) -> ResolvedView:
+    """The caller `/whoami` resolves for a request with `headers`, as it answers it."""
+    caller = WHOAMI.validate_json(client.get("/whoami", headers=headers).content)
+    assert isinstance(caller, ResolvedView), caller
+    return caller
+
+
+def _healthy(client: TestClient) -> bool:
+    return ControlClient(client).call(HEALTH, None) == Health(ok=True)
+
+
 # The seller
 
 
 def test_the_seller_keeps_its_key_and_records_under_its_data_dir(tmp_path: Path) -> None:
     with TestClient(seller_app(tmp_path), base_url=SELLER) as client:
-        assert client.get("/health").json() == {"ok": True}
+        assert _healthy(client)
     assert {p.name for p in tmp_path.iterdir()} == {"wba-key.jwk", "seller.db"}
 
 
 def test_the_seller_signs_every_answer_and_serves_its_directory(seller: TestClient) -> None:
-    health = seller.get("/health")
+    health = seller.get(HEALTH.path)
     assert "signature" in health.headers and "signature-input" in health.headers
     directory = seller.get(DIRECTORY_PATH)
-    assert directory.status_code == 200 and len(directory.json()["keys"]) == 1
+    assert directory.status_code == 200
+    assert len(objects(read_json(directory.content).get("keys"))) == 1
 
 
 def test_the_seller_resolves_each_credential_through_its_injected_resources(
@@ -102,41 +131,42 @@ def test_the_seller_resolves_each_credential_through_its_injected_resources(
 ) -> None:
     assert seller.get("/whoami").json() == {"kind": "public", "signature": None}
 
-    by_token = seller.get("/whoami", headers={"Authorization": f"Bearer {TOKEN}"}).json()
-    assert by_token["principal"]["id"] == "buyer-bearer"
+    by_token = _resolved(seller, {"Authorization": f"Bearer {TOKEN}"})
+    assert by_token.principal.id == "buyer-bearer"
 
-    url = f"{SELLER}/whoami"
-    by_signature = seller.get("/whoami", headers=signed("GET", url, buyer_key)).json()
-    assert by_signature["kind"] == "resolved"
-    assert by_signature["principal"] == {
-        "id": "buyer-wba",
-        "kind": "buyer",
-        "legal_name": "Demo Buyer Agency LLC",
-        "domain": "buyer.example",  # the configured buyer origin's host
-    }
+    by_signature = _resolved(seller, signed("GET", f"{SELLER}/whoami", buyer_key))
+    principal = by_signature.principal
+    assert (principal.id, principal.kind, principal.legal_name) == (
+        "buyer-wba",
+        "buyer",
+        "Demo Buyer Agency LLC",
+    )
+    assert principal.domain == "buyer.example"  # the configured buyer origin's host
+
+
+def _issue_status(seller: TestClient, key: SecretStr | None, principal_id: str) -> int:
+    """The status a call to issue answers, with `key` as the operator key."""
+    try:
+        ControlClient(seller, operator_key=key).call(ISSUE, IssueRequest(principal_id=principal_id))
+    except ControlFailed as e:
+        return e.status
+    return 200
 
 
 def test_the_seller_operator_controls_take_the_key_from_settings(seller: TestClient) -> None:
-    body = {"principal_id": "buyer-wba"}
-    assert seller.post("/operator/issue", json=body).status_code == 403
-    wrong = {"X-Operator-Key": "not-the-operator-key"}
-    assert seller.post("/operator/issue", json=body, headers=wrong).status_code == 403
-    issued = seller.post("/operator/issue", json=body, headers=SELLER_OPERATOR)
-    assert issued.status_code == 200, issued.text
-    assert issued.json()["proposal_id"].startswith("live-buyer-wba-")
-    unknown = seller.post(
-        "/operator/issue", json={"principal_id": "nobody"}, headers=SELLER_OPERATOR
+    assert _issue_status(seller, None, "buyer-wba") == 403
+    assert _issue_status(seller, SecretStr("not-the-operator-key"), "buyer-wba") == 403
+    issued = ControlClient(seller, operator_key=SELLER_KEY).call(
+        ISSUE, IssueRequest(principal_id="buyer-wba")
     )
-    assert unknown.status_code == 404
+    assert issued.proposal_id.startswith("live-buyer-wba-")
+    assert _issue_status(seller, SELLER_KEY, "nobody") == 404
 
 
 def test_a_seller_without_an_operator_key_refuses_every_operator_call(tmp_path: Path) -> None:
     settings = replace(seller_settings(tmp_path), operator_key=None)
     with TestClient(create_seller(settings, resolver=StaticKeyResolver({}))) as client:
-        response = client.post(
-            "/operator/issue", json={"principal_id": "buyer-wba"}, headers=SELLER_OPERATOR
-        )
-        assert response.status_code == 403
+        assert _issue_status(client, SELLER_KEY, "buyer-wba") == 403
 
 
 def test_the_seller_lifespan_closes_the_client_and_the_store(tmp_path: Path) -> None:
@@ -189,8 +219,8 @@ def test_the_store_refuses_a_thread_other_than_the_one_that_opened_it(tmp_path: 
 def test_a_restart_keeps_the_seeded_records(tmp_path: Path) -> None:
     for _ in range(2):  # the second start finds the records and seeds nothing
         with TestClient(seller_app(tmp_path), base_url=SELLER) as client:
-            caller = client.get("/whoami", headers={"Authorization": f"Bearer {TOKEN}"}).json()
-            assert caller["principal"]["id"] == "buyer-bearer"
+            caller = _resolved(client, {"Authorization": f"Bearer {TOKEN}"})
+            assert caller.principal.id == "buyer-bearer"
 
 
 # The fault switch (TEST ONLY)
@@ -206,11 +236,11 @@ def test_the_fault_mode_belongs_to_one_app(tmp_path: Path) -> None:
     other = TestClient(seller_app(tmp_path / "other", faults=True), base_url=SELLER)
     with one, other:
         assert _commit_signed(one) and _commit_signed(other)
-        fault = one.put("/test/fault", json={"mode": "strip"}).json()
-        assert fault == {"mode": "strip", "on": "commit"}
+        faults = ControlClient(one)
+        assert faults.call(FAULT, FaultMode(mode="strip")) == FaultMode(mode="strip", on="commit")
         assert not _commit_signed(one)
         assert _commit_signed(other)
-        assert one.put("/test/fault", json={"mode": "none"}).status_code == 200
+        faults.call(FAULT, FaultMode(mode="none"))
         assert _commit_signed(one)
 
 
@@ -224,7 +254,7 @@ def test_the_fault_mode_belongs_to_one_app(tmp_path: Path) -> None:
     ],
 )
 def test_each_fault_mode_breaks_the_answer_the_way_it_names(
-    tmp_path: Path, buyer_key: Ed25519Key, mode: str, refusal: str | None
+    tmp_path: Path, buyer_key: Ed25519Key, mode: FaultName, refusal: str | None
 ) -> None:
     """The buyer's own verifier, over the seller's key, judges the seller's answer to a
     signed commit in each mode."""
@@ -234,7 +264,7 @@ def test_each_fault_mode_breaks_the_answer_the_way_it_names(
         HTTPRequest("POST", url, {"Content-Type": "application/json"}, body)
     )
     with TestClient(seller_app(tmp_path, faults=True, key=buyer_key), base_url=SELLER) as client:
-        assert client.put("/test/fault", json={"mode": mode}).status_code == 200
+        ControlClient(client).call(FAULT, FaultMode(mode=mode))
         answer = client.post(url, content=body, headers=dict(request.headers.items()))
     seller_key = keyfile.load_or_create(tmp_path / "wba-key.jwk")
     verifier = ResponseVerifier(StaticKeyResolver({SELLER: [seller_key]}))
@@ -251,15 +281,15 @@ def test_each_fault_mode_breaks_the_answer_the_way_it_names(
 
 def test_a_bad_fault_mode_is_a_control_error_not_an_offer_error(tmp_path: Path) -> None:
     with TestClient(seller_app(tmp_path, faults=True), base_url=SELLER) as client:
-        response = client.put("/test/fault", json={"mode": "bogus"})
+        response = client.request(FAULT.method, FAULT.path, json={"mode": "bogus"})
     assert response.status_code == 422
-    body = response.json()
-    assert body.keys() == {"error", "detail"} and body["error"] == "validation"
-    assert body["detail"].startswith("body/mode: ")
+    body = ErrorBody.model_validate_json(response.content)
+    assert body.error == "validation"
+    assert body.detail.startswith("body/mode: ")
 
 
 def test_the_fault_switch_is_absent_unless_the_settings_turn_it_on(seller: TestClient) -> None:
-    assert seller.put("/test/fault", json={"mode": "strip"}).status_code == 404
+    assert seller.request(FAULT.method, FAULT.path, json={"mode": "strip"}).status_code == 404
 
 
 # The buyer
@@ -281,16 +311,16 @@ def test_a_trigger_that_omits_the_seller_targets_the_configured_seller(tmp_path:
 
     app = create_buyer(buyer_settings(tmp_path), transport=httpx.MockTransport(network))
     with TestClient(app) as client:
-        outcome = client.post(
-            "/operator/read", json={"proposal_id": "p-1"}, headers=BUYER_OPERATOR
-        ).json()
+        outcome = ControlClient(client, operator_key=BUYER_KEY).call(
+            READ, ReadTrigger(proposal_id="p-1")
+        )
     assert sent == [f"{SELLER}/proposals/p-1"]  # https://seller.example, as configured
-    assert (outcome["state"], outcome["reason"]) == ("refused", "signature-missing")
+    assert as_state(Refused, outcome).code == "signature-missing"
 
 
 def test_the_buyer_lifespan_closes_the_client_and_the_store(tmp_path: Path) -> None:
     with TestClient(create_buyer(buyer_settings(tmp_path))) as client:
-        assert client.get("/health").json() == {"ok": True}
+        assert _healthy(client)
         resources = client.app_state["resources"]
         assert isinstance(resources, BuyerResources)
         assert not resources.client.is_closed and not resources.store.is_closed

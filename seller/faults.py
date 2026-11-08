@@ -6,8 +6,8 @@ The app installs this middleware only when `DEMO_FAULT_INJECTION=1`, and the
 TLS front never routes `/test/` to the seller. A real seller has neither.
 
 Each instance holds its own fault, so two apps never share one. A fault is set
-with `PUT /test/fault {"mode": ..., "on": ...}` (the instance's `control()`
-router). `on` names the answers it breaks: `commit` (the default), the answers
+with the `FAULT` control (transport/control.py), which the instance's
+`control()` router serves. `on` names the answers it breaks: `commit` (the default), the answers
 to `POST /proposals/{id}/commit`, or `read`, the answers to
 `GET /proposals/{id}`. The modes:
 
@@ -22,29 +22,21 @@ to `POST /proposals/{id}/commit`, or `read`, the answers to
 from __future__ import annotations
 
 import base64
-from typing import Literal
 
 from fastapi import APIRouter
 from iab_agentic_primitives.web_bot_auth import ResponseSigner, ServerIdentity
-from pydantic import BaseModel
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from persistence.values import KeptRequest, KeptResponse
+from transport.control import FAULT, FaultMode, FaultName, FaultTarget
+from transport.operator import control_route
 from transport.wba import asgi_lines, lines_of, request_of, response_to_library
 
 SIGNATURE_FIELDS = (b"signature", b"signature-input", b"signature-agent")
-Mode = Literal["none", "strip", "unbound", "rebound", "wrong_digest"]
-#: Which answers a fault breaks: to a commit, or to a read of a proposal.
-Target = Literal["commit", "read"]
 _OTHER_SIGNATURE = "sig1=:" + base64.b64encode(bytes(64)).decode() + ":"
 
 
-class FaultMode(BaseModel):
-    mode: Mode
-    on: Target = "commit"
-
-
-def _targets(scope: Scope, on: Target) -> bool:
+def _targets(scope: Scope, on: FaultTarget) -> bool:
     """Whether the request in `scope` asks for an answer the fault breaks."""
     path: str = scope["path"]
     if not path.startswith("/proposals/"):
@@ -61,10 +53,10 @@ class FaultInjection:
         self.fault = FaultMode(mode="none")
 
     def control(self) -> APIRouter:
-        """`PUT /test/fault`, which sets this instance's fault. FastAPI validates it."""
+        """The `FAULT` control, which sets this instance's fault. FastAPI validates it."""
         router = APIRouter()
 
-        @router.put("/test/fault")
+        @control_route(router, FAULT)
         async def set_fault(body: FaultMode) -> FaultMode:
             """TEST ONLY: see seller/faults.py."""
             self.fault = body
@@ -90,7 +82,7 @@ class FaultInjection:
 
         await self.app(scope, receive, capture)
 
-    def _request(self, mode: Mode, scope: Scope) -> KeptRequest:
+    def _request(self, mode: FaultName, scope: Scope) -> KeptRequest:
         """The request the broken signature is bound to."""
         received = request_of(scope, self.identity, b"")
         fields = list(received.lines)
@@ -102,7 +94,7 @@ class FaultInjection:
         return KeptRequest(method=received.method, url=received.url, lines=tuple(fields), body=b"")
 
     async def _send(
-        self, mode: Mode, scope: Scope, start: Message, body: bytes, send: Send
+        self, mode: FaultName, scope: Scope, start: Message, body: bytes, send: Send
     ) -> None:
         # wrong_digest also drops Content-Digest, so that signing computes it over the changed body.
         dropped = (

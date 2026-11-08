@@ -211,12 +211,17 @@ const routes = {
   },
 };
 
-// The operator's controls: each one has cfbot sign a request to the seller.
+/** The proposal a control names in its JSON body (`{"proposal_id": ...}`). */
+const proposalOf = body => JSON.parse(body || '{}').proposal_id ?? 'demo-wba-1';
+
+// The operator's controls (transport/control.py CFBOT_*): each one has cfbot sign a
+// request to the seller, and answers the seller's status and body.
 const operatorRoutes = {
   'POST /run/whoami': async (_req, res) => json(res, 200, await signedFetch('GET', `${SELLER}/whoami`)),
-  'POST /run/read': async (_req, res, { proposal }) => json(res, 200, await signedFetch('GET', `${SELLER}/proposals/${proposal}`)),
-  'POST /run/commit': async (_req, res, { proposal }) =>
-    json(res, 200, await signedFetch('POST', `${SELLER}/proposals/${proposal}/commit`, exampleCommit('weather-app-ctv'))),
+  'POST /run/read': async (_req, res, { body }) =>
+    json(res, 200, await signedFetch('GET', `${SELLER}/proposals/${proposalOf(body)}`)),
+  'POST /run/commit': async (_req, res, { body }) =>
+    json(res, 200, await signedFetch('POST', `${SELLER}/proposals/${proposalOf(body)}/commit`, exampleCommit('weather-app-ctv'))),
 };
 
 /** The route for a request: a public one, an operator one behind the key, or none. */
@@ -232,10 +237,10 @@ createServer(async (req, res) => {
   const chunks = [];
   for await (const chunk of req) chunks.push(chunk);
   const body = Buffer.concat(chunks).toString('utf8');
-  const { pathname, searchParams } = new URL(req.url, ORIGIN);
+  const { pathname } = new URL(req.url, ORIGIN);
   const handler = route(req, pathname) ?? ((_req, out) => failed(out, 404, 'not-found', `no route ${req.method} ${pathname}`));
   try {
-    await handler(req, res, { body, proposal: searchParams.get('proposal_id') ?? 'demo-wba-1' });
+    await handler(req, res, { body });
   } catch (e) {
     // The stack goes to the log, never into the body.
     console.error(e?.stack ?? e);

@@ -1,10 +1,11 @@
 """The runner's steps: what it asks the agents, and what it reads of what each party kept.
 
-The runner reaches the agents' own controls through their typed control-plane
-models (transport/control.py), and reads both parties' databases read-only through
-their read models (persistence/observe.py), never with its own SQL. It holds no
-agent's key: what it verifies, it verifies against the directory bytes a party
-kept, or against a directory it fetches itself.
+The runner calls the agents' own controls through `AsyncControlClient`, with
+the operations and their answer models (transport/control.py), and reads both
+parties' databases read-only through their read models (persistence/observe.py),
+never with its own SQL. It holds no agent's key: what it verifies, it verifies
+against the directory bytes a party kept, or against a directory it fetches
+itself.
 """
 
 from __future__ import annotations
@@ -29,7 +30,17 @@ from persistence.values import (
 )
 from protocol.record import digest_of, sha256_hex
 from protocol.values import JsonObject, instant
-from transport.control import OUTCOME, Agreed, CloudflareCheck, CommitTrigger, Issued, IssueRequest
+from transport.client import AsyncControlClient
+from transport.control import (
+    CLOUDFLARE_CHECK,
+    COMMIT,
+    ISSUE,
+    Agreed,
+    CloudflareCheck,
+    CommitTrigger,
+    Issued,
+    IssueRequest,
+)
 from transport.reverify import reverify_request, reverify_response
 from transport.wba import library_origin, origin_of
 
@@ -37,8 +48,8 @@ from . import checks
 from .checks import Done, expect
 from .report import (
     Answer,
+    BothDigests,
     BuyerSide,
-    Digest,
     Directory,
     Message,
     Reverified,
@@ -101,8 +112,8 @@ class Observer:
         self,
         settings: RunnerSettings,
         *,
-        seller: httpx.AsyncClient,
-        buyer: httpx.AsyncClient,
+        seller: AsyncControlClient,
+        buyer: AsyncControlClient,
         web: httpx.AsyncClient,
     ) -> None:
         #: `seller` and `buyer` reach each agent's own controls, each with that agent's
@@ -128,15 +139,7 @@ class Observer:
         return Done(directory, f"{len(kids)} key(s), signed by each: {', '.join(kids)}")
 
     async def issue(self, principal_id: str) -> Done[Issued]:
-        response = await self.seller.post(
-            "/operator/issue",
-            json=IssueRequest(principal_id=principal_id).model_dump(),
-        )
-        expect(
-            response.status_code == httpx.codes.OK,
-            f"issue returned {response.status_code}: {response.text}",
-        )
-        issued = Issued.model_validate_json(response.content)
+        issued = await self.seller.call(ISSUE, IssueRequest(principal_id=principal_id))
         return Done(issued, issued.proposal_id)
 
     async def commit(self, issued: Issued | None, method: AuthMethod) -> Done[Agreed]:
@@ -146,12 +149,7 @@ class Observer:
             line_item_ids=[LINE_ITEM],
             credential=method,
         )
-        response = await self.buyer.post("/operator/commit", json=trigger.model_dump())
-        expect(
-            response.status_code == httpx.codes.OK,
-            f"commit returned {response.status_code}: {response.text}",
-        )
-        outcome = checks.agreed(OUTCOME.validate_json(response.content), method)
+        outcome = checks.agreed(await self.buyer.call(COMMIT, trigger), method)
         return Done(outcome, f"agreed, record_digest {outcome.record_digest}")
 
     def seller_side(
@@ -200,7 +198,7 @@ class Observer:
         )
         return Done(side, f"kept the seller's signed answer, keyid {signer.keyid}")
 
-    def same_digest(self, agreed: Agreed | None) -> Done[Digest]:
+    def same_digest(self, agreed: Agreed | None) -> Done[BothDigests]:
         """Both parties hold the same digest input, and it hashes to the agreed record_digest."""
         outcome = checks.given(agreed, "agreement")
         proposal_id = outcome.proposal_id
@@ -210,7 +208,9 @@ class Observer:
             commit = buyer.commit(outcome.commit_id)
         recomputed = digest_of(commit.digest_input) if commit is not None else ""
         agreement = checks.same_digest(agreements, commit, recomputed, outcome)
-        digest = Digest(record_digest=recomputed, digest_input_bytes=len(agreement.digest_input))
+        digest = BothDigests(
+            record_digest=recomputed, digest_input_bytes=len(agreement.digest_input)
+        )
         return Done(digest, f"both sides: {recomputed}")
 
     async def reverify(
@@ -246,11 +246,6 @@ class Observer:
         )
 
     async def cloudflare(self) -> Done[CloudflareCheck]:
-        response = await self.buyer.post("/operator/cloudflare-check")
-        expect(
-            response.status_code == httpx.codes.OK,
-            f"cloudflare-check returned {response.status_code}",
-        )
-        check = CloudflareCheck.model_validate_json(response.content)
+        check = await self.buyer.call(CLOUDFLARE_CHECK, None)
         verdict = checks.cfbot_accepted(check, str(self.settings.peer_buyer_origin))
-        return Done(check, f"{verdict.get('verifier')} accepted {verdict.get('identity')}")
+        return Done(check, f"{verdict.verifier} accepted {verdict.identity}")
