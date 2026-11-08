@@ -329,7 +329,7 @@ on its `feat/web-bot-auth` branch, must sit next to this repository, at
 `../iab-agentic-primitives`: the directory name the uv path source in
 `pyproject.toml` and the image build use.
 
-To run the unit tests, run `make test`.
+To run the behavior tests, run `make test`.
 
 To build the stack, run every scenario, and tear it down, run the following
 command:

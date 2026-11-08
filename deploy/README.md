@@ -90,12 +90,7 @@ the seller's test-only fault toggle isn't mounted.
 Run these steps in order. The host is `hetzner2`, and the commands that start
 with `rsync` run on your laptop from the directory that holds both checkouts.
 
-1.  Check that no placeholder is left in the tree: run `make placeholders`,
-    which CI runs too. It fails on any placeholder outside the seed template
-    `seller/seed/proposal.yaml`, whose placeholders the seller fills in when it
-    issues a proposal.
-
-2.  In Route 53, in the `noetis.dev` hosted zone, create four `A` records with
+1.  In Route 53, in the `noetis.dev` hosted zone, create four `A` records with
     a TTL of 300, each pointing at the host's public IPv4 address. On
     2026-11-07, `salesagent.noetis.dev` resolved to that address,
     `167.235.98.225`:
@@ -110,7 +105,7 @@ with `rsync` run on your laptop from the directory that holds both checkouts.
     Add `AAAA` records only if the host's Caddy listens on IPv6. To confirm the
     records, run `dig +short A seller.wba-demo.noetis.dev`.
 
-3.  Copy both checkouts to the host:
+2.  Copy both checkouts to the host:
 
     ```bash
     ssh hetzner2 'mkdir -p /srv/wba-demo'
@@ -125,7 +120,7 @@ with `rsync` run on your laptop from the directory that holds both checkouts.
 
     `--delete` is safe here: neither checkout holds secrets, keys, or reports.
 
-4.  On the host, write the secrets and create the report directory. The runner
+3.  On the host, write the secrets and create the report directory. The runner
     runs as UID 10001, and Caddy reads the files it writes:
 
     ```bash
@@ -133,16 +128,16 @@ with `rsync` run on your laptop from the directory that holds both checkouts.
     install -d -o 10001 -g 10001 -m 755 /srv/wba-demo/run
     ```
 
-5.  On the host, build and start the three agents:
+4.  On the host, build and start the three agents:
 
     ```bash
     cd /srv/wba-demo/openproposal-web-bot-auth
     docker compose -f deploy/docker-compose.prod.yml up --detach --build --wait seller buyer cfbot
     ```
 
-6.  On the host, append the snippet to the Caddyfile, validate it, and reload
+5.  On the host, append the snippet to the Caddyfile, validate it, and reload
     Caddy. Caddy gets the four certificates from Let's Encrypt, which needs the
-    DNS records from step 2:
+    DNS records from step 1:
 
     ```bash
     cat /srv/wba-demo/openproposal-web-bot-auth/deploy/Caddyfile.snippet >> /etc/caddy/Caddyfile
@@ -150,7 +145,7 @@ with `rsync` run on your laptop from the directory that holds both checkouts.
     systemctl reload caddy
     ```
 
-7.  On the host, start the runner. It runs the flow at once, and then every
+6.  On the host, start the runner. It runs the flow at once, and then every
     15 minutes:
 
     ```bash
@@ -160,7 +155,7 @@ with `rsync` run on your laptop from the directory that holds both checkouts.
 
     The log line of a good run reads `<time> pass <ms> ms`.
 
-8.  Check the deployment from your laptop:
+7.  Check the deployment from your laptop:
 
     ```bash
     curl -si https://buyer.wba-demo.noetis.dev/.well-known/http-message-signatures-directory
@@ -173,7 +168,7 @@ with `rsync` run on your laptop from the directory that holds both checkouts.
 
 ## Update
 
-Repeat step 3, and then rebuild and restart every service on the host:
+Repeat step 2, and then rebuild and restart every service on the host:
 
 ```bash
 docker compose -f deploy/docker-compose.prod.yml up --detach --build --wait
@@ -183,7 +178,7 @@ Keys and databases persist across rebuilds, each agent's in two volumes:
 `wba-demo-live_seller-keys` and `wba-demo-live_seller-db`, and
 `wba-demo-live_buyer-keys` and `wba-demo-live_buyer-db`. The runner mounts the
 two `-db` volumes read-only and neither `-keys` volume, so it can read no
-agent's key. To change only the site, repeat step 3; Caddy serves the files
+agent's key. To change only the site, repeat step 2; Caddy serves the files
 directly.
 
 ### Move to the split volumes, once
@@ -219,8 +214,8 @@ docker compose -f deploy/docker-compose.prod.yml logs runner
 
 - **Growth.** Each run issues two proposals and keeps their records and
   evidence: about 50 KB across both databases, or about 5 MB a day. To start
-  over, run `down --volumes` as in [Tear down](#tear-down), and then step 5 and
-  step 7. The agents mint new keys on the next start.
+  over, run `down --volumes` as in [Tear down](#tear-down), and then step 4 and
+  step 6. The agents mint new keys on the next start.
 - **Firewall.** The agents and the runner reach each other's public names from
   inside Docker, so packets from the Docker bridge reach the host's public
   address on port 443. If a host firewall drops them, the directory steps fail

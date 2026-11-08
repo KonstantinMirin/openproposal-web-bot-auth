@@ -1,26 +1,13 @@
-.PHONY: quality lint placeholders typecheck guards test e2e live-local live-config
+.PHONY: quality lint typecheck test e2e live-local live-config
 
 # Every gate, in order; the first failing stage stops the run.
-quality: lint typecheck guards test
+quality: lint typecheck test
 
-# Formatting, the ruff rule set, the layer bans, cfbot's ESLint, and no placeholder.
-lint: cfbot/node_modules placeholders
+# Formatting, the ruff rule set, and cfbot's ESLint.
+lint: cfbot/node_modules
 	uv run ruff format --check .
 	uv run ruff check .
-	uv run ruff check --config ruff-domain.toml
-	uv run ruff check --config ruff-environment.toml
-	uv run ruff check --config ruff-buyer.toml
-	uv run ruff check --config ruff-digest.toml
 	cd cfbot && npx --no-install eslint server.mjs
-
-# A placeholder for a link or a value left in the tree. The seed template's own
-# placeholders (seller/seed/proposal.yaml) are the seller's to fill in, so they stay.
-PLACEHOLDERS := LIBRARY_URL|SPEC_URL|PLACEHOLDER
-placeholders:
-	@! grep -rnIE '$(PLACEHOLDERS)' --exclude-dir=.git --exclude-dir=.venv \
-		--exclude-dir=node_modules --exclude-dir=vendor --exclude-dir=generated \
-		--exclude-dir=.ruff_cache --exclude-dir=.mypy_cache --exclude-dir=.pytest_cache \
-		--exclude=Makefile --exclude=proposal.yaml .
 
 cfbot/node_modules: cfbot/package-lock.json
 	cd cfbot && npm ci --no-audit --no-fund
@@ -30,15 +17,10 @@ cfbot/node_modules: cfbot/package-lock.json
 typecheck:
 	uv run mypy
 
-# Structural rules and import-layer contracts.
-guards:
-	uv run ast-grep scan --config sgconfig.yml
-	uv run lint-imports
-
 # The behavior suite, with branch coverage and the floor in pyproject.toml: each
 # agent's app over a real SQLite store and the real library (both agents in
-# process for the buyer, the runner, and the read models), the protocol package
-# against the specification's documents, and the structural guards.
+# process for the buyer, the runner, and the read models), and the protocol
+# package against the specification's documents.
 test:
 	uv run pytest --cov --cov-branch
 

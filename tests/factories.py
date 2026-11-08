@@ -1,9 +1,8 @@
 """The one test module that builds identity values (seller/caller.py) directly.
 
-Everything else gets a caller from the identity boundary, through the app. The
-ast-grep rule identity-built-only-by-the-boundary exempts this file and
-seller/boundary.py only. Each builder takes the fields to set, so a test can
-also ask for a value the types must refuse.
+Everything else gets a caller from the identity boundary, through the app.
+Each builder takes the fields to set, so a test can also ask for a value the
+types must refuse.
 """
 
 from __future__ import annotations
