@@ -45,7 +45,7 @@ done
 echo "operator controls are not routed: pass"
 
 # The runner holds no agent's key: no *.jwk is readable in its container, with its own
-# mounts, after the agents minted theirs (defect 8).
+# mounts, after the agents minted theirs.
 keys=$("${compose[@]}" run --rm --no-deps -T --entrypoint sh runner -c \
     'find / -path /proc -prune -o -name "*.jwk" -print 2>/dev/null; true')
 [[ -z "$keys" ]] || { echo "the runner can read agent keys:"; echo "$keys"; exit 1; }

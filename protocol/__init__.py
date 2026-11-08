@@ -12,9 +12,9 @@ doesn't emit yet, typed on the generated classes:
 - the § 5.6.1 `commit` rules the generated `Commit` and `CommitResult` don't state,
   and the buyer's and the seller's steps over them (`protocol.operations`).
 
-When the schema tooling emits these helpers (wbademo-uo9, "Ask the schema
-tooling to emit the binding-record and record_digest helper"), both parties
-import them from the generated package and this package is deleted.
+When the schema tooling emits the binding-record and `record_digest` helpers,
+both parties import them from the generated package and this package is
+deleted.
 
 Nothing here does I/O, reads configuration, or knows a framework.
 """

@@ -45,7 +45,7 @@ def test_the_seller_defaults_to_the_demo_deployment() -> None:
         data_dir=Path("/data"),
         keys_dir=Path("/keys"),
     )
-    # The key lives on its own volume, apart from the database (defect 8).
+    # The key lives on its own volume, apart from the database.
     assert settings.key_file == Path("/keys/wba-key.jwk")
 
 
@@ -113,7 +113,7 @@ def test_the_buyer_reads_every_variable() -> None:
 
 def test_the_buyer_defaults_to_the_production_rotation() -> None:
     settings = BuyerSettings.from_env({})
-    assert settings.keyring_dir == Path("/keys")  # apart from the database (defect 8)
+    assert settings.keyring_dir == Path("/keys")  # apart from the database
     assert (settings.rotation_wait, settings.signature_lifetime, settings.directory_max_age) == (
         600.0,
         300,
@@ -143,7 +143,7 @@ def test_an_origin_that_is_not_https_host_fails_naming_the_variable(
 
 
 def test_a_buyer_origin_without_a_scheme_stops_the_seller_at_its_settings() -> None:
-    """Defect 7b: it used to boot, then fail in seed() with sqlite3.IntegrityError."""
+    """The seller stops at its settings, naming the variable, before it seeds anything."""
     with pytest.raises(SettingsError, match="^PEER_BUYER_ORIGIN: "):
         SellerSettings.from_env({"PEER_BUYER_ORIGIN": "buyer.wba-demo.noetis.dev"})
 

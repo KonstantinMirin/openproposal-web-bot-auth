@@ -31,8 +31,8 @@ def _count(db: sqlite3.Connection, table: str) -> int:
 def test_a_failing_commit_rolls_back_and_the_next_transaction_commits(
     db: sqlite3.Connection,
 ) -> None:
-    """Defect 1: a COMMIT that fails (here, a deferred foreign key) used to leave the
-    connection inside the transaction, so every later transaction failed until restart."""
+    """A COMMIT that fails (here, a deferred foreign key) leaves the connection outside
+    the transaction, so the next transaction runs."""
     with pytest.raises(sqlite3.IntegrityError), transaction(db):
         db.execute("INSERT INTO child (parent_id) VALUES (42)")
     assert db.in_transaction is False

@@ -260,7 +260,7 @@ def buyer(tmp_path: Path) -> Iterator[TestClient]:
 
 
 def test_a_trigger_that_omits_the_seller_targets_the_configured_seller(tmp_path: Path) -> None:
-    """Defect 7a: the default used to be a literal origin, not the configured seller."""
+    """A trigger without a seller goes to the seller the buyer's settings name."""
     sent: list[str] = []
 
     def network(request: httpx.Request) -> httpx.Response:

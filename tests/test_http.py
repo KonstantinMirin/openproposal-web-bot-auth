@@ -1,7 +1,6 @@
 """The seller's rendering seam: a status for every error code, and two error body forms.
 
-- `status_for` is total over `ErrorObjectCode` (defect 6: an unknown code used
-  to raise `KeyError`). Each core code gets § 2.4's informative status, an
+- `status_for` is total over `ErrorObjectCode`. Each core code gets § 2.4's informative status, an
   extension code acts on `retry`, and a code that is neither can't be built.
 - Through the app: a § 2.4 rejection is `{"errors": [...]}`; a control-plane
   failure (the operator key, an unknown principal, a control route's
@@ -55,7 +54,7 @@ def test_every_core_code_gets_its_spec_status_and_retry_same_fits_503() -> None:
 
 
 def test_an_extension_code_acts_on_retry() -> None:
-    """Defect 6: an unknown code raised KeyError; status_for is total."""
+    """A code § 2.4 doesn't list still gets a status, from its `retry`."""
     assert status_for(_error("seller.example.com:inventory-hold")) == 400
     assert status_for(_error("seller.example.com:inventory-hold", "same")) == 503
 

@@ -27,7 +27,7 @@ def test_cfbot_is_identity_established_only(
     assert signature["keyid"] in {thumbprint(key) for key in published}
     assert signature["body_covered"] is False  # a GET has no body to cover
 
-    # An origin with no principal writes no row (defect 2): no request, no directory.
+    # An origin with no principal writes no row: no request, no directory.
     assert seller_records.requests_from(Origin.parse(CFBOT)) == 0
     assert seller_records.directories_of(Origin.parse(CFBOT)) == 0
 
