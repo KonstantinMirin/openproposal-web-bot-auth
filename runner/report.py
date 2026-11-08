@@ -8,6 +8,11 @@ schema states. The schema is committed as site/report.schema.json:
 and a test keeps the file equal to the model. `FORMAT` is the report's
 version; the site refuses a report of another format.
 
+Its closed sets are closed: the parties are `Parties` (`seller`, `buyer`,
+`cfbot`), the software its named fields, and each step's id and group are
+Literals (`StepId`, `Group`), so a misspelled step can't be recorded, needed,
+or rendered.
+
 A report holds public data only. `public_headers` withholds credentials and the
 TLS proxy's headers, and `assert_public` refuses a report that holds a
 configured secret or a private JWK.
@@ -26,7 +31,7 @@ from persistence.values import AuthMethod, Origin
 from protocol.values import JsonObject, JsonValue, Value
 from transport.control import OPERATOR_HEADER, Agreed, CloudflareCheck
 
-FORMAT: Literal[2] = 2
+FORMAT: Literal[3] = 3
 #: How many runs history.json keeps, newest first.
 HISTORY = 20
 
@@ -141,8 +146,51 @@ class FlowRun(_Part):
     reverify: Reverified | None = None
 
 
+#: The parties a run checks.
+Party = Literal["seller", "buyer", "cfbot"]
+#: A credential's run of the flow.
+PathName = Literal["signature", "bearer"]
+#: The groups the steps fall in, in the order a run takes them.
+Group = Literal["directory", "signature", "bearer", "cloudflare", "publish"]
+#: Every step a run records.
+StepId = Literal[
+    "directory-seller",
+    "directory-buyer",
+    "directory-cfbot",
+    "signature-issue",
+    "signature-commit",
+    "signature-seller",
+    "signature-buyer",
+    "signature-digest",
+    "signature-reverify",
+    "bearer-issue",
+    "bearer-commit",
+    "bearer-seller",
+    "bearer-buyer",
+    "bearer-digest",
+    "cloudflare",
+    "publish",
+]
+
+
+class Parties[T](_Part):
+    """One value for each party a run checks."""
+
+    seller: T
+    buyer: T
+    cfbot: T
+
+
+class Software(_Part):
+    """The versions of the packages the runner verifies with; None when one isn't installed."""
+
+    iab_agentic_primitives: str | None
+    openproposal_sdk: str | None
+
+
 class StepResult(_Part):
-    id: str
+    id: StepId
+    group: Group
     title: str
     ok: bool
     ms: int
@@ -150,15 +198,16 @@ class StepResult(_Part):
 
 
 class Report(_Part):
-    format: Literal[2] = FORMAT
+    format: Literal[3] = FORMAT
     started_at: str
     finished_at: str | None = None
     duration_ms: int | None = None
     ok: bool
-    origins: dict[str, Origin] = Field(default_factory=dict)
-    software: dict[str, str | None] = Field(default_factory=dict)
+    #: None for a report that is withheld (`withheld`).
+    origins: Parties[Origin] | None = None
+    software: Software | None = None
     line_item_ids: list[str] = Field(default_factory=list)
-    directories: dict[str, Directory | None] = Field(default_factory=dict)
+    directories: Parties[Directory | None] | None = None
     signature: FlowRun | None = None
     bearer: FlowRun | None = None
     cloudflare: CloudflareCheck | None = None
@@ -169,7 +218,7 @@ class HistoryEntry(_Part):
     started_at: str
     ok: bool
     duration_ms: int | None
-    failed: list[str]
+    failed: list[StepId]
 
 
 class History(_Part):
@@ -243,7 +292,12 @@ def assert_public(report: Report, secrets: Sequence[str]) -> str:
 def withheld(report: Report, reason: NotPublic) -> Report:
     """What is published instead of a report that isn't public: a bare failure."""
     step = StepResult(
-        id="publish", title="Publish the report", ok=False, ms=0, detail=f"withheld: {reason}"
+        id="publish",
+        group="publish",
+        title="Publish the report",
+        ok=False,
+        ms=0,
+        detail=f"withheld: {reason}",
     )
     return Report(started_at=report.started_at, ok=False, steps=[step])
 

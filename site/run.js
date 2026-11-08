@@ -6,7 +6,7 @@
   'use strict';
 
   // The report format this page reads (runner/report.py FORMAT).
-  const FORMAT = 2;
+  const FORMAT = 3;
   const SIGNATURE_FIELDS = new Set(['signature', 'signature-input', 'signature-agent', 'content-digest']);
 
   function el(tag, props, ...children) {
@@ -120,7 +120,7 @@
     root.append(el('div', { class: 'run-summary' },
       el('span', { class: `verdict ${ok ? 'ok' : 'bad'}`, text: ok ? 'Pass' : 'Fail' }),
       el('span', { class: 'meta', text: `Started ${run.started_at} (${ago(run.started_at)}), ${run.duration_ms ?? '?'} ms in all` }),
-      run.software ? el('span', { class: 'meta', text: Object.entries(run.software).map(([k, v]) => `${k} ${v}`).join(', ') }) : null));
+      run.software ? el('span', { class: 'meta', text: `iab-agentic-primitives ${run.software.iab_agentic_primitives}, openproposal-sdk ${run.software.openproposal_sdk}` }) : null));
 
     if (history.length) {
       root.append(el('p', { class: 'note', text: `The last ${history.length} runs, newest first:` }),
@@ -133,10 +133,9 @@
     const rows = [];
     let group = null;
     for (const step of run.steps || []) {
-      const prefix = step.id.split('-')[0];
-      if (GROUPS[prefix] && prefix !== group) {
-        group = prefix;
-        rows.push(el('tr', { class: 'group' }, el('th', { colspan: '4', text: GROUPS[prefix] })));
+      if (GROUPS[step.group] && step.group !== group) {
+        group = step.group;
+        rows.push(el('tr', { class: 'group' }, el('th', { colspan: '4', text: GROUPS[group] })));
       }
       rows.push(el('tr', {},
         el('td', { class: `state ${step.ok ? 'ok' : 'bad'}`, text: step.ok ? 'Pass' : 'Fail' }),

@@ -32,8 +32,12 @@ from runner.main import main, publish, run_once
 from runner.report import (
     HISTORY,
     Directory,
+    History,
+    HistoryEntry,
     NotPublic,
+    Parties,
     Report,
+    StepId,
     StepResult,
     assert_public,
     public_headers,
@@ -130,14 +134,11 @@ def test_a_run_passes_every_step_and_publishes_a_report_the_schema_accepts(
     publish(_settings(stack, tmp_path / "out"), report)
     published = json.loads((tmp_path / "out" / "latest-run.json").read_text())
     jsonschema.validate(published, SCHEMA)
-    assert published["format"] == 2 and published["ok"] is True
-    history = json.loads((tmp_path / "out" / "history.json").read_text())
-    assert history["runs"][0] == {
-        "started_at": report.started_at,
-        "ok": True,
-        "duration_ms": report.duration_ms,
-        "failed": [],
-    }
+    assert Report.model_validate_json(json.dumps(published)) == report
+    history = History.model_validate_json((tmp_path / "out" / "history.json").read_bytes())
+    assert history.runs[0] == HistoryEntry(
+        started_at=report.started_at, ok=True, duration_ms=report.duration_ms, failed=[]
+    )
 
 
 def test_the_committed_schema_is_the_models_own() -> None:
@@ -156,8 +157,8 @@ def test_a_failed_commit_fails_its_step_and_skips_what_needs_it(
     assert not report.ok
     assert not outcome["signature-commit"].ok
     assert "refused" in (outcome["signature-commit"].detail or "")
-    for later in ("seller", "buyer", "digest"):
-        step = outcome[f"signature-{later}"]
+    later: tuple[StepId, ...] = ("signature-seller", "signature-buyer", "signature-digest")
+    for step in (outcome[id] for id in later):
         assert (step.ok, step.detail) == (False, "skipped: signature-commit failed")
     assert outcome["signature-reverify"].detail == (
         "skipped: signature-seller, signature-buyer failed"
@@ -298,7 +299,7 @@ class Corrupted:
 
     name: str
     corrupt: Corruption
-    step: str
+    step: StepId
     detail: str
     #: What the step raised: a check that failed, or a control call that answered an error.
     failure: str = "CheckFailed"
@@ -516,10 +517,10 @@ def _report(
     detail: str,
     *,
     started_at: str = "2026-11-07T00:00:00Z",
-    directories: dict[str, Directory | None] | None = None,
+    directories: Parties[Directory | None] | None = None,
 ) -> Report:
-    step = StepResult(id="x", title="X", ok=True, ms=1, detail=detail)
-    return Report(started_at=started_at, ok=True, directories=directories or {}, steps=[step])
+    step = StepResult(id="cloudflare", group="cloudflare", title="X", ok=True, ms=1, detail=detail)
+    return Report(started_at=started_at, ok=True, directories=directories, steps=[step])
 
 
 def test_a_report_with_a_secret_is_refused() -> None:
@@ -535,7 +536,8 @@ def test_a_report_with_a_private_jwk_is_refused() -> None:
         keys=[{"kty": "OKP", "x": "pub", "d": "private"}],
     )
     with pytest.raises(NotPublic):
-        assert_public(_report("a run", directories={"buyer": leaked}), [])
+        directories = Parties[Directory | None](seller=None, buyer=leaked, cfbot=None)
+        assert_public(_report("a run", directories=directories), [])
 
 
 def test_publish_writes_a_bare_failure_when_the_report_isnt_public(
@@ -545,16 +547,16 @@ def test_publish_writes_a_bare_failure_when_the_report_isnt_public(
     publish(settings, _report(f"leaks {TOKEN}"))
     latest = (tmp_path / "out" / "latest-run.json").read_text()
     assert TOKEN not in latest
-    published = json.loads(latest)
-    jsonschema.validate(published, SCHEMA)
-    assert published["ok"] is False
-    assert [s["id"] for s in published["steps"]] == ["publish"]
+    jsonschema.validate(json.loads(latest), SCHEMA)
+    published = Report.model_validate_json(latest)
+    assert published.ok is False
+    assert [s.id for s in published.steps] == ["publish"]
 
 
 def test_history_keeps_the_newest_runs_first(stack: Stack, tmp_path: Path) -> None:
     settings = _settings(stack, tmp_path / "out")
     for n in range(HISTORY + 2):
         publish(settings, _report(f"run {n}", started_at=f"t{n}"))
-    runs = json.loads((tmp_path / "out" / "history.json").read_text())["runs"]
+    runs = History.model_validate_json((tmp_path / "out" / "history.json").read_bytes()).runs
     assert len(runs) == HISTORY
-    assert runs[0]["started_at"] == f"t{HISTORY + 1}"
+    assert runs[0].started_at == f"t{HISTORY + 1}"

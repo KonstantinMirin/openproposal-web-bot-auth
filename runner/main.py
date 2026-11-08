@@ -27,7 +27,7 @@ import asyncio
 import logging
 import sys
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from functools import partial
 from importlib.metadata import PackageNotFoundError, version
@@ -37,7 +37,7 @@ from typing import TypeVar
 import httpx
 from pydantic import ValidationError
 
-from persistence.values import AuthMethod
+from persistence.values import AuthMethod, Origin
 from transport.client import AsyncControlClient
 from transport.wba import Transport, http_client, tls_context
 
@@ -46,9 +46,15 @@ from .observe import LINE_ITEM, Observer, instant_of
 from .report import (
     Directory,
     FlowRun,
+    Group,
     History,
     NotPublic,
+    Parties,
+    Party,
+    PathName,
     Report,
+    Software,
+    StepId,
     StepResult,
     assert_public,
     updated_history,
@@ -64,21 +70,63 @@ Action = Callable[[], Done[T] | Awaitable[Done[T]]]
 
 
 @dataclass(frozen=True)
+class PathSteps:
+    """The ids of one credential's steps, in the order they run."""
+
+    issue: StepId
+    commit: StepId
+    seller: StepId
+    buyer: StepId
+    digest: StepId
+    #: Verifying the kept messages again offline: only a signed run has both; None otherwise.
+    reverify: StepId | None
+
+
+@dataclass(frozen=True)
 class CredentialPath:
     """One credential's run of the flow, as the report names it."""
 
-    name: str
+    name: PathName
     method: AuthMethod
     principal: str
     label: str
-    #: Whether the run verifies the kept messages again offline: only a signed one has both.
-    reverify: bool
+    steps: PathSteps
 
 
-PATHS = (
-    CredentialPath("signature", "web_bot_auth", "buyer-wba", "a Web Bot Auth signature", True),
-    CredentialPath("bearer", "bearer", "buyer-bearer", "a bearer token", False),
+SIGNATURE = CredentialPath(
+    "signature",
+    "web_bot_auth",
+    "buyer-wba",
+    "a Web Bot Auth signature",
+    PathSteps(
+        issue="signature-issue",
+        commit="signature-commit",
+        seller="signature-seller",
+        buyer="signature-buyer",
+        digest="signature-digest",
+        reverify="signature-reverify",
+    ),
 )
+BEARER = CredentialPath(
+    "bearer",
+    "bearer",
+    "buyer-bearer",
+    "a bearer token",
+    PathSteps(
+        issue="bearer-issue",
+        commit="bearer-commit",
+        seller="bearer-seller",
+        buyer="bearer-buyer",
+        digest="bearer-digest",
+        reverify=None,
+    ),
+)
+#: The step that fetches and verifies each party's directory.
+DIRECTORY_STEPS: Mapping[Party, StepId] = {
+    "seller": "directory-seller",
+    "buyer": "directory-buyer",
+    "cfbot": "directory-cfbot",
+}
 
 
 @dataclass
@@ -86,30 +134,37 @@ class Run:
     """One run: its steps, in order, each with its outcome and duration."""
 
     steps: list[StepResult] = field(default_factory=list)
-    failed: set[str] = field(default_factory=set)
+    failed: set[StepId] = field(default_factory=set)
 
     async def step(
-        self, id: str, title: str, action: Action[T], *, needs: tuple[str, ...] = ()
+        self,
+        id: StepId,
+        group: Group,
+        title: str,
+        action: Action[T],
+        *,
+        needs: tuple[StepId, ...] = (),
     ) -> T | None:
         """Runs `action` unless a step it needs failed; records the outcome either way."""
+        row = partial(StepResult, id=id, group=group, title=title)
         blocked = [n for n in needs if n in self.failed]
         if blocked:
-            self._record(id, title, 0, f"skipped: {', '.join(blocked)} failed", ok=False)
+            self._record(row(ok=False, ms=0, detail=f"skipped: {', '.join(blocked)} failed"))
             return None
         start = time.perf_counter()
         try:
             result = action()
             done = await result if isinstance(result, Awaitable) else result
         except Exception as e:  # noqa: BLE001 -- a stated non-defect: every failure is a step outcome
-            self._record(id, title, _ms(start), f"{type(e).__name__}: {e}", ok=False)
+            self._record(row(ok=False, ms=_ms(start), detail=f"{type(e).__name__}: {e}"))
             return None
-        self._record(id, title, _ms(start), done.detail, ok=True)
+        self._record(row(ok=True, ms=_ms(start), detail=done.detail))
         return done.value
 
-    def _record(self, id: str, title: str, ms: int, detail: str, *, ok: bool) -> None:
-        if not ok:
-            self.failed.add(id)
-        self.steps.append(StepResult(id=id, title=title, ok=ok, ms=ms, detail=detail))
+    def _record(self, step: StepResult) -> None:
+        if not step.ok:
+            self.failed.add(step.id)
+        self.steps.append(step)
 
 
 def _ms(start: float) -> int:
@@ -118,44 +173,50 @@ def _ms(start: float) -> int:
 
 async def _path(run: Run, observer: Observer, path: CredentialPath) -> FlowRun:
     """The flow with one credential: issue, commit, and what each party kept."""
-    name = path.name
+    group, steps = path.name, path.steps
     issued = await run.step(
-        f"{name}-issue",
+        steps.issue,
+        group,
         f"Seller issues a fresh proposal to {path.principal}",
         partial(observer.issue, path.principal),
     )
     outcome = await run.step(
-        f"{name}-commit",
+        steps.commit,
+        group,
         f"Buyer reads and commits with {path.label}; both reach agreed",
         partial(observer.commit, issued, path.method),
-        needs=(f"{name}-issue",),
+        needs=(steps.issue,),
     )
-    committed = (f"{name}-commit",)
+    committed = (steps.commit,)
     seller = await run.step(
-        f"{name}-seller",
+        steps.seller,
+        group,
         "Seller's boundary resolved the stored principal",
         partial(observer.seller_side, outcome, path.method, path.principal),
         needs=committed,
     )
     buyer = await run.step(
-        f"{name}-buyer",
+        steps.buyer,
+        group,
         "Buyer verified the seller's signed answer and kept it",
         partial(observer.buyer_side, outcome),
         needs=committed,
     )
     digest = await run.step(
-        f"{name}-digest",
+        steps.digest,
+        group,
         "Both parties computed the same record_digest",
         partial(observer.same_digest, outcome),
         needs=committed,
     )
     reverify = None
-    if path.reverify:
+    if steps.reverify is not None:
         reverify = await run.step(
-            f"{name}-reverify",
+            steps.reverify,
+            group,
             "Both kept messages verify again, offline",
             partial(observer.reverify, seller, buyer),
-            needs=(f"{name}-seller", f"{name}-buyer"),
+            needs=(steps.seller, steps.buyer),
         )
     return FlowRun(
         proposal_id=None if issued is None else issued.proposal_id,
@@ -164,6 +225,17 @@ async def _path(run: Run, observer: Observer, path: CredentialPath) -> FlowRun:
         buyer=buyer,
         digest=digest,
         reverify=reverify,
+    )
+
+
+async def _directory(
+    run: Run, observer: Observer, party: Party, origin: Origin
+) -> Directory | None:
+    return await run.step(
+        DIRECTORY_STEPS[party],
+        "directory",
+        f"Fetch and verify the {party}'s key directory",
+        partial(observer.directory, origin),
     )
 
 
@@ -180,20 +252,20 @@ async def run_once(settings: RunnerSettings, *, transport: Transport | None = No
         seller = AsyncControlClient(control, settings.seller_control, settings.seller_operator_key)
         buyer = AsyncControlClient(control, settings.buyer_control, settings.buyer_operator_key)
         observer = Observer(settings, seller=seller, buyer=buyer, web=web)
-        parties = {
-            "seller": settings.peer_seller_origin,
-            "buyer": settings.peer_buyer_origin,
-            "cfbot": settings.peer_cfbot_origin,
-        }
-        directories: dict[str, Directory | None] = {}
-        for party, origin in parties.items():
-            directories[party] = await run.step(
-                f"directory-{party}",
-                f"Fetch and verify the {party}'s key directory",
-                partial(observer.directory, origin),
-            )
-        flows = {path.name: await _path(run, observer, path) for path in PATHS}
+        origins = Parties[Origin](
+            seller=settings.peer_seller_origin,
+            buyer=settings.peer_buyer_origin,
+            cfbot=settings.peer_cfbot_origin,
+        )
+        directories = Parties[Directory | None](
+            seller=await _directory(run, observer, "seller", origins.seller),
+            buyer=await _directory(run, observer, "buyer", origins.buyer),
+            cfbot=await _directory(run, observer, "cfbot", origins.cfbot),
+        )
+        signature = await _path(run, observer, SIGNATURE)
+        bearer = await _path(run, observer, BEARER)
         cloudflare = await run.step(
+            "cloudflare",
             "cloudflare",
             "cfbot, on Cloudflare's web-bot-auth, verifies the buyer's signature",
             observer.cloudflare,
@@ -203,12 +275,15 @@ async def run_once(settings: RunnerSettings, *, transport: Transport | None = No
         finished_at=instant_of(time.time()),
         duration_ms=round((time.time() - started) * 1000),
         ok=not run.failed,
-        origins=parties,
-        software={name: _version(name) for name in ("iab-agentic-primitives", "openproposal-sdk")},
+        origins=origins,
+        software=Software(
+            iab_agentic_primitives=_version("iab-agentic-primitives"),
+            openproposal_sdk=_version("openproposal-sdk"),
+        ),
         line_item_ids=[LINE_ITEM],
         directories=directories,
-        signature=flows["signature"],
-        bearer=flows["bearer"],
+        signature=signature,
+        bearer=bearer,
         cloudflare=cloudflare,
         steps=run.steps,
     )

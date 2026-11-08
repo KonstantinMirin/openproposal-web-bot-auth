@@ -607,6 +607,69 @@
       "title": "Origin",
       "type": "string"
     },
+    "Parties_Origin_": {
+      "additionalProperties": false,
+      "properties": {
+        "buyer": {
+          "$ref": "#/$defs/Origin"
+        },
+        "cfbot": {
+          "$ref": "#/$defs/Origin"
+        },
+        "seller": {
+          "$ref": "#/$defs/Origin"
+        }
+      },
+      "required": [
+        "seller",
+        "buyer",
+        "cfbot"
+      ],
+      "title": "Parties[Origin]",
+      "type": "object"
+    },
+    "Parties_Union_Directory__NoneType__": {
+      "additionalProperties": false,
+      "properties": {
+        "buyer": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Directory"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "cfbot": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Directory"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "seller": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Directory"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "seller",
+        "buyer",
+        "cfbot"
+      ],
+      "title": "Parties[Union[Directory, NoneType]]",
+      "type": "object"
+    },
     "PlainInteger": {
       "ge": -9007199254740991,
       "le": 9007199254740991,
@@ -733,6 +796,40 @@
       "title": "SellerView",
       "type": "object"
     },
+    "Software": {
+      "additionalProperties": false,
+      "description": "The versions of the packages the runner verifies with; None when one isn't installed.",
+      "properties": {
+        "iab_agentic_primitives": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Iab Agentic Primitives"
+        },
+        "openproposal_sdk": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Openproposal Sdk"
+        }
+      },
+      "required": [
+        "iab_agentic_primitives",
+        "openproposal_sdk"
+      ],
+      "title": "Software",
+      "type": "object"
+    },
     "StepResult": {
       "additionalProperties": false,
       "properties": {
@@ -747,7 +844,36 @@
           ],
           "title": "Detail"
         },
+        "group": {
+          "enum": [
+            "directory",
+            "signature",
+            "bearer",
+            "cloudflare",
+            "publish"
+          ],
+          "title": "Group",
+          "type": "string"
+        },
         "id": {
+          "enum": [
+            "directory-seller",
+            "directory-buyer",
+            "directory-cfbot",
+            "signature-issue",
+            "signature-commit",
+            "signature-seller",
+            "signature-buyer",
+            "signature-digest",
+            "signature-reverify",
+            "bearer-issue",
+            "bearer-commit",
+            "bearer-seller",
+            "bearer-buyer",
+            "bearer-digest",
+            "cloudflare",
+            "publish"
+          ],
           "title": "Id",
           "type": "string"
         },
@@ -766,6 +892,7 @@
       },
       "required": [
         "id",
+        "group",
         "title",
         "ok",
         "ms",
@@ -800,18 +927,15 @@
       "default": null
     },
     "directories": {
-      "additionalProperties": {
-        "anyOf": [
-          {
-            "$ref": "#/$defs/Directory"
-          },
-          {
-            "type": "null"
-          }
-        ]
-      },
-      "title": "Directories",
-      "type": "object"
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Parties_Union_Directory__NoneType__"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
     },
     "duration_ms": {
       "anyOf": [
@@ -838,8 +962,8 @@
       "title": "Finished At"
     },
     "format": {
-      "const": 2,
-      "default": 2,
+      "const": 3,
+      "default": 3,
       "title": "Format",
       "type": "integer"
     },
@@ -855,11 +979,15 @@
       "type": "boolean"
     },
     "origins": {
-      "additionalProperties": {
-        "$ref": "#/$defs/Origin"
-      },
-      "title": "Origins",
-      "type": "object"
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Parties_Origin_"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
     },
     "signature": {
       "anyOf": [
@@ -873,18 +1001,15 @@
       "default": null
     },
     "software": {
-      "additionalProperties": {
-        "anyOf": [
-          {
-            "type": "string"
-          },
-          {
-            "type": "null"
-          }
-        ]
-      },
-      "title": "Software",
-      "type": "object"
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Software"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
     },
     "started_at": {
       "title": "Started At",
