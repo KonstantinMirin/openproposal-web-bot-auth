@@ -12,17 +12,18 @@
 # that is deployed. No agent is configured with another's key.
 name: wba-demo
 
-# Timing, short so the rotation scenario stays short, and stated once: the agents
-# that use each value and the scenario that waits on it read the same anchor.
-# Production uses the library default, 300 s, for the cache age; serves max-age
-# 300, waits 600 s (max-age 300 plus max_cache_age 300), and signs for 300 s.
+# Timing, stated once: the agents that use each value and the scenario that waits
+# on it read the same anchor. Production uses the library default, 300 s, for the
+# cache age; serves max-age 300, waits 600 s, and signs for 300 s.
 x-cache-age: &cache-age
   # How long the seller answers from a cached buyer directory.
   WBA_MAX_CACHE_AGE: "20"
 x-rotation: &rotation
-  # No cache may hold the buyer's directory (max-age 0), so the rotation wait is
-  # the seller's 20 s cache alone; short signatures too.
-  WBA_ROTATION_WAIT: "20"
+  # No cache may hold the buyer's directory (max-age 0). A published key still waits
+  # the profile's 300 s before it signs, which the buyer derives from the max-age
+  # (shared/keyring.py), since any verifier may keep a copy that long. Short
+  # signatures.
+  WBA_DIRECTORY_MAX_AGE: "0"
   WBA_SIGNATURE_LIFETIME: "10"
 
 x-test: &test
@@ -47,7 +48,6 @@ services:
     environment:
       <<: *rotation
       SSL_CERT_FILE: /certs/bundle.pem
-      WBA_DIRECTORY_MAX_AGE: "0"
     volumes:
       - ./generated/bundle.pem:/certs/bundle.pem:ro
 

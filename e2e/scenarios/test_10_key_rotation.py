@@ -5,9 +5,10 @@ fetching it again, even for a keyid it doesn't list. So the buyer:
 
 1. publishes the new key next to the old one, and keeps signing with the old key;
 2. switches to the new key once no verifier can still be using a copy without
-   it (`WBA_ROTATION_WAIT`): the directory's `Cache-Control: max-age` plus
-   `max_cache_age`. In this stack the buyer serves `max_age=0`, so that is 0 s
-   plus 20 s; in production, 300 s plus 300 s;
+   it: the directory's `Cache-Control: max-age` plus the profile's 300 s, which
+   the buyer derives from its max-age (shared/keyring.py). In this stack the
+   buyer serves `max_age=0`, so that is 0 s plus 300 s; in production, 300 s
+   plus 300 s;
 3. removes the old key once every signature it made has expired
    (`WBA_SIGNATURE_LIFETIME`, 10 s here).
 

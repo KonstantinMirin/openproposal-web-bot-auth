@@ -27,7 +27,7 @@ from iab_agentic_primitives.web_bot_auth import Ed25519Key, HTTPRequest, Request
 
 from runner.settings import RunnerSettings
 from shared import settings as read
-from shared.keyring import KeyStore
+from shared.keyring import KeyStore, rotation_wait
 from transport.client import ControlClient
 
 RUNNER = RunnerSettings.from_env()
@@ -60,8 +60,9 @@ BEARER_TOKEN = read.required_secret(_ENV, "DEMO_BEARER_TOKEN").get_secret_value(
 # The timing the agents run with, with the agents' own defaults.
 #: How long the seller answers from a cached buyer directory (`WBA_MAX_CACHE_AGE`).
 MAX_CACHE_AGE = read.integer(_ENV, "WBA_MAX_CACHE_AGE", 300)
-#: How long a published buyer key waits before it may sign (`WBA_ROTATION_WAIT`).
-ROTATION_WAIT = read.seconds(_ENV, "WBA_ROTATION_WAIT", 600.0)
+#: How long a published buyer key waits before it may sign: derived, as the buyer derives
+#: it, from its directory's max-age (`WBA_DIRECTORY_MAX_AGE`).
+ROTATION_WAIT = rotation_wait(read.integer(_ENV, "WBA_DIRECTORY_MAX_AGE", 300))
 #: How long the buyer's signatures last (`WBA_SIGNATURE_LIFETIME`).
 SIGNATURE_LIFETIME = read.integer(_ENV, "WBA_SIGNATURE_LIFETIME", 300)
 

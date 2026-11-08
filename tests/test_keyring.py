@@ -27,8 +27,10 @@ from tests.stack import BUYER_KEY, buyer_settings
 from transport.client import ControlClient, ControlFailed
 from transport.control import ACTIVATE, KEYS, PUBLISH, RETIRE, ControlOp, ErrorBody, KeyState
 
-#: The rotation wait and the signature lifetime the tests run with.
-WAIT, LIFETIME = 20.0, 10
+#: The signature lifetime the tests run with, and the rotation wait of a directory served
+#: with `max-age=0`: no cache holds it, and a verifier may keep its copy for the profile's
+#: 300 s (§ 2.8.3).
+LIFETIME, WAIT = 10, 300
 
 
 class Clock:
@@ -71,9 +73,11 @@ class Buyer:
 
 
 def _buyer(
-    data_dir: Path, clock: Clock, *, wait: float = WAIT, lifetime: int = LIFETIME
+    data_dir: Path, clock: Clock, *, max_age: int = 0, lifetime: int = LIFETIME
 ) -> TestClient:
-    settings = replace(buyer_settings(data_dir), rotation_wait=wait, signature_lifetime=lifetime)
+    settings = replace(
+        buyer_settings(data_dir), directory_max_age=max_age, signature_lifetime=lifetime
+    )
     return TestClient(create_app(settings, clock=clock))
 
 
@@ -103,6 +107,36 @@ def test_rotation_follows_the_order_and_its_waits(buyer: Buyer) -> None:
     assert buyer.directory() == [new]
 
 
+def test_the_wait_is_the_directory_max_age_plus_the_profiles_cache_lifetime(
+    tmp_path: Path,
+) -> None:
+    """A cache may serve the directory without the new key for its max-age, and a verifier
+    may answer from that copy for 300 s more, so the key signs only after both (§ 2.8.3)."""
+    clock = Clock()
+    with _buyer(tmp_path, clock, max_age=3600) as client:
+        buyer = Buyer(client, clock, tmp_path / "keys")
+        assert client.get(DIRECTORY_PATH).headers["cache-control"] == "max-age=3600"
+        new = buyer.publish()
+        clock.now += 3600 + 300 - 1
+        assert buyer.step(ACTIVATE, new) == 409
+        clock.now += 1
+        assert buyer.step(ACTIVATE, new) == 200
+
+
+def test_a_directory_holds_at_most_sixteen_keys(buyer: Buyer) -> None:
+    """The buyer never publishes a directory a verifier would refuse: a key beyond the
+    sixteenth is refused, and the directory keeps answering with the keys it has."""
+    published = [buyer.publish() for _ in range(15)]
+    assert len(buyer.directory()) == 16
+    with pytest.raises(ControlFailed) as failed:
+        buyer.control.call(PUBLISH, None)
+    assert failed.value.status == 409
+    assert set(buyer.directory()) == {buyer.keys().active, *published}
+    assert buyer.step(RETIRE, published[0]) == 200  # never signed, so it can go at once
+    replacement = buyer.publish()
+    assert set(buyer.directory()) == {buyer.keys().active, *published[1:], replacement}
+
+
 def test_a_rotation_step_out_of_order_is_a_control_error(buyer: Buyer) -> None:
     with pytest.raises(ControlFailed) as failed:
         buyer.control.call(ACTIVATE, None, kid="no-such-kid")
@@ -115,13 +149,14 @@ def test_a_rotation_step_out_of_order_is_a_control_error(buyer: Buyer) -> None:
 
 def test_publish_retire_publish_keeps_every_key(tmp_path: Path) -> None:
     clock = Clock()
-    with _buyer(tmp_path, clock, wait=0, lifetime=0) as client:
+    with _buyer(tmp_path, clock, lifetime=0) as client:
         buyer = Buyer(client, clock, tmp_path / "keys")
         original = buyer.keys().active
         first = buyer.publish()
         assert buyer.step(RETIRE, first) == 200  # never signed, so it can go at once
         second = buyer.publish()
         assert second != first
+        clock.now += WAIT
         assert buyer.step(ACTIVATE, second) == 200
         assert buyer.step(ACTIVATE, original) == 200
         assert buyer.step(RETIRE, second) == 200
@@ -144,10 +179,11 @@ def test_a_restart_keeps_the_keys_and_the_rotation_state(tmp_path: Path) -> None
 
 def test_the_scenarios_read_any_key_by_kid_published_or_retired(tmp_path: Path) -> None:
     clock = Clock()
-    with _buyer(tmp_path, clock, wait=0, lifetime=0) as client:
+    with _buyer(tmp_path, clock, lifetime=0) as client:
         buyer = Buyer(client, clock, tmp_path / "keys")
         old = buyer.keys().active
         new = buyer.publish()
+        clock.now += WAIT
         assert buyer.step(ACTIVATE, new) == 200
         assert buyer.step(RETIRE, old) == 200
     # As e2e/scenarios/conftest.py reads the buyer's keys volume.
@@ -176,7 +212,7 @@ def test_the_key_store_reads_a_directory_without_keys_and_writes_nothing(tmp_pat
 
 def test_a_deleted_active_key_is_refused_never_minted_again(tmp_path: Path) -> None:
     clock = Clock()
-    with _buyer(tmp_path, clock, wait=0, lifetime=0) as client:
+    with _buyer(tmp_path, clock, lifetime=0) as client:
         buyer = Buyer(client, clock, tmp_path / "keys")
         active = buyer.keys().active
         buyer.publish()

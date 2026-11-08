@@ -290,7 +290,7 @@ flowchart LR
 
 Every container trusts the public roots plus the throwaway CA. The seller's
 cache lifetime is 20 s and the buyer serves its directory with `max_age=0`, so
-the rotation scenario stays short.
+the rotation scenario waits only the profile's 300 s before the new key signs.
 
 The Python image has two stages ([`Dockerfile`](Dockerfile)). The `base` stage
 is what the seller, the buyer, and the live runner run: it runs as the user
@@ -340,7 +340,7 @@ fresh stack:
 | 7 | Cloudflare verifies the buyer | cfbot verifies a request the buyer signed, with `web-bot-auth`'s `verify()`, after fetching the buyer's directory and verifying the directory's own signature by that key with `http-message-sig`. |
 | 8 | No credential | A commit with no credential gets `403 not_eligible`. An invalid token gets `401`, never "no credential". A failing credential is refused at the boundary even with a body that isn't JSON. |
 | 9 | Buyer refuses an unverifiable answer | With the seller's test-only fault toggle, the buyer refuses an unsigned answer, an unbound one, one bound to another request, and one whose `Content-Digest` doesn't match its body, on a read and on a commit, by signature and by bearer token (a bearer request has no signature to bind to, so only the unsigned and the wrong-digest answers apply). On a commit, the seller accepted on the first attempt; each re-sent `Commit` keeps its `idempotency_key`, the seller answers from its stored result and writes no second entry, and the buyer agrees once the answer verifies. |
-| 10 | Key rotation | The standard order. The buyer publishes a new key and keeps signing with the old one, which the seller accepts. Once no verifier can still hold a copy without the new key, it switches; the seller fetches the directory again and accepts the new key. Once the old key's signatures have expired the buyer removes it, and after the seller's next refresh a request signed with it gets `403 key-not-found`. The stack waits 20 s. Production waits 600 s: the directory's `Cache-Control: max-age=300` plus the verifier's `max_cache_age` of 300 s. |
+| 10 | Key rotation | The standard order. The buyer publishes a new key and keeps signing with the old one, which the seller accepts. Once no verifier can still hold a copy without the new key, it switches; the seller fetches the directory again and accepts the new key. Once the old key's signatures have expired the buyer removes it, and after the seller's next refresh a request signed with it gets `403 key-not-found`. The wait is derived from the directory's `Cache-Control: max-age` plus the profile's 300 s cache lifetime (§ 2.8.3), never set apart from it: the stack serves `max-age=0` and waits 300 s, and production waits 600 s. |
 | 11 | Operator controls | The front never routes an agent's own controls (`/operator/`, cfbot's `/run/`), and each agent refuses a call without its own `OPERATOR_KEY`, another party's included. The seller issues a fresh proposal on an operator call, which the live runner uses. |
 
 ## Run it locally
@@ -402,7 +402,7 @@ The live deployment differs from the local test only where production needs it:
 | Directory `Cache-Control: max-age` | Buyer | 300 s | 0 s |
 | Verifier `max_cache_age` | Seller, for the buyer's directory | 300 s | 20 s |
 | Verifier `max_cache_age` | Buyer, for the seller's directory | 300 s | 300 s, the library's default |
-| Wait before a published key signs | Buyer | 600 s | 20 s |
+| Wait before a published key signs | Buyer | 600 s, max-age plus 300 s | 300 s, max-age plus 300 s |
 | Request signature lifetime | Buyer | 300 s | 10 s |
 | Response signature lifetime | Seller | 300 s, the library's default | 300 s, the library's default |
 | Fault toggle | Seller | Not mounted | Mounted for scenario 9 |

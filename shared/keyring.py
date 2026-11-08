@@ -21,13 +21,17 @@ practice, and the keyring enforces its waits:
 1. `publish()` adds a new key to the directory. The old key keeps signing.
 2. `activate(kid)` switches signing to it, once `rotation_wait` has passed since
    it was published. That is the longest a verifier may keep using a copy of the
-   directory without the new key: an HTTP cache may hold the response for its
-   `Cache-Control: max-age` (`PublishPolicy.max_age`, 300 s by default), and the
-   library's resolver answers from a cached copy for `CachePolicy.max_cache_age`
-   (300 s by default), so production waits 600 s.
+   directory without the new key (§ 2.8.3): an HTTP cache may hold the response
+   for its `Cache-Control: max-age`, the max-age the keyring's directory is
+   published with, and a verifier may then answer from its own copy for the
+   profile's 300 s. The wait is derived from that max-age, never set apart from
+   it (`rotation_wait`), so production, at a max-age of 300 s, waits 600 s.
 3. `retire(kid)` takes the old key out of the directory, once every signature it
    made has expired: `signature_lifetime` after it stopped signing. Its file
    moves to `keys/retired/`.
+
+A directory lists at most the library's 16 keys, so `publish` refuses a key
+beyond that: retire one first.
 
 Files are named by kid, so a published key never reuses a retired key's name.
 `state.json` holds a `KeyringState`, written whole to a temporary file and moved
@@ -46,6 +50,8 @@ from pathlib import Path
 
 from iab_agentic_primitives.web_bot_auth import Ed25519Key, RequestSigner, keyfile
 from iab_agentic_primitives.web_bot_auth import Origin as LibraryOrigin
+from iab_agentic_primitives.web_bot_auth.directory import MAX_DIRECTORY_KEYS
+from iab_agentic_primitives.web_bot_auth.rules import CACHE
 from iab_agentic_primitives.web_bot_auth.signer import SignerConfig
 
 from persistence.values import Origin
@@ -103,6 +109,13 @@ class NotPublishedError(RotationError):
 class TooEarlyError(RotationError):
     def __init__(self, kid: str, step: str, seconds: float) -> None:
         super().__init__(f"{kid}: {step} for {seconds:.0f} s more")
+
+
+class DirectoryFullError(RotationError):
+    def __init__(self) -> None:
+        super().__init__(
+            f"the directory lists {MAX_DIRECTORY_KEYS} keys, the most it can; retire one first"
+        )
 
 
 class StillSigningError(RotationError):
@@ -196,19 +209,31 @@ def _save(directory: Path, state: KeyringState) -> None:
     partial.replace(target)
 
 
+def rotation_wait(directory_max_age: int) -> int:
+    """How long a published key waits before it signs, for a directory served with
+    `Cache-Control: max-age=directory_max_age` (§ 2.8.3): a cache may serve the directory
+    without the key for that long, and a verifier may answer from its copy for the
+    profile's cache lifetime, 300 s, after that."""
+    return directory_max_age + CACHE.fresh_for
+
+
 class Keyring:
-    """The one writer of a party's keys: first boot, and the three rotation steps."""
+    """The one writer of a party's keys: first boot, and the three rotation steps.
+
+    `directory_max_age` is the `Cache-Control: max-age` the party's directory is
+    published with; the rotation wait is derived from it (`rotation_wait`).
+    """
 
     def __init__(
         self,
         store: KeyStore,
         *,
-        rotation_wait: float,
+        directory_max_age: int,
         signature_lifetime: int,
         clock: Callable[[], float] = time.time,
     ) -> None:
         self.store = store
-        self.rotation_wait = rotation_wait
+        self.rotation_wait = rotation_wait(directory_max_age)
         self.signature_lifetime = signature_lifetime
         self._clock = clock
 
@@ -217,7 +242,7 @@ class Keyring:
         cls,
         directory: Path,
         *,
-        rotation_wait: float,
+        directory_max_age: int,
         signature_lifetime: int,
         clock: Callable[[], float] = time.time,
     ) -> Keyring:
@@ -227,13 +252,16 @@ class Keyring:
             _save(directory, KeyringState.first(_mint(directory).thumbprint))
         return cls(
             KeyStore.open(directory),
-            rotation_wait=rotation_wait,
+            directory_max_age=directory_max_age,
             signature_lifetime=signature_lifetime,
             clock=clock,
         )
 
     def publish(self) -> Ed25519Key:
-        """Step 1: a new key in the directory. It doesn't sign yet."""
+        """Step 1: a new key in the directory. It doesn't sign yet. Refused when the directory
+        already lists as many keys as a directory can."""
+        if len(self.store.published()) >= MAX_DIRECTORY_KEYS:
+            raise DirectoryFullError
         key = _mint(self.store.directory)
         self._save(self.store.state.published_at(key.thumbprint, self._clock()))
         return key

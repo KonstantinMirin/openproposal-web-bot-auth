@@ -7,15 +7,17 @@ The buyer reads every `AgentSettings` variable (shared/settings.py), and these:
 | `PEER_SELLER_ORIGIN` | `https://seller.wba-demo.noetis.dev` | the seller it deals with |
 | `PEER_SELLER_LEGAL_NAME` | `Demo Seller Inc.` | that seller's legal name, as the buyer names it |
 | `PEER_CFBOT_ORIGIN` | `https://cfbot.wba-demo.noetis.dev` | Cloudflare's verifier |
-| `WBA_ROTATION_WAIT` | `600` | how long a published key waits before it signs |
 | `WBA_SIGNATURE_LIFETIME` | `300` | how long its signatures last |
 
 Its database is `buyer.db` in `DATA_DIR`, and its keyring is `KEYS_DIR`.
 `plan_file` is its plan, the one this package ships by default; the composition
-root reads it once. In
-production, the rotation wait is the directory's max-age (300 s) plus the
-library's default max_cache_age (300 s), and signatures last the profile's 300 s
-maximum (shared/keyring.py).
+root reads it once. The sellers it deals with are its settings' own
+(`counterparties`), read on every boot; the buyer stores none of them.
+
+A published key waits before it signs for the directory's max-age
+(`WBA_DIRECTORY_MAX_AGE`) plus the profile's 300 s (shared/keyring.py), so
+production waits 600 s; nothing sets the wait apart from the max-age. Signatures
+last the profile's 300 s maximum.
 """
 
 from __future__ import annotations
@@ -57,7 +59,6 @@ class BuyerSettings(AgentSettings):
     peer_seller_origin: Origin = DEFAULT_ORIGINS["seller"]
     peer_seller_legal_name: str = "Demo Seller Inc."
     peer_cfbot_origin: Origin = DEFAULT_ORIGINS["cfbot"]
-    rotation_wait: float = 600.0
     signature_lifetime: int = 300
     plan_file: Path = PLAN_FILE
 
@@ -85,6 +86,5 @@ class BuyerSettings(AgentSettings):
             peer_seller_origin=read.origin(env, "PEER_SELLER_ORIGIN", DEFAULT_ORIGINS["seller"]),
             peer_seller_legal_name=read.text(env, "PEER_SELLER_LEGAL_NAME", "Demo Seller Inc."),
             peer_cfbot_origin=read.origin(env, "PEER_CFBOT_ORIGIN", DEFAULT_ORIGINS["cfbot"]),
-            rotation_wait=read.seconds(env, "WBA_ROTATION_WAIT", 600.0),
             signature_lifetime=read.integer(env, "WBA_SIGNATURE_LIFETIME", 300),
         )

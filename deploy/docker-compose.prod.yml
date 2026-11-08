@@ -37,10 +37,10 @@ services:
     ports: ["127.0.0.1:18082:8000"]
     environment:
       WBA_MAX_CACHE_AGE: "300"
-      # Production rotation: the directory's max-age 300 s, a wait of 600 s before a
-      # published key signs (max-age 300 plus max_cache_age 300), signatures for 300 s.
+      # Production rotation: the directory's max-age 300 s, from which the buyer
+      # derives a wait of 600 s before a published key signs (max-age 300 plus the
+      # profile's 300 s), and signatures for 300 s.
       WBA_DIRECTORY_MAX_AGE: "300"
-      WBA_ROTATION_WAIT: "600"
       WBA_SIGNATURE_LIFETIME: "300"
 
   cfbot:

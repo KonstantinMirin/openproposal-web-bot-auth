@@ -101,18 +101,13 @@ def test_the_buyer_reads_every_variable() -> None:
             "DATA_DIR": "/srv/buyer",
             "KEYS_DIR": "/srv/buyer-keys",
             "WBA_DIRECTORY_MAX_AGE": "0",
-            "WBA_ROTATION_WAIT": "20",
             "WBA_SIGNATURE_LIFETIME": "10",
         }
     )
     assert str(settings.self_origin) == "https://buyer.example"
     assert str(settings.peer_seller_origin) == "https://seller.example"
     assert str(settings.peer_cfbot_origin) == "https://cfbot.example"
-    assert (settings.directory_max_age, settings.rotation_wait, settings.signature_lifetime) == (
-        0,
-        20.0,
-        10,
-    )
+    assert (settings.directory_max_age, settings.signature_lifetime) == (0, 10)
     assert settings.operator_key is None and settings.bearer_token is None
     assert settings.max_cache_age is None  # the library's default
     assert (settings.data_dir, settings.keys_dir) == (
@@ -125,11 +120,7 @@ def test_the_buyer_defaults_to_the_production_rotation() -> None:
     settings = BuyerSettings.from_env({})
     assert settings.keys_dir == Path("/keys")  # apart from the database
     assert str(settings.peer_cfbot_origin) == "https://cfbot.wba-demo.noetis.dev"
-    assert (settings.rotation_wait, settings.signature_lifetime, settings.directory_max_age) == (
-        600.0,
-        300,
-        300,
-    )
+    assert (settings.signature_lifetime, settings.directory_max_age) == (300, 300)
 
 
 def test_the_runner_keeps_its_secrets_out_of_its_repr() -> None:
@@ -169,10 +160,9 @@ def test_a_buyer_origin_without_a_scheme_stops_the_seller_at_its_settings() -> N
         ("WBA_MAX_CACHE_AGE", "2.5", SellerSettings.from_env),
         ("WBA_MAX_CACHE_AGE", "²", BuyerSettings.from_env),
         ("WBA_SIGNATURE_LIFETIME", "ten", BuyerSettings.from_env),
-        ("WBA_ROTATION_WAIT", "-1", BuyerSettings.from_env),
-        ("WBA_ROTATION_WAIT", "nan", BuyerSettings.from_env),
-        ("WBA_ROTATION_WAIT", "later", BuyerSettings.from_env),
         ("RUN_INTERVAL", "hourly", runner),
+        ("RUN_INTERVAL", "-1", runner),
+        ("RUN_INTERVAL", "nan", runner),
         ("SELLER_OPERATOR_KEY", "", runner),
         ("SELLER_CONTROL", "seller:8000", runner),
         ("BUYER_CONTROL", "http://", runner),

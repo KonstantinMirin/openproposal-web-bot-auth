@@ -161,7 +161,7 @@ def create_app(
     # key store, which each rotation step refreshes.
     keyring = Keyring.create(
         settings.keys_dir,
-        rotation_wait=settings.rotation_wait,
+        directory_max_age=settings.directory_max_age,
         signature_lifetime=settings.signature_lifetime,
         clock=clock,
     )

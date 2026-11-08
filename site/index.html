@@ -533,7 +533,7 @@ signature: sig1=:5kF9XH4bsuauHZoFccx+QIPx31fC1lEEETIkSXE22ZRLN8OIL1otTSDNxFNjTIx
     <tr><td>Trust store</td><td>Public roots only</td><td>Public roots plus the throwaway CA</td></tr>
     <tr><td>Directory <code>Cache-Control: max-age</code></td><td>300 s</td><td>300 s for the seller, 0 s for the buyer</td></tr>
     <tr><td>Verifier cache (<code>max_cache_age</code>)</td><td>300 s</td><td>20 s</td></tr>
-    <tr><td>Wait before a published key signs</td><td>600 s</td><td>20 s</td></tr>
+    <tr><td>Wait before a published key signs (max-age plus 300 s)</td><td>600 s</td><td>300 s</td></tr>
     <tr><td>Signature lifetime</td><td>300 s</td><td>10 s</td></tr>
     <tr><td>Fault injection</td><td>Not mounted</td><td>Mounted for scenario 9</td></tr>
   </tbody>

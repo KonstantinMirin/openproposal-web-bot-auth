@@ -75,9 +75,8 @@ set the values the table's last column names.
 | `SELLER_OPERATOR_KEY`, `BUYER_OPERATOR_KEY` | Runner, scenarios | None: required, so the runner won't start | Each agent's own key, sent to that agent's controls only |
 | `CFBOT_OPERATOR_KEY` | Scenarios | None: required | cfbot's own key, for its `/run/` controls |
 | `DEMO_BEARER_TOKEN` | Seller, buyer, runner, scenarios | None: no bearer buyer | The token the seller issues its bearer buyer; the runner reads it only to keep it out of reports |
-| `WBA_DIRECTORY_MAX_AGE` | Seller, buyer | `300` | The directory's `Cache-Control: max-age` (the e2e buyer: `0`) |
+| `WBA_DIRECTORY_MAX_AGE` | Seller, buyer, scenarios | `300` | The directory's `Cache-Control: max-age` (the e2e buyer: `0`). A buyer key waits this plus 300 s before it signs |
 | `WBA_MAX_CACHE_AGE` | Seller, buyer, scenarios | The library's, `300` | How long a cached directory answers without a fetch (the e2e seller: `20`) |
-| `WBA_ROTATION_WAIT` | Buyer, scenarios | `600` | How long a published key waits before it signs (e2e: `20`) |
 | `WBA_SIGNATURE_LIFETIME` | Buyer, scenarios | `300` | How long the buyer's request signatures last (e2e: `10`) |
 | `DEMO_FAULT_INJECTION` | Seller | Off | TEST ONLY: mounts `PUT /test/fault`; `make live-config` keeps it out of production |
 | `SELLER_CONTROL`, `BUYER_CONTROL` | Runner, scenarios | `http://seller:8000`, `http://buyer:8000` | The agents' own controls, inside the network |
@@ -90,8 +89,8 @@ set the values the table's last column names.
 `docker-compose.prod.yml` fixes everything else: the three origins
 `https://seller.wba-demo.noetis.dev`, `https://buyer.wba-demo.noetis.dev`, and
 `https://cfbot.wba-demo.noetis.dev`; a directory `Cache-Control: max-age` of
-300 s; a verifier `max_cache_age` of 300 s; a rotation wait of 600 s; and a
-signature lifetime of 300 s. No service sets `SSL_CERT_FILE` or
+300 s, from which the buyer derives a rotation wait of 600 s; a verifier
+`max_cache_age` of 300 s; and a signature lifetime of 300 s. No service sets `SSL_CERT_FILE` or
 `NODE_EXTRA_CA_CERTS`, so the agents trust the image's public roots only, and
 the seller's test-only fault toggle isn't mounted.
 
