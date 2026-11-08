@@ -17,23 +17,57 @@ to `POST /proposals/{id}/commit`, or `read`, the answers to
 - `rebound`: sign the response bound to a different request signature.
 - `wrong_digest`: sign the response over a body with one byte changed, and send
   the body unchanged, so its `Content-Digest` doesn't match what arrives.
+
+`FAULT_REASONS` names the reason a verifier refuses each broken answer with,
+and `BINDING_FAULTS` the modes that break only the binding to the request's
+signature, which an answer to an unsigned (bearer) request doesn't have.
 """
 
 from __future__ import annotations
 
 import base64
+from typing import get_args
 
 from fastapi import APIRouter
 from iab_agentic_primitives.web_bot_auth import ResponseSigner, ServerIdentity
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from persistence.values import KeptRequest, KeptResponse
-from transport.control import FAULT, FaultMode, FaultName, FaultTarget
+from persistence.values import AuthMethod, KeptRequest, KeptResponse
+from transport.control import FAULT, BreakingFault, FaultMode, FaultName, FaultTarget
 from transport.operator import control_route
 from transport.wba import asgi_lines, lines_of, request_of, response_to_library
 
 SIGNATURE_FIELDS = (b"signature", b"signature-input", b"signature-agent")
 _OTHER_SIGNATURE = "sig1=:" + base64.b64encode(bytes(64)).decode() + ":"
+
+
+def refusal_of(mode: BreakingFault) -> str:
+    """The library's reason code for refusing an answer that `mode` breaks. The match is
+    exhaustive, so mypy rejects a mode without a reason, and no mode falls through the
+    last case."""
+    match mode:
+        case "strip":
+            return "signature-missing"
+        case "unbound":
+            return "response-not-bound"
+        case "rebound":
+            return "signature-invalid"
+        case "wrong_digest":  # pragma: no branch
+            return "content-digest"
+
+
+#: Every mode that breaks an answer, with the reason a verifier refuses it.
+FAULT_REASONS: dict[BreakingFault, str] = {m: refusal_of(m) for m in get_args(BreakingFault)}
+#: The modes that break only an answer's binding to the request's signature. A bearer
+#: request carries no signature, so an answer to it is bound to none, and these break nothing.
+BINDING_FAULTS: frozenset[BreakingFault] = frozenset({"unbound", "rebound"})
+
+
+def refused_under(credential: AuthMethod) -> dict[BreakingFault, str]:
+    """The modes whose answers the buyer must refuse under `credential`, with each reason."""
+    if credential == "web_bot_auth":
+        return dict(FAULT_REASONS)
+    return {m: r for m, r in FAULT_REASONS.items() if m not in BINDING_FAULTS}
 
 
 def _targets(scope: Scope, on: FaultTarget) -> bool:

@@ -6,8 +6,8 @@ never reached and nothing is written.
 """
 
 import httpx
-from conftest import SELLER, commit_body, signed
 
+from e2e.scenarios.stack import SELLER, commit_body, signed
 from persistence.observe import SellerRecords
 from transport.control import ErrorBody
 

@@ -19,11 +19,10 @@ from pathlib import Path
 
 import httpx
 import pytest
-from iab_agentic_primitives.web_bot_auth import HTTPRequest, RequestSigner
 
 from persistence.values import AuthMethod
 from protocol.operations import parse_errors
-from tests.stack import BUYER, SELLER, TOKEN, Stack, as_state
+from tests.stack import SELLER, TOKEN, Stack, as_state, signed_headers
 from transport.control import Refused
 
 DISPLAY = "business-daily-display"
@@ -69,8 +68,7 @@ def _headers(stack: Stack, credential: AuthMethod, url: str, body: bytes) -> dic
     headers = {"Content-Type": "application/json"}
     if credential == "bearer":
         return headers | {"Authorization": f"Bearer {TOKEN}"}
-    request = HTTPRequest("POST", url, headers, body)
-    return dict(RequestSigner(stack.buyer_keys.active(), BUYER).sign(request).headers.items())
+    return signed_headers("POST", url, stack.buyer_keys.active(), body=body)
 
 
 @pytest.mark.parametrize("place", ["extension", "amount"])

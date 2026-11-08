@@ -6,9 +6,8 @@ hash and resolves the same `ResolvedCaller` type a signature resolves, with
 """
 
 import httpx
-from conftest import BUYER, SELLER, signed
-from settings import BEARER_TOKEN
 
+from e2e.scenarios.stack import BEARER_TOKEN, BUYER, SELLER, signed
 from persistence.observe import SellerRecords
 from seller.caller import WHOAMI, BearerCredential, ResolvedView, SignatureCredential
 from transport.client import ControlClient

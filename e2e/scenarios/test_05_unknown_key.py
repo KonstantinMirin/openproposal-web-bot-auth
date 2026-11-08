@@ -5,9 +5,9 @@ directory. The seller fetches the directory, finds no such key, and refuses.
 """
 
 import httpx
-from conftest import SELLER, signed
 from iab_agentic_primitives.web_bot_auth import Ed25519Key
 
+from e2e.scenarios.stack import SELLER, signed
 from transport.control import ErrorBody
 
 

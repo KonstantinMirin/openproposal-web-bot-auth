@@ -10,8 +10,10 @@ extend-exclude = ["vendor"]
 select = ["TID251"]
 
 [lint.per-file-ignores]
-# Where Settings.from_env() lives: the one sanctioned reader per agent (seller,
-# buyer, runner, and the e2e scenarios). Nothing else reads the environment.
+# Where Settings.from_env() lives: the one sanctioned reader per service (the
+# seller, the buyer, the runner, and shared/settings.py, the readers they share).
+# The e2e scenarios read theirs through RunnerSettings and those readers
+# (e2e/scenarios/stack.py). Nothing else reads the environment.
 "*/settings.py" = ["TID251"]
 [lint.flake8-tidy-imports.banned-api]
 "os.environ".msg = "Read the environment once, in the agent's Settings.from_env()."

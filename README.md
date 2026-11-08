@@ -282,6 +282,14 @@ Every container trusts the public roots plus the throwaway CA. The seller's
 cache lifetime is 20 s and the buyer serves its directory with `max_age=0`, so
 the rotation scenario stays short.
 
+The Python image has two stages ([`Dockerfile`](Dockerfile)). The `base` stage
+is what the seller, the buyer, and the live runner run: it runs as the user
+`app` and holds no test code. The `scenarios` stage adds `e2e/scenarios` and
+the dev group to it, and only the `scenarios` service builds it. The
+scenarios read their settings, the stack's addresses, and their helpers from
+[`e2e/scenarios/stack.py`](e2e/scenarios/stack.py); `conftest.py` holds only
+their fixtures.
+
 ### Live deployment
 
 ```mermaid

@@ -29,10 +29,9 @@ from protocol.record import (
     record_digest,
 )
 from protocol.values import JsonObject, JsonValue
-from tests._tools import load_yaml, seed_document
+from tests._tools import load_yaml, plan_writes, seed_document
 
 FIXTURES = Path(__file__).parent / "fixtures"
-PLAN = load_yaml(Path(__file__).parent.parent / "buyer" / "plan.yaml")
 ISSUED = load_yaml(FIXTURES / "proposal-issued.yaml")
 AGREED = load_yaml(FIXTURES / "proposal-agreed.yaml")
 NAMED = ["business-daily-display"]
@@ -41,7 +40,7 @@ NAMED = ["business-daily-display"]
 def _base() -> JsonObject:
     """The demo's issued proposal, composed with the buyer's plan, so it has a commitment."""
     issued = seed_document()
-    return compose(issued, {n: LineItemWrites.model_validate(PLAN[n]) for n in NAMED})
+    return compose(issued, plan_writes(*NAMED))
 
 
 def _first(value: JsonValue) -> JsonObject:

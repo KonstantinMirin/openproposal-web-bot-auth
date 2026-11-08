@@ -25,12 +25,17 @@ event loop.
 `runner_transport` is the network as the live runner sees it: the agents'
 controls at `http://seller:8000` and `http://buyer:8000`, their directories, and
 cfbot's directory.
+
+The stack's parts also build each agent alone, for the tests of one app:
+`seller_settings`, `buyer_settings`, and `seller_app`, under the demo's origins
+or another deployment's (`ELSEWHERE`); `signed_headers`, a request signed as a
+party; and `Directories`, signed key directories served in process.
 """
 
 from __future__ import annotations
 
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from pathlib import Path
@@ -45,8 +50,12 @@ from iab_agentic_primitives.web_bot_auth import (
     Ed25519Key,
     HTTPRequest,
     HTTPResponse,
+    KeyResolver,
     MemoryNonceStore,
+    NonceStore,
+    RequestSigner,
     ResponseSigner,
+    StaticKeyResolver,
     keyfile,
 )
 from iab_agentic_primitives.web_bot_auth.asgi import directory_response
@@ -100,6 +109,11 @@ class Origins:
 
 #: The demo's own origins, which a stack runs under unless a test names others.
 DEMO = Origins()
+#: Another deployment of the demo, under origins of its own.
+ELSEWHERE = Origins(
+    seller=Origin.parse("https://sell-side.wba-demo.noetis.dev"),
+    buyer=Origin.parse("https://buy-side.wba-demo.noetis.dev"),
+)
 
 
 #: Stands in for the seller: an answer to the buyer's request, or None to let the seller answer.
@@ -131,6 +145,64 @@ def buyer_settings(data_dir: Path, *, origins: Origins = DEMO, token: bool = Tru
         operator_key=BUYER_KEY,
         bearer_token=SecretStr(TOKEN) if token else None,
     )
+
+
+def seller_app(
+    settings: SellerSettings,
+    *,
+    resolver: KeyResolver | None = None,
+    nonces: NonceStore | None = None,
+) -> ASGIApp:
+    """The seller from `settings`, with an in-memory nonce store, and a key resolver that
+    knows no key unless the test gives one, so the app never fetches over the network."""
+    return create_seller(
+        settings,
+        nonces=MemoryNonceStore() if nonces is None else nonces,
+        resolver=StaticKeyResolver({}) if resolver is None else resolver,
+    )
+
+
+def signed_request(
+    method: str, url: str, key: Ed25519Key, *, origin: str = BUYER, body: bytes = b""
+) -> HTTPRequest:
+    """The request, signed as `origin` with `key`; a body goes as JSON."""
+    headers = {"Content-Type": "application/json"} if body else {}
+    return RequestSigner(key, origin).sign(HTTPRequest(method, url, headers, body))
+
+
+def signed_headers(
+    method: str, url: str, key: Ed25519Key, *, origin: str = BUYER, body: bytes = b""
+) -> dict[str, str]:
+    """The headers of the request `signed_request` signs."""
+    return dict(signed_request(method, url, key, origin=origin, body=body).headers.items())
+
+
+class Directories:
+    """Signed key directories served in process: each host's publishes that host's key."""
+
+    def __init__(self, keys: Mapping[str, Ed25519Key]) -> None:
+        self._keys = dict(keys)
+
+    def serve(self, request: httpx.Request) -> httpx.Response | None:
+        """The directory `request` fetches, signed with its host's key, as the host serves
+        it; None when the request fetches no directory served here."""
+        host = request.url.host
+        key = self._keys.get(host)
+        if key is None or request.url.path != DIRECTORY_PATH:
+            return None
+        status, headers, body = directory_response([key], authority=host, now=int(time.time()))
+        return httpx.Response(status, headers=headers, stream=httpx.ByteStream(body))
+
+    def resolver(self) -> KeyResolver:
+        """The library's directory resolver, reaching these directories only: anything
+        else answers 404."""
+
+        def network(request: httpx.Request) -> httpx.Response:
+            served = self.serve(request)
+            return httpx.Response(404) if served is None else served
+
+        client = http_client(tls_context(None), transport=httpx.MockTransport(network))
+        return directory_resolver(client, max_cache_age=None)
 
 
 Lines = list[tuple[str, str]]
@@ -184,12 +256,6 @@ def cfbot_accepts(identity: str, *, keyid: str = "kid-of-the-test") -> httpx.Res
     return httpx.Response(200, json=verdict)
 
 
-def _directory_of(key: Ed25519Key, host: str) -> httpx.Response:
-    """The signed directory that publishes `key`, served as `host` serves it."""
-    status, headers, body = directory_response([key], authority=host, now=int(time.time()))
-    return httpx.Response(status, headers=headers, stream=httpx.ByteStream(body))
-
-
 class Stack:
     def __init__(
         self,
@@ -208,11 +274,13 @@ class Stack:
         self.cfbot_key = Ed25519Key.generate()
         #: The reseller's key, which its directory publishes; `signed` can sign as it.
         self.reseller_key = Ed25519Key.generate()
-        #: The parties whose directories the stack serves itself, by host.
-        self._published = {
-            Origin.parse(CFBOT).host: self.cfbot_key,
-            Origin.parse(RESELLER).host: self.reseller_key,
-        }
+        #: The directories of the parties the stack stands in for, by host.
+        self._published = Directories(
+            {
+                Origin.parse(CFBOT).host: self.cfbot_key,
+                Origin.parse(RESELLER).host: self.reseller_key,
+            }
+        )
         #: Every request the buyer sent, directory fetches left out, as its client sent it.
         self.requests: list[httpx.Request] = []
         #: The answer to each of `requests`, as the transport delivered it.
@@ -231,9 +299,8 @@ class Stack:
         self._to_buyer = http_client(
             tls_context(None), transport=httpx.MockTransport(self._seller_network)
         )
-        seller = create_seller(
+        seller = seller_app(
             seller_settings(self.seller_dir, origins=origins, faults=faults),
-            nonces=MemoryNonceStore(),
             resolver=directory_resolver(self._to_buyer, max_cache_age=None),
         )
         self._seller = Recorder(seller)
@@ -294,10 +361,10 @@ class Stack:
 
     async def _directory(self, request: httpx.Request) -> httpx.Response:
         """A directory fetch, routed by its host to the party that publishes it."""
+        published = self._published.serve(request)
+        if published is not None:
+            return published
         host = request.url.host
-        key = self._published.get(host)
-        if key is not None:
-            return _directory_of(key, host)
         apps = {self.origins.seller.host: self.seller, self.origins.buyer.host: self.buyer}
         app = apps.get(host)
         if app is None:

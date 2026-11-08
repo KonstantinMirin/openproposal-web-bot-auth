@@ -27,23 +27,24 @@ import json
 import sqlite3
 from collections.abc import Callable, Iterator
 from pathlib import Path
+from typing import get_args
 
 import httpx
 import pytest
-from openproposal import LineItemWrites
 
 from persistence.values import AuthMethod, Origin
 from protocol.record import compose, digest_input, items_by_id
 from protocol.values import JsonObject, JsonValue, read_json
-from tests._tools import load_yaml
+from seller.faults import BINDING_FAULTS, refused_under
+from tests._tools import plan_writes
 from tests.stack import (
     BUYER,
     BUYER_OPERATOR,
     CFBOT,
+    ELSEWHERE,
     RESELLER,
     SELLER,
     Lines,
-    Origins,
     Stack,
     as_state,
     lines,
@@ -54,10 +55,10 @@ from transport.control import (
     COMMIT,
     READ,
     Agreed,
+    BreakingFault,
     CfbotAccepted,
     CommitTrigger,
     ErrorBody,
-    FaultName,
     Read,
     ReadTrigger,
     Refused,
@@ -66,7 +67,6 @@ from transport.control import (
 
 DISPLAY = "business-daily-display"
 CTV = "weather-app-ctv"
-PLAN = load_yaml(Path(__file__).resolve().parent.parent / "buyer" / "plan.yaml")
 
 
 @pytest.fixture
@@ -135,13 +135,6 @@ def test_a_bearer_commit_is_agreed_with_no_signing_key(stack: Stack) -> None:
     assert list(sent) == _sent_lines(commit)
 
 
-#: Another deployment of the demo, under origins of its own.
-ELSEWHERE = Origins(
-    seller=Origin.parse("https://sell-side.wba-demo.noetis.dev"),
-    buyer=Origin.parse("https://buy-side.wba-demo.noetis.dev"),
-)
-
-
 @pytest.mark.parametrize(
     ("proposal_id", "credential"),
     [("demo-wba-1", "web_bot_auth"), ("demo-bearer-1", "bearer")],
@@ -175,7 +168,7 @@ def test_a_commit_saves_the_agreed_proposal_and_leaves_what_it_was_decided_on(
 
     # The named line item is the composed one, agreed; the rest of the proposal is as issued,
     # and its status follows § 4.3.3: the other line item is still published.
-    writes = {DISPLAY: LineItemWrites.model_validate(PLAN[DISPLAY])}
+    writes = plan_writes(DISPLAY)
     composed = compose(issued, writes)
     assert items_by_id(agreed)[DISPLAY] == {**items_by_id(composed)[DISPLAY], "status": "agreed"}
     assert items_by_id(agreed)[CTV] == items_by_id(issued)[CTV]
@@ -555,13 +548,10 @@ def test_a_retry_same_rejection_keeps_the_commit_pending(stack: Stack) -> None:
 
 #: What each mode breaks, per credential. A bearer request is unsigned, so there is no
 #: request signature to bind to: unbound and rebound answers are what it should get.
-FAULTS: list[tuple[AuthMethod, FaultName, str]] = [
-    ("web_bot_auth", "strip", "signature-missing"),
-    ("web_bot_auth", "unbound", "response-not-bound"),
-    ("web_bot_auth", "rebound", "signature-invalid"),
-    ("web_bot_auth", "wrong_digest", "content-digest"),
-    ("bearer", "strip", "signature-missing"),
-    ("bearer", "wrong_digest", "content-digest"),
+FAULTS: list[tuple[AuthMethod, BreakingFault, str]] = [
+    (credential, mode, reason)
+    for credential in get_args(AuthMethod)
+    for mode, reason in refused_under(credential).items()
 ]
 PROPOSAL = {"web_bot_auth": "demo-wba-2", "bearer": "demo-bearer-1"}
 
@@ -569,7 +559,7 @@ PROPOSAL = {"web_bot_auth": "demo-wba-2", "bearer": "demo-bearer-1"}
 @pytest.mark.parametrize(("credential", "mode", "reason"), FAULTS)
 @pytest.mark.parametrize("on", ["read", "commit"])
 def test_each_fault_is_refused(
-    tmp_path: Path, credential: AuthMethod, mode: FaultName, reason: str, on: str
+    tmp_path: Path, credential: AuthMethod, mode: BreakingFault, reason: str, on: str
 ) -> None:
     proposal_id = PROPOSAL[credential]
     with Stack(tmp_path, faults=True) as stack:
@@ -585,8 +575,10 @@ def test_each_fault_is_refused(
         as_state(Agreed, stack.commit(proposal_id, [CTV], credential))
 
 
-@pytest.mark.parametrize("mode", ["unbound", "rebound"])
-def test_an_answer_to_a_bearer_request_needs_no_binding(tmp_path: Path, mode: FaultName) -> None:
+@pytest.mark.parametrize("mode", sorted(BINDING_FAULTS))
+def test_an_answer_to_a_bearer_request_needs_no_binding(
+    tmp_path: Path, mode: BreakingFault
+) -> None:
     with Stack(tmp_path, faults=True) as stack:
         stack.fault(mode)
         as_state(Agreed, stack.commit("demo-bearer-1", [CTV], "bearer"))

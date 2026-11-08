@@ -10,9 +10,9 @@ message, and both compute the same record_digest.
 import asyncio
 import hashlib
 
-from conftest import BUYER, SELLER
 from iab_agentic_primitives.web_bot_auth import ServerIdentity
 
+from e2e.scenarios.stack import BUYER, SELLER
 from persistence.observe import BuyerRecords, KeptOriginCredential, SellerRecords
 from persistence.values import Origin
 from protocol.operations import parse_result

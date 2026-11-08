@@ -6,8 +6,8 @@ failing credential is refused even when the body isn't JSON.
 """
 
 import httpx
-from conftest import SELLER, commit_body, signed
 
+from e2e.scenarios.stack import SELLER, commit_body, signed
 from persistence.observe import SellerRecords
 from protocol.operations import parse_errors
 from seller.caller import WHOAMI

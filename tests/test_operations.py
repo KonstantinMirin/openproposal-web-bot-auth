@@ -6,14 +6,12 @@ import copy
 import json
 from collections.abc import Callable
 from datetime import UTC, datetime
-from pathlib import Path
 
 import pytest
 from openproposal import (
     AssentEntry,
     Commit,
     CommitResult,
-    LineItemWrites,
     Proposal,
     dump,
     dump_json,
@@ -33,9 +31,8 @@ from protocol.operations import (
     result_for,
 )
 from protocol.values import JsonObject, commitment_key, instant
-from tests._tools import load_yaml, seed_document
+from tests._tools import composed_commit, plan_writes, seed_document
 
-PLAN = load_yaml(Path(__file__).resolve().parent.parent / "buyer" / "plan.yaml")
 NOW = datetime(2027, 1, 1, 12, 30, 15, 999, tzinfo=UTC)
 
 
@@ -43,13 +40,8 @@ def _raw() -> JsonObject:
     return seed_document()
 
 
-def _writes(*names: str) -> dict[str, LineItemWrites]:
-    return {n: LineItemWrites.model_validate(PLAN[n]) for n in names}
-
-
 def _composed(*names: str) -> tuple[Commit, bytes]:
-    raw = _raw()
-    composed = compose_commit(Proposal.model_validate(raw), raw, _writes(*names), at=NOW, key="k-1")
+    composed = composed_commit(_raw(), *names, at=NOW)
     return composed.commit, composed.digest_input
 
 
@@ -147,7 +139,7 @@ def test_check_result_refuses(answer: Callable[[Commit], CommitResult], rule: Ru
 
 
 def test_compose_and_check_leave_their_inputs_unchanged() -> None:
-    raw, writes = _raw(), _writes("business-daily-display")
+    raw, writes = _raw(), plan_writes("business-daily-display")
     proposal = Proposal.model_validate(raw)
     before = (copy.deepcopy(raw), dump(proposal), {n: dump(w) for n, w in writes.items()})
     composed = compose_commit(proposal, raw, writes, at=NOW, key="k-1")

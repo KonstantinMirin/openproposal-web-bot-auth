@@ -10,9 +10,9 @@ is kept only with an entry it carried.
 import json
 
 import httpx
-from conftest import CFBOT
 from iab_agentic_primitives.web_bot_auth import DIRECTORY_PATH, thumbprint
 
+from e2e.scenarios.stack import CFBOT
 from persistence.observe import SellerRecords
 from persistence.values import Origin
 from protocol.operations import parse_errors

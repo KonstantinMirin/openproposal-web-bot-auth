@@ -20,10 +20,7 @@ from fastapi.testclient import TestClient
 from iab_agentic_primitives.web_bot_auth import (
     DIRECTORY_PATH,
     Ed25519Key,
-    HTTPRequest,
     HTTPResponse,
-    MemoryNonceStore,
-    RequestSigner,
     ResponseVerifier,
     StaticKeyResolver,
     WebBotAuthError,
@@ -37,14 +34,22 @@ from starlette.types import ASGIApp
 from buyer.app import create_app as create_buyer
 from buyer.resources import BuyerResources
 from buyer.settings import BuyerSettings
-from persistence.values import Origin
 from protocol.values import objects, read_json
-from seller.app import create_app as create_seller
 from seller.caller import WHOAMI, ResolvedView
+from seller.faults import FAULT_REASONS
 from seller.resources import SellerResources
-from seller.settings import SellerSettings
-from tests import stack
-from tests.stack import BUYER_KEY, SELLER_KEY, TOKEN, Origins, as_state
+from tests.stack import (
+    BUYER_KEY,
+    ELSEWHERE,
+    SELLER_KEY,
+    TOKEN,
+    as_state,
+    buyer_settings,
+    seller_app,
+    seller_settings,
+    signed_headers,
+    signed_request,
+)
 from transport.client import ControlClient, ControlFailed
 from transport.control import (
     FAULT,
@@ -60,27 +65,19 @@ from transport.control import (
     Refused,
 )
 
-SELLER = "https://seller.example"
-BUYER = "https://buyer.example"
-#: Each agent alone, under origins of its own.
-EXAMPLE = Origins(seller=Origin.parse(SELLER), buyer=Origin.parse(BUYER))
+#: Each agent alone, under origins other than the demo's.
+SELLER, BUYER = str(ELSEWHERE.seller), str(ELSEWHERE.buyer)
 
 
-def seller_settings(data_dir: Path, *, faults: bool = False) -> SellerSettings:
-    return stack.seller_settings(data_dir, origins=EXAMPLE, faults=faults)
-
-
-def buyer_settings(data_dir: Path) -> BuyerSettings:
-    return stack.buyer_settings(data_dir, origins=EXAMPLE)
-
-
-def seller_app(data_dir: Path, *, faults: bool = False, key: Ed25519Key | None = None) -> ASGIApp:
+def _seller(data_dir: Path, *, faults: bool = False, key: Ed25519Key | None = None) -> ASGIApp:
+    """The seller alone, knowing the buyer's `key` when one is given."""
     keys: dict[LibraryOrigin | str, list[Ed25519Key]] = {BUYER: [key]} if key else {}
-    return create_seller(
-        seller_settings(data_dir, faults=faults),
-        nonces=MemoryNonceStore(),
-        resolver=StaticKeyResolver(keys),
-    )
+    settings = seller_settings(data_dir, origins=ELSEWHERE, faults=faults)
+    return seller_app(settings, resolver=StaticKeyResolver(keys))
+
+
+def _buyer_settings(data_dir: Path) -> BuyerSettings:
+    return buyer_settings(data_dir, origins=ELSEWHERE)
 
 
 @pytest.fixture
@@ -90,12 +87,8 @@ def buyer_key(tmp_path: Path) -> Ed25519Key:
 
 @pytest.fixture
 def seller(tmp_path: Path, buyer_key: Ed25519Key) -> Iterator[TestClient]:
-    with TestClient(seller_app(tmp_path / "seller", key=buyer_key), base_url=SELLER) as client:
+    with TestClient(_seller(tmp_path / "seller", key=buyer_key), base_url=SELLER) as client:
         yield client
-
-
-def signed(method: str, url: str, key: Ed25519Key) -> dict[str, str]:
-    return dict(RequestSigner(key, BUYER).sign(HTTPRequest(method, url, {}, b"")).headers.items())
 
 
 def _resolved(client: TestClient, headers: dict[str, str]) -> ResolvedView:
@@ -113,7 +106,7 @@ def _healthy(client: TestClient) -> bool:
 
 
 def test_the_seller_keeps_its_key_and_records_under_its_data_dir(tmp_path: Path) -> None:
-    with TestClient(seller_app(tmp_path), base_url=SELLER) as client:
+    with TestClient(_seller(tmp_path), base_url=SELLER) as client:
         assert _healthy(client)
     assert {p.name for p in tmp_path.iterdir()} == {"wba-key.jwk", "seller.db"}
 
@@ -134,14 +127,16 @@ def test_the_seller_resolves_each_credential_through_its_injected_resources(
     by_token = _resolved(seller, {"Authorization": f"Bearer {TOKEN}"})
     assert by_token.principal.id == "buyer-bearer"
 
-    by_signature = _resolved(seller, signed("GET", f"{SELLER}/whoami", buyer_key))
+    by_signature = _resolved(
+        seller, signed_headers("GET", f"{SELLER}/whoami", buyer_key, origin=BUYER)
+    )
     principal = by_signature.principal
     assert (principal.id, principal.kind, principal.legal_name) == (
         "buyer-wba",
         "buyer",
         "Demo Buyer Agency LLC",
     )
-    assert principal.domain == "buyer.example"  # the configured buyer origin's host
+    assert principal.domain == ELSEWHERE.buyer.host  # the configured buyer origin's host
 
 
 def _issue_status(seller: TestClient, key: SecretStr | None, principal_id: str) -> int:
@@ -164,13 +159,13 @@ def test_the_seller_operator_controls_take_the_key_from_settings(seller: TestCli
 
 
 def test_a_seller_without_an_operator_key_refuses_every_operator_call(tmp_path: Path) -> None:
-    settings = replace(seller_settings(tmp_path), operator_key=None)
-    with TestClient(create_seller(settings, resolver=StaticKeyResolver({}))) as client:
+    settings = replace(seller_settings(tmp_path, origins=ELSEWHERE), operator_key=None)
+    with TestClient(seller_app(settings)) as client:
         assert _issue_status(client, SELLER_KEY, "buyer-wba") == 403
 
 
 def test_the_seller_lifespan_closes_the_client_and_the_store(tmp_path: Path) -> None:
-    with TestClient(seller_app(tmp_path), base_url=SELLER) as client:
+    with TestClient(_seller(tmp_path), base_url=SELLER) as client:
         resources = client.app_state["resources"]
         assert isinstance(resources, SellerResources)
         assert not resources.client.is_closed and not resources.store.is_closed
@@ -197,9 +192,9 @@ def test_an_agent_that_cant_read_its_ca_bundle_fails_to_start_and_closes_its_sto
     """The lifespan opens the store before the client, so the client's failure closes it."""
     missing = tmp_path / "no-such-bundle.pem"
     if agent == "seller":
-        app = create_seller(replace(seller_settings(tmp_path), ca_bundle=missing))
+        app = seller_app(replace(seller_settings(tmp_path, origins=ELSEWHERE), ca_bundle=missing))
     else:
-        app = create_buyer(replace(buyer_settings(tmp_path), ca_bundle=missing))
+        app = create_buyer(replace(_buyer_settings(tmp_path), ca_bundle=missing))
     with pytest.raises(FileNotFoundError), TestClient(app):
         pass
     database = tmp_path / f"{agent}.db"
@@ -209,7 +204,7 @@ def test_an_agent_that_cant_read_its_ca_bundle_fails_to_start_and_closes_its_sto
 
 def test_the_store_refuses_a_thread_other_than_the_one_that_opened_it(tmp_path: Path) -> None:
     """The concurrency model (persistence/sqlite.py): one connection, on the loop's thread."""
-    with TestClient(seller_app(tmp_path), base_url=SELLER) as client:
+    with TestClient(_seller(tmp_path), base_url=SELLER) as client:
         resources = client.app_state["resources"]
         assert isinstance(resources, SellerResources)
         with pytest.raises(sqlite3.ProgrammingError, match="same thread"):
@@ -218,7 +213,7 @@ def test_the_store_refuses_a_thread_other_than_the_one_that_opened_it(tmp_path: 
 
 def test_a_restart_keeps_the_seeded_records(tmp_path: Path) -> None:
     for _ in range(2):  # the second start finds the records and seeds nothing
-        with TestClient(seller_app(tmp_path), base_url=SELLER) as client:
+        with TestClient(_seller(tmp_path), base_url=SELLER) as client:
             caller = _resolved(client, {"Authorization": f"Bearer {TOKEN}"})
             assert caller.principal.id == "buyer-bearer"
 
@@ -232,8 +227,8 @@ def _commit_signed(client: TestClient) -> bool:
 
 
 def test_the_fault_mode_belongs_to_one_app(tmp_path: Path) -> None:
-    one = TestClient(seller_app(tmp_path / "one", faults=True), base_url=SELLER)
-    other = TestClient(seller_app(tmp_path / "other", faults=True), base_url=SELLER)
+    one = TestClient(_seller(tmp_path / "one", faults=True), base_url=SELLER)
+    other = TestClient(_seller(tmp_path / "other", faults=True), base_url=SELLER)
     with one, other:
         assert _commit_signed(one) and _commit_signed(other)
         faults = ControlClient(one)
@@ -244,15 +239,7 @@ def test_the_fault_mode_belongs_to_one_app(tmp_path: Path) -> None:
         assert _commit_signed(one)
 
 
-@pytest.mark.parametrize(
-    ("mode", "refusal"),
-    [
-        ("none", None),
-        ("strip", "signature-missing"),
-        ("unbound", "response-not-bound"),
-        ("rebound", "signature-invalid"),
-    ],
-)
+@pytest.mark.parametrize(("mode", "refusal"), [("none", None), *FAULT_REASONS.items()])
 def test_each_fault_mode_breaks_the_answer_the_way_it_names(
     tmp_path: Path, buyer_key: Ed25519Key, mode: FaultName, refusal: str | None
 ) -> None:
@@ -260,10 +247,8 @@ def test_each_fault_mode_breaks_the_answer_the_way_it_names(
     signed commit in each mode."""
     url = f"{SELLER}/proposals/demo-wba-1/commit"
     body = b"{}"
-    request = RequestSigner(buyer_key, BUYER).sign(
-        HTTPRequest("POST", url, {"Content-Type": "application/json"}, body)
-    )
-    with TestClient(seller_app(tmp_path, faults=True, key=buyer_key), base_url=SELLER) as client:
+    request = signed_request("POST", url, buyer_key, origin=BUYER, body=body)
+    with TestClient(_seller(tmp_path, faults=True, key=buyer_key), base_url=SELLER) as client:
         ControlClient(client).call(FAULT, FaultMode(mode=mode))
         answer = client.post(url, content=body, headers=dict(request.headers.items()))
     seller_key = keyfile.load_or_create(tmp_path / "wba-key.jwk")
@@ -280,7 +265,7 @@ def test_each_fault_mode_breaks_the_answer_the_way_it_names(
 
 
 def test_a_bad_fault_mode_is_a_control_error_not_an_offer_error(tmp_path: Path) -> None:
-    with TestClient(seller_app(tmp_path, faults=True), base_url=SELLER) as client:
+    with TestClient(_seller(tmp_path, faults=True), base_url=SELLER) as client:
         response = client.request(FAULT.method, FAULT.path, json={"mode": "bogus"})
     assert response.status_code == 422
     body = ErrorBody.model_validate_json(response.content)
@@ -297,7 +282,7 @@ def test_the_fault_switch_is_absent_unless_the_settings_turn_it_on(seller: TestC
 
 @pytest.fixture
 def buyer(tmp_path: Path) -> Iterator[TestClient]:
-    with TestClient(create_buyer(buyer_settings(tmp_path))) as client:
+    with TestClient(create_buyer(_buyer_settings(tmp_path))) as client:
         yield client
 
 
@@ -309,17 +294,17 @@ def test_a_trigger_that_omits_the_seller_targets_the_configured_seller(tmp_path:
         sent.append(str(request.url))
         return httpx.Response(503)  # unsigned, so the buyer refuses it
 
-    app = create_buyer(buyer_settings(tmp_path), transport=httpx.MockTransport(network))
+    app = create_buyer(_buyer_settings(tmp_path), transport=httpx.MockTransport(network))
     with TestClient(app) as client:
         outcome = ControlClient(client, operator_key=BUYER_KEY).call(
             READ, ReadTrigger(proposal_id="p-1")
         )
-    assert sent == [f"{SELLER}/proposals/p-1"]  # https://seller.example, as configured
+    assert sent == [f"{SELLER}/proposals/p-1"]  # the seller the settings name
     assert as_state(Refused, outcome).code == "signature-missing"
 
 
 def test_the_buyer_lifespan_closes_the_client_and_the_store(tmp_path: Path) -> None:
-    with TestClient(create_buyer(buyer_settings(tmp_path))) as client:
+    with TestClient(create_buyer(_buyer_settings(tmp_path))) as client:
         assert _healthy(client)
         resources = client.app_state["resources"]
         assert isinstance(resources, BuyerResources)

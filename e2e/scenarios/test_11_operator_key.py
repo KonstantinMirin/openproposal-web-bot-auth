@@ -12,10 +12,17 @@ from collections.abc import Callable
 
 import httpx
 import pytest
-from conftest import BUYER, CFBOT, SELLER
 from pydantic import SecretStr
-from settings import BUYER_CONTROL, CFBOT_CONTROL, OPERATOR_KEYS, SELLER_CONTROL
 
+from e2e.scenarios.stack import (
+    BUYER,
+    BUYER_CONTROL,
+    CFBOT,
+    CFBOT_CONTROL,
+    OPERATOR_KEYS,
+    SELLER,
+    SELLER_CONTROL,
+)
 from transport.client import ControlClient, ControlFailed
 from transport.control import (
     CFBOT_WHOAMI,

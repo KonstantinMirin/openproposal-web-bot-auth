@@ -151,7 +151,9 @@ class Issued(_Answer):
 
 
 #: TEST ONLY (seller/faults.py): how a fault breaks the signature of the seller's answers.
-FaultName = Literal["none", "strip", "unbound", "rebound", "wrong_digest"]
+BreakingFault = Literal["strip", "unbound", "rebound", "wrong_digest"]
+#: A fault, or `none`, which leaves the seller's answers as it signs them.
+FaultName = Literal["none", BreakingFault]
 #: Which answers a fault breaks: to a commit, or to a read of a proposal.
 FaultTarget = Literal["commit", "read"]
 

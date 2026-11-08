@@ -25,10 +25,8 @@ import pytest
 from iab_agentic_primitives.web_bot_auth import (
     HTTPRequest,
     HTTPResponse,
-    RequestSigner,
     ResponseSigner,
 )
-from pydantic import SecretStr
 
 from persistence.values import Origin
 from runner.main import main, publish, run_once
@@ -50,14 +48,15 @@ from runner.settings import RunnerSettings
 from shared.settings import SettingsError
 from tests.stack import (
     BUYER,
-    BUYER_OPERATOR,
+    BUYER_KEY,
     CFBOT,
     RESELLER,
     SELLER,
-    SELLER_OPERATOR,
+    SELLER_KEY,
     TOKEN,
     Stack,
     cfbot_accepts,
+    signed_request,
 )
 from transport.client import ControlClient, ControlFailed
 from transport.control import (
@@ -90,9 +89,9 @@ def _settings(stack: Stack, out: Path) -> RunnerSettings:
         buyer_db=stack.buyer_dir / "buyer.db",
         out_dir=out,
         interval=0,
-        seller_operator_key=SecretStr(SELLER_OPERATOR[OPERATOR_HEADER]),
-        buyer_operator_key=SecretStr(BUYER_OPERATOR[OPERATOR_HEADER]),
-        secrets=(SELLER_OPERATOR[OPERATOR_HEADER], BUYER_OPERATOR[OPERATOR_HEADER], TOKEN),
+        seller_operator_key=SELLER_KEY,
+        buyer_operator_key=BUYER_KEY,
+        secrets=(SELLER_KEY.get_secret_value(), BUYER_KEY.get_secret_value(), TOKEN),
     )
 
 
@@ -223,15 +222,15 @@ def _sql(party: str, statement: str, *params: object) -> Callable[[Stack], None]
 def _request_signed_without_its_body(stack: Stack) -> None:
     """Tamper: the seller's kept request for the signed commit becomes one the buyer signed,
     with its own key, but without a body, so the signature covers no body."""
-    sent = HTTPRequest("GET", f"{SELLER}/proposals/demo-wba-1", [], b"")
-    signed = RequestSigner(stack.buyer_keys.active(), BUYER).sign(sent)
+    url = f"{SELLER}/proposals/demo-wba-1"
+    signed = signed_request("GET", url, stack.buyer_keys.active())
     headers = json.dumps([list(line) for line in signed.headers])
     with _writable(_db(stack, "seller")) as db:
         db.execute(
             "UPDATE signed_requests SET method = 'GET', url = ?, headers = ?, body = ?"
             " WHERE id = (SELECT evidence_id FROM assent"
             " WHERE role = 'commitment' AND authentication_method = 'web_bot_auth')",
-            (sent.url, headers, b""),
+            (url, headers, b""),
         )
 
 
@@ -473,8 +472,7 @@ def test_a_cfbot_refusal_fails_the_cloudflare_step(stack: Stack, tmp_path: Path)
 def test_each_agent_refuses_another_partys_operator_key(stack: Stack) -> None:
     """Each agent's controls take its own key only, so a run passes only when the runner
     sends each agent its own."""
-    seller_key = SecretStr(SELLER_OPERATOR[OPERATOR_HEADER])
-    buyer_key = SecretStr(BUYER_OPERATOR[OPERATOR_HEADER])
+    seller_key, buyer_key = SELLER_KEY, BUYER_KEY
     refused = ErrorBody(error="operator-key", detail="operator key required")
     with pytest.raises(ControlFailed) as failed:
         ControlClient(stack.seller, operator_key=buyer_key).call(
@@ -509,7 +507,7 @@ def test_public_headers_withhold_credentials_and_proxy_fields() -> None:
         [
             ("Signature-Input", 'sig1=("@method");tag="web-bot-auth"'),
             ("Authorization", "Bearer secret-token-value"),
-            ("X-Operator-Key", "operator-secret"),
+            (OPERATOR_HEADER, "operator-secret"),
             ("X-Forwarded-For", "203.0.113.7"),
             ("Content-Digest", "sha-256=:abc=:"),
         ]

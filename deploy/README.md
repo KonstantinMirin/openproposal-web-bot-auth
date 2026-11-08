@@ -55,7 +55,7 @@ You can override these Compose variables when you run `docker compose`:
 
 Each service reads its environment once, in its settings module
 (`seller/settings.py` and `buyer/settings.py`, on the variables both agents
-share in `shared/settings.py`; `runner/settings.py`; `e2e/scenarios/settings.py`) or at the top of `cfbot/server.mjs`. The
+share in `shared/settings.py`; `runner/settings.py`; `e2e/scenarios/stack.py`) or at the top of `cfbot/server.mjs`. The
 default is what the service uses when the variable is unset; the compose files
 set the values the table's last column names.
 

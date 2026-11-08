@@ -15,34 +15,29 @@ import json
 from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Protocol
 
 import httpx
 import pytest
 from fastapi.testclient import TestClient
-from iab_agentic_primitives.web_bot_auth import MemoryNonceStore, StaticKeyResolver
-from openproposal import AssentEntry, LineItemWrites, Proposal, dump_json
+from openproposal import AssentEntry, Proposal
 from pydantic import SecretStr
 
 from persistence.observe import KeptEntry, SellerRecords
-from persistence.values import Origin
-from protocol.operations import compose_commit, parse_errors, parse_result
+from protocol.operations import parse_errors, parse_result
 from protocol.record import items_by_id
 from protocol.values import JsonObject, JsonValue, read_json
-from seller.app import create_app
 from seller.seed import seed
 from seller.sqlite_store import SqliteSellerStore
-from tests._tools import load_yaml, seed_issuer, seed_template
-from tests.stack import Origins, seller_settings
+from tests._tools import commit_body, seed_issuer, seed_template
+from tests.stack import ELSEWHERE, seller_app, seller_settings
 
-SELLER = "https://seller.example.com"
-BUYER = "https://buyer.example.com"
+#: The seller alone, under origins other than the demo's.
+SELLER = str(ELSEWHERE.seller)
 TOKEN = {"Authorization": "Bearer buyer-wba-token"}
 ITEM = "business-daily-display"
 PATH = "/proposals/demo-wba-1/commit"
-PLAN = load_yaml(Path(__file__).resolve().parent.parent / "buyer" / "plan.yaml")
 
 #: A commitment someone made earlier on ITEM, which nothing accepted or ended.
 EARLIER = {
@@ -67,7 +62,7 @@ def _seed(data_dir: Path, edit: Edit, prior: list[AssentEntry]) -> None:
         seed(
             store,
             seed_issuer(template),
-            buyer_origin=Origin.parse(BUYER),
+            buyer_origin=ELSEWHERE.buyer,
             bearer_token=SecretStr("t"),
         )
         with store.transaction():
@@ -94,10 +89,7 @@ class Seller:
     def composed(self, key: str = "k-1") -> JsonObject:
         """The buyer's correct commit to ITEM, composed on the document the seller serves."""
         document = read_json(self.client.get("/proposals/demo-wba-1", headers=TOKEN).content)
-        writes = {ITEM: LineItemWrites.model_validate(PLAN[ITEM])}
-        at = datetime.now(UTC)
-        made = compose_commit(Proposal.model_validate(document), document, writes, at=at, key=key)
-        body: JsonObject = json.loads(dump_json(made.commit))
+        body: JsonObject = json.loads(commit_body(document, ITEM, key=key))
         return body
 
     def records(self) -> AbstractContextManager[SellerRecords]:
@@ -138,9 +130,7 @@ def seller_with(tmp_path: Path) -> Iterator[StartSeller]:
     def start(edit: Edit = _keep, prior: list[AssentEntry] | None = None) -> Seller:
         data_dir = tmp_path / f"seller-{len(clients)}"
         _seed(data_dir, edit, prior or [])
-        origins = Origins(seller=Origin.parse(SELLER), buyer=Origin.parse(BUYER))
-        settings = seller_settings(data_dir, origins=origins)
-        app = create_app(settings, nonces=MemoryNonceStore(), resolver=StaticKeyResolver({}))
+        app = seller_app(seller_settings(data_dir, origins=ELSEWHERE))
         client = TestClient(app, base_url=SELLER).__enter__()
         clients.append(client)
         return Seller(client, data_dir)

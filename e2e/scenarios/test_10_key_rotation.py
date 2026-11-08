@@ -13,16 +13,23 @@ fetching it again, even for a keyid it doesn't list. So the buyer:
 
 After the next cache refresh (`WBA_MAX_CACHE_AGE`), the seller refuses the old
 key. The timing is the stack's own, which e2e/docker-compose.yml passes to the
-runner.
+scenarios service.
 """
 
 import time
 
 import httpx
 import pytest
-from conftest import BUYER, SELLER, buyer_key, signed
-from settings import MAX_CACHE_AGE, ROTATION_WAIT, SIGNATURE_LIFETIME
 
+from e2e.scenarios.stack import (
+    BUYER,
+    MAX_CACHE_AGE,
+    ROTATION_WAIT,
+    SELLER,
+    SIGNATURE_LIFETIME,
+    buyer_key,
+    signed,
+)
 from seller.caller import WHOAMI, ResolvedView, SignatureCredential
 from transport.client import ControlClient, ControlFailed
 from transport.control import ACTIVATE, PUBLISH, READ, RETIRE, ErrorBody, Read, ReadTrigger

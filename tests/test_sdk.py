@@ -19,11 +19,10 @@ from openproposal import LineItem, LineItemWrites, Proposal
 
 from protocol.operations import acceptance_for, compose_commit
 from protocol.record import compose, line_items_of
-from tests._tools import load_yaml, seed_document
+from tests._tools import PLAN, plan_writes, seed_document
 
 REPO = Path(__file__).resolve().parent.parent
 RECORDED = tomllib.loads((REPO / "vendor" / "openproposal-sdk" / "pyproject.toml").read_text())
-PLAN = load_yaml(REPO / "buyer" / "plan.yaml")
 NAMED = ["business-daily-display"]
 #: The schema tree the vendored types match (the with-our-stack lock, as-written).
 SCHEMA_RELEASE = "fbab39049a573adb36643a6f5e0f2f821cdd91b94ed12ed82eaf6887d30611ff"
@@ -52,7 +51,7 @@ def test_each_plan_entry_validates_strictly(name: str) -> None:
 
 def test_the_composed_and_agreed_documents_validate_strictly() -> None:
     issued = seed_document()
-    writes = {n: LineItemWrites.model_validate(PLAN[n]) for n in NAMED}
+    writes = plan_writes(*NAMED)
     composed = compose(issued, writes)
     Proposal.model_validate(composed)
 

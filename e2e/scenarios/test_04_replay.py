@@ -1,9 +1,9 @@
 """4. The same signed request sent twice: the second one is a replay, refused with 429."""
 
 import httpx
-from conftest import SELLER, signed
 from openproposal import Proposal
 
+from e2e.scenarios.stack import SELLER, signed
 from transport.control import ErrorBody
 
 

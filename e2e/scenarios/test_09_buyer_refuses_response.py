@@ -20,6 +20,7 @@ from openproposal import AssentEntryRole
 
 from persistence.observe import BuyerRecords, SellerRecords
 from persistence.values import AuthMethod
+from seller.faults import refused_under
 from transport.client import ControlClient
 from transport.control import (
     COMMIT,
@@ -43,16 +44,6 @@ TRIGGER: dict[AuthMethod, CommitTrigger] = {
     "bearer": CommitTrigger(
         proposal_id="demo-bearer-1", line_item_ids=["weather-app-ctv"], credential="bearer"
     ),
-}
-#: The faults each credential must refuse, with the library's reason for each.
-FAULTS: dict[AuthMethod, list[tuple[FaultName, str]]] = {
-    "web_bot_auth": [
-        ("strip", "signature-missing"),
-        ("unbound", "response-not-bound"),
-        ("rebound", "signature-invalid"),
-        ("wrong_digest", "content-digest"),
-    ],
-    "bearer": [("strip", "signature-missing"), ("wrong_digest", "content-digest")],
 }
 CREDENTIALS = list(TRIGGER)
 
@@ -84,7 +75,7 @@ def test_buyer_refuses_unverifiable_reads(
 ) -> None:
     trigger = TRIGGER[credential]
     read = ReadTrigger(proposal_id=trigger.proposal_id, credential=trigger.credential)
-    for mode, reason in FAULTS[credential]:
+    for mode, reason in refused_under(credential).items():
         fault(mode, "read")
         outcome = _refused(buyer_control.call(READ, read))
         assert outcome.code == reason, (mode, outcome)
@@ -106,7 +97,7 @@ def test_buyer_refuses_unverifiable_commit_answers(
     proposal_id, items = trigger.proposal_id, trigger.line_item_ids
     before_entries, before_processed = _seller_state(seller_records, proposal_id)
     accepted = None
-    for mode, reason in FAULTS[credential]:
+    for mode, reason in refused_under(credential).items():
         fault(mode, "commit")
         outcome = _refused(buyer_control.call(COMMIT, trigger))
         assert outcome.code == reason, (mode, outcome)

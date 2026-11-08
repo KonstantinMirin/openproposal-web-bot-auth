@@ -17,4 +17,4 @@ select = ["TID251"]
 "buyer/cfbot.py" = ["TID251"]
 
 [lint.flake8-tidy-imports.banned-api]
-"httpx".msg = "Only buyer/seller_client.py and buyer/cfbot.py send requests; call them."
+"httpx".msg = "Only buyer/seller_client.py and buyer/cfbot.py send requests, with the auth buyer/credentials.py builds; call them."

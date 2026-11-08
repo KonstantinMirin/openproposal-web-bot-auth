@@ -5,8 +5,7 @@ directory, checks its signatures with http-message-sig, and verifies the
 request with web-bot-auth's verify().
 """
 
-from conftest import BUYER, buyer_key
-
+from e2e.scenarios.stack import BUYER, buyer_key
 from transport.client import ControlClient
 from transport.control import CLOUDFLARE_CHECK, CfbotAccepted, DirectorySignature
 

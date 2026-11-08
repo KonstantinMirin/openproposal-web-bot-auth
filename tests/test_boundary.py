@@ -18,53 +18,52 @@ kept.
 from __future__ import annotations
 
 import json
-import time
 import uuid
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-import httpx
 import pytest
 from fastapi.testclient import TestClient
 from iab_agentic_primitives.web_bot_auth import (
     DIRECTORY_PATH,
     Ed25519Key,
-    HTTPRequest,
     KeyResolver,
-    MemoryNonceStore,
     NonceStore,
     NonceStoreUnavailable,
-    RequestSigner,
     accept_signature,
 )
 from iab_agentic_primitives.web_bot_auth import Origin as LibraryOrigin
-from iab_agentic_primitives.web_bot_auth.asgi import directory_response
-from openproposal import LineItemWrites, Proposal, dump_json
 from pydantic import SecretStr
 from starlette.types import ASGIApp
 
 from persistence.observe import KeptEntry, SellerRecords
 from persistence.values import Origin
-from protocol.operations import compose_commit, parse_errors
+from protocol.operations import parse_errors
 from protocol.values import JsonObject, read_json
-from seller.app import create_app
 from seller.caller import WHOAMI, BearerCredential, ResolvedView
 from seller.seed import seed
-from seller.settings import SellerSettings
 from seller.sqlite_store import SqliteSellerStore
-from tests._tools import load_yaml, seed_issuer
-from tests.stack import TOKEN, Origins, Recorder, seller_settings
+from tests._tools import commit_body, seed_issuer
+from tests.stack import (
+    ELSEWHERE,
+    TOKEN,
+    Directories,
+    Recorder,
+    seller_app,
+    seller_settings,
+    signed_headers,
+)
 from transport.control import ErrorBody
-from transport.wba import directory_resolver, http_client, tls_context
 
-SELLER = "https://seller.example.com"
-#: Under a public suffix, so that a signature can attribute an entry to the buyer (§ 4.1.2).
-BUYER = "https://buyer.example.com"
+#: The seller alone, and the buyer it deals with, under origins other than the demo's. The
+#: buyer's is under a public suffix, so a signature can attribute an entry to it (§ 4.1.2).
+SELLER, BUYER = str(ELSEWHERE.seller), str(ELSEWHERE.buyer)
 #: An origin that publishes a directory, and that the seller has no principal for.
 STRANGER = "https://stranger.example.com"
-PLAN = load_yaml(Path(__file__).resolve().parent.parent / "buyer" / "plan.yaml")
+#: The line item the buyer commits to.
+DISPLAY = "business-daily-display"
 
 
 @dataclass(frozen=True)
@@ -80,18 +79,7 @@ class Parties:
             Origin.parse(BUYER).host: self.buyer,
             Origin.parse(STRANGER).host: self.stranger,
         }
-
-        def serve(request: httpx.Request) -> httpx.Response:
-            key = published.get(request.url.host)
-            if key is None or request.url.path != DIRECTORY_PATH:
-                return httpx.Response(404)
-            status, headers, body = directory_response(
-                [key], authority=request.url.host, now=int(time.time())
-            )
-            return httpx.Response(status, headers=headers, stream=httpx.ByteStream(body))
-
-        client = http_client(tls_context(None), transport=httpx.MockTransport(serve))
-        return directory_resolver(client, max_cache_age=None)
+        return Directories(published).resolver()
 
 
 @pytest.fixture
@@ -99,18 +87,9 @@ def parties() -> Parties:
     return Parties(Ed25519Key.generate(), Ed25519Key.generate())
 
 
-def _settings(data_dir: Path) -> SellerSettings:
-    return seller_settings(
-        data_dir, origins=Origins(seller=Origin.parse(SELLER), buyer=Origin.parse(BUYER))
-    )
-
-
 def _app(data_dir: Path, parties: Parties, nonces: NonceStore | None = None) -> ASGIApp:
-    return create_app(
-        _settings(data_dir),
-        nonces=MemoryNonceStore() if nonces is None else nonces,
-        resolver=parties.resolver(),
-    )
+    settings = seller_settings(data_dir, origins=ELSEWHERE)
+    return seller_app(settings, resolver=parties.resolver(), nonces=nonces)
 
 
 @pytest.fixture
@@ -122,9 +101,8 @@ def seller(tmp_path: Path, parties: Parties) -> Iterator[TestClient]:
 def signed(
     method: str, path: str, key: Ed25519Key, *, origin: str = BUYER, body: bytes = b""
 ) -> dict[str, str]:
-    headers = {"Content-Type": "application/json"} if body else {}
-    request = HTTPRequest(method, f"{SELLER}{path}", headers, body)
-    return dict(RequestSigner(key, origin).sign(request).headers.items())
+    """Headers for a request to the seller's `path`, signed as `origin` with `key`."""
+    return signed_headers(method, f"{SELLER}{path}", key, origin=origin, body=body)
 
 
 def _kept(data_dir: Path) -> tuple[int, int]:
@@ -260,7 +238,7 @@ def test_a_verified_origin_with_a_principal_resolves_it(
             "id": "buyer-wba",
             "kind": "buyer",
             "legal_name": "Demo Buyer Agency LLC",
-            "domain": "buyer.example.com",
+            "domain": ELSEWHERE.buyer.host,
         },
         "credential": {
             "method": "web_bot_auth",
@@ -305,15 +283,6 @@ def _issued(client: TestClient, headers: dict[str, str]) -> JsonObject:
     return read_json(response.content)
 
 
-def _commit_body(document: JsonObject, *, key: str, at: datetime) -> bytes:
-    """The buyer's commit to business-daily-display, composed with the protocol operations."""
-    writes = {
-        "business-daily-display": LineItemWrites.model_validate(PLAN["business-daily-display"])
-    }
-    composed = compose_commit(Proposal.model_validate(document), document, writes, at=at, key=key)
-    return dump_json(composed.commit).encode()
-
-
 def _assent(data_dir: Path) -> list[KeptEntry]:
     """The seller's assent log of demo-wba-1, as its read model reads it."""
     with SellerRecords.open(data_dir / "seller.db") as records:
@@ -327,7 +296,7 @@ def test_a_signed_commit_keeps_its_request_with_the_entry(parties: Parties, tmp_
         document = _issued(seller, signed("GET", "/proposals/demo-wba-1", parties.buyer))
         assert _kept(tmp_path)[0] == 0  # reading kept nothing
 
-        body = _commit_body(document, key=str(uuid.uuid4()), at=datetime.now(UTC))
+        body = commit_body(document, DISPLAY, key=str(uuid.uuid4()))
         headers = signed("POST", path, parties.buyer, body=body)
         answer = seller.post(path, content=body, headers=headers)
     assert answer.status_code == 200, answer.text
@@ -355,7 +324,7 @@ def test_a_rejected_commit_keeps_no_evidence(
 ) -> None:
     path = "/proposals/demo-wba-1/commit"
     document = _issued(seller, signed("GET", "/proposals/demo-wba-1", parties.buyer))
-    commit = json.loads(_commit_body(document, key="k-1", at=datetime.now(UTC)))
+    commit = json.loads(commit_body(document, DISPLAY))
     commit["entry"]["record_digest"] = "sha256:" + "0" * 64  # not the seller's record
     body = json.dumps(commit).encode()
     answer = seller.post(path, content=body, headers=signed("POST", path, parties.buyer, body=body))
@@ -407,9 +376,8 @@ def test_a_signature_and_a_token_get_the_same_result_for_the_same_commit(
         _seeded_with_a_token_for_the_signing_buyer(data_dir)
         with TestClient(_app(data_dir, parties), base_url=SELLER) as client:
             read = signed("GET", "/proposals/demo-wba-1", parties.buyer)
-            body = _commit_body(
-                _issued(client, read if credential == "signature" else by_token), key=key, at=at
-            )
+            document = _issued(client, read if credential == "signature" else by_token)
+            body = commit_body(document, DISPLAY, key=key, at=at)
             headers = (
                 signed("POST", path, parties.buyer, body=body)
                 if credential == "signature"

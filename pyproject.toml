@@ -38,7 +38,7 @@ dev = [
 [tool.uv.sources]
 # A path dependency on the library checkout next to this repository. The same
 # relative layout holds inside the Docker build (see Dockerfile and the wba-lib
-# additional context in e2e/docker-compose.yml).
+# additional context in deploy/compose.base.yml).
 iab-agentic-primitives = { path = "../iab-agentic-primitives", editable = true }
 openproposal-sdk = { path = "vendor/openproposal-sdk", editable = true }
 
@@ -51,7 +51,8 @@ packages = ["protocol", "persistence", "shared", "transport", "seller", "buyer",
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-# The tests import the shared harness as tests.stack.
+# The tests import the shared harness as tests.stack, and the e2e scenarios theirs as
+# e2e.scenarios.stack, both from the repository root.
 pythonpath = ["."]
 
 [tool.ruff]
@@ -89,12 +90,10 @@ plugins = ["pydantic.mypy"]
 warn_unused_ignores = true
 # No explicit Any anywhere: JSON is protocol.values.JsonValue, and every value is typed.
 disallow_any_explicit = true
-# Every package, the unit tests, and the e2e scenarios. tests/ has no __init__.py, so
-# its modules are named from the repository root; the scenarios import their
-# conftest and settings by bare name, as pytest runs them, so e2e/scenarios is on
-# the path.
+# Every package, the behavior tests, and the e2e scenarios. tests/ and e2e/ have no
+# __init__.py, so their modules are named from the repository root, as the tests and
+# the scenarios import them (tests.stack, e2e.scenarios.stack).
 explicit_package_bases = true
-mypy_path = ["e2e/scenarios"]
 files = [
     "protocol",
     "persistence",
@@ -128,7 +127,8 @@ branch = true
 # next states built by constructor: 97.61; provenance and the one evidence store: 97.62;
 # one schema owner per party, with rows read by name: 97.72; each party's own identity,
 # keys, and operator key, and one composition pattern: 97.74; total HTTP seams, typed
-# control operations and contracts, and closed report sets: 97.84). It is never lowered.
-fail_under = 97.84
+# control operations and contracts, and closed report sets: 97.84; one copy of each test
+# builder, and the fault reasons beside the fault modes: 97.86). It is never lowered.
+fail_under = 97.86
 precision = 2
 show_missing = false
