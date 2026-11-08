@@ -10,3 +10,5 @@ e2e/generated/
 deploy/localhost/generated/
 .coverage
 .mypy_cache/
+# Published by tests/test_runner.py for tests/site/render.test.mjs to render.
+tests/site/published/

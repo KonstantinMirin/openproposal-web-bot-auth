@@ -1,6 +1,7 @@
 // Renders /latest-run.json and /history.json, which the live runner (runner/main.py) writes
 // every 15 minutes. latest-run.json is a Report as site/report.schema.json states it
-// (runner/report.py); a report of another format is not rendered.
+// (runner/report.py); a report of another format is not rendered, and one the page can't
+// render says so. tests/site/render.test.mjs renders the report the runner's test publishes.
 // Plain DOM: every value from the report goes in through textContent.
 (function () {
   'use strict';
@@ -8,6 +9,16 @@
   // The report format this page reads (runner/report.py FORMAT).
   const FORMAT = 3;
   const SIGNATURE_FIELDS = new Set(['signature', 'signature-input', 'signature-agent', 'content-digest']);
+  // The step groups (runner/report.py Group), in the order a run takes them.
+  const GROUPS = {
+    directory: 'Key directories',
+    signature: 'With a Web Bot Auth signature',
+    bearer: 'With a bearer token',
+    cloudflare: 'Interop with Cloudflare’s library',
+    publish: 'Publishing the report',
+  };
+
+  // ── Building blocks ──────────────────────────────────────────────────────
 
   function el(tag, props, ...children) {
     const node = document.createElement(tag);
@@ -33,21 +44,21 @@
 
   function code(text) { return el('code', { text }); }
 
+  /** A two-column table of facts; a null row is left out. */
+  function factsTable(rows) {
+    const table = el('table', {}, el('tbody', {}, rows.filter(Boolean).map(([k, v]) =>
+      el('tr', {}, el('th', { text: k }), el('td', {}, v)))));
+    return el('div', { class: 'table-wrap' }, table);
+  }
+
   function headerBlock(start, headers, note) {
-    const pre = el('pre', { class: 'headers' });
-    if (start) pre.append(el('span', { text: start + '\n' }));
-    for (const [name, value] of headers.lines || []) {
-      const line = el('span', { class: SIGNATURE_FIELDS.has(name) ? 'sig' : '' },
-        el('span', { class: 'name', text: name }), ': ' + value);
-      pre.append(line, '\n');
+    const pre = el('pre', { class: 'headers' }, el('span', { text: start + '\n' }));
+    for (const [name, value] of headers.lines) {
+      pre.append(el('span', { class: SIGNATURE_FIELDS.has(name) ? 'sig' : '' },
+        el('span', { class: 'name', text: name }), ': ' + value), '\n');
     }
-    const withheld = headers.withheld || [];
-    const parts = [pre];
-    if (withheld.length || note) {
-      parts.push(el('p', { class: 'note' },
-        withheld.length ? `Withheld from this report: ${withheld.join(', ')}. ` : '', note || ''));
-    }
-    return parts;
+    const withheld = headers.withheld.length ? `Withheld from this report: ${headers.withheld.join(', ')}. ` : '';
+    return [pre, withheld || note ? el('p', { class: 'note' }, withheld, note) : null];
   }
 
   function bodyBlock(label, body) {
@@ -56,114 +67,140 @@
       el('div', {}, el('pre', { text: typeof body === 'string' ? body : JSON.stringify(body, null, 2) })));
   }
 
-  function directoryBlock(title, directory) {
+  /** A message as a party sent, kept, or received it: its heading, header lines, and body. */
+  function messageSection(heading, start, message, note, bodyLabel) {
+    return [el('h3', { text: heading }), ...headerBlock(start, message.headers, note),
+      bodyLabel ? bodyBlock(bodyLabel, message.body) : null];
+  }
+
+  function directoryBlock(title, directory, fetchedAt) {
     if (!directory) return null;
-    const kids = (directory.keys || []).map(k => k.kid).join(', ');
+    const kids = directory.keys.map(k => k.kid).join(', ');
+    const at = fetchedAt ?? directory.fetched_at;
     return el('details', {}, el('summary', { text: title }), el('div', {},
-      el('p', {}, 'Fetched ', code(directory.url), directory.fetched_at ? ` at ${directory.fetched_at}` : '',
-        `. Keys: ${kids || 'none'}.`),
+      el('p', {}, 'Fetched ', code(directory.url), at ? ` at ${at}` : '', `. Keys: ${kids || 'none'}.`),
       headerBlock(`HTTP ${directory.status}`, directory.headers),
       bodyBlock('Keys (public JWKs)', { keys: directory.keys })));
   }
 
-  function facts(rows) {
-    const table = el('table', {}, el('tbody', {}, rows.filter(Boolean).map(([k, v]) =>
-      el('tr', {}, el('th', { text: k }), el('td', {}, v)))));
-    return el('div', { class: 'table-wrap' }, table);
-  }
+  // ── The sections ─────────────────────────────────────────────────────────
 
-  function pathPanel(title, section, credential) {
-    if (!section || !section.outcome) {
-      return el('details', {}, el('summary', { text: `${title}: no data` }),
-        el('div', {}, el('p', { class: 'note', text: 'This path failed before it produced a record. See the steps.' })));
-    }
-    const { outcome, seller, buyer, digest, reverify } = section;
-    const sent = buyer && buyer.request;
-    const answer = buyer && buyer.response;
-    const parts = [
-      facts([
-        ['Proposal', code(section.proposal_id)],
-        ['Seller resolved', seller ? [code(seller.principal_id), ` with ${seller.authentication_method}`] : '–'],
-        ['record_digest', digest ? [code(digest.record_digest), ` on both sides, over ${digest.digest_input_bytes} bytes`] : '–'],
-        ['Buyer signed with', outcome.keyid ? code(outcome.keyid) : 'nothing: a bearer token'],
-        ['Seller signed with', answer ? code(answer.keyid) : '–'],
-        ['Attributed (§ 4.1.2)', String(Boolean(outcome.attributed))],
-        reverify ? ['Verified again offline', `request and bound answer: ${reverify.response_bound ? 'bound' : 'not bound'}`] : null,
-      ]),
-    ];
-    if (sent) {
-      parts.push(el('h3', { text: 'The request, as the buyer sent it' }),
-        ...headerBlock(`${sent.method} ${sent.url}`, sent.headers,
-          credential === 'bearer' ? 'The request carried the bearer token; the buyer never stores it.' : ''),
-        bodyBlock('Request body: the Commit', sent.body));
-    }
-    if (seller && seller.request) {
-      parts.push(el('h3', { text: 'The same request, as the seller received and kept it' }),
-        ...headerBlock(`${seller.request.method} ${seller.request.url}`, seller.request.headers,
-          'Caddy adds forwarding headers; the signature doesn’t cover them.'));
-    }
-    if (answer) {
-      parts.push(el('h3', { text: 'The seller’s signed answer, as the buyer received it' }),
-        ...headerBlock(`HTTP ${answer.status}`, answer.headers,
-          credential === 'bearer' ? 'Unbound: a bearer request carries no signature to bind to.' : ''),
-        bodyBlock('Answer body: the CommitResult', answer.body));
-    }
-    parts.push(directoryBlock('The buyer’s directory, as the seller fetched it', seller && seller.directory),
-      directoryBlock('The seller’s directory, as the buyer fetched it', buyer && buyer.directory));
-    return el('details', { open: '' }, el('summary', { text: title }), el('div', {}, parts));
-  }
-
-  function render(run, history) {
-    const root = document.getElementById('run');
-    root.textContent = '';
+  function summary(run) {
     const ok = run.ok === true;
-    root.append(el('div', { class: 'run-summary' },
+    const software = run.software;
+    return el('div', { class: 'run-summary' },
       el('span', { class: `verdict ${ok ? 'ok' : 'bad'}`, text: ok ? 'Pass' : 'Fail' }),
       el('span', { class: 'meta', text: `Started ${run.started_at} (${ago(run.started_at)}), ${run.duration_ms ?? '?'} ms in all` }),
-      run.software ? el('span', { class: 'meta', text: `iab-agentic-primitives ${run.software.iab_agentic_primitives}, openproposal-sdk ${run.software.openproposal_sdk}` }) : null));
+      software ? el('span', { class: 'meta',
+        text: `iab-agentic-primitives ${software.iab_agentic_primitives}, openproposal-sdk ${software.openproposal_sdk}` }) : null);
+  }
 
-    if (history.length) {
-      root.append(el('p', { class: 'note', text: `The last ${history.length} runs, newest first:` }),
-        el('div', { class: 'history', role: 'img', 'aria-label': `${history.filter(r => r.ok).length} of ${history.length} runs passed` },
-          history.map(r => el('span', { class: r.ok ? '' : 'bad', title: `${r.started_at}: ${r.ok ? 'pass' : 'fail ' + r.failed.join(', ')}` }))));
-    }
+  function historyStrip(history) {
+    if (!history.length) return [];
+    const passed = history.filter(r => r.ok).length;
+    return [el('p', { class: 'note', text: `The last ${history.length} runs, newest first:` }),
+      el('div', { class: 'history', role: 'img', 'aria-label': `${passed} of ${history.length} runs passed` },
+        history.map(r => el('span', { class: r.ok ? '' : 'bad', title: `${r.started_at}: ${r.ok ? 'pass' : 'fail ' + r.failed.join(', ')}` })))];
+  }
 
-    const GROUPS = { directory: 'Key directories', signature: 'With a Web Bot Auth signature',
-      bearer: 'With a bearer token', cloudflare: 'Interop with Cloudflare\u2019s library' };
+  function stepRows(steps) {
     const rows = [];
     let group = null;
-    for (const step of run.steps || []) {
-      if (GROUPS[step.group] && step.group !== group) {
+    for (const step of steps) {
+      if (step.group !== group) {
         group = step.group;
-        rows.push(el('tr', { class: 'group' }, el('th', { colspan: '4', text: GROUPS[group] })));
+        rows.push(el('tr', { class: 'group' }, el('th', { colspan: '4', text: GROUPS[group] ?? group })));
       }
       rows.push(el('tr', {},
         el('td', { class: `state ${step.ok ? 'ok' : 'bad'}`, text: step.ok ? 'Pass' : 'Fail' }),
         el('td', { text: step.title }),
         el('td', { class: 'ms', text: `${step.ms} ms` }),
-        el('td', { class: 'detail', text: step.detail || '' })));
+        el('td', { class: 'detail', text: step.detail ?? '' })));
     }
-    root.append(el('h3', { text: 'Steps' }), el('div', { class: 'table-wrap' }, el('table', { class: 'steps' },
-      el('thead', {}, el('tr', {}, el('th', { text: 'Result' }), el('th', { text: 'Step' }), el('th', { text: 'Time' }), el('th', { text: 'Detail' }))),
-      el('tbody', {}, rows))));
+    return rows;
+  }
 
-    root.append(el('h3', { text: 'What each party saw' }),
-      pathPanel('With a Web Bot Auth signature', run.signature, 'web_bot_auth'),
-      pathPanel('With a bearer token', run.bearer, 'bearer'));
+  function stepsTable(steps) {
+    const head = el('tr', {}, ['Result', 'Step', 'Time', 'Detail'].map(text => el('th', { text })));
+    return [el('h3', { text: 'Steps' }), el('div', { class: 'table-wrap' },
+      el('table', { class: 'steps' }, el('thead', {}, head), el('tbody', {}, stepRows(steps))))];
+  }
 
-    const directories = Object.entries(run.directories || {}).filter(([, d]) => d);
-    if (directories.length) {
-      root.append(el('details', {}, el('summary', { text: 'Key directories, as the runner fetched and verified them' }),
-        el('div', {}, directories.map(([party, d]) => directoryBlock(`${party}: valid until ${d.expires}`,
-          { ...d, fetched_at: run.started_at })))));
+  function pathFacts(section) {
+    const { outcome, seller, buyer, digest, reverify } = section;
+    return factsTable([
+      ['Proposal', code(section.proposal_id)],
+      ['Seller resolved', seller ? [code(seller.principal_id), ` with ${seller.authentication_method}`] : '–'],
+      ['record_digest', digest ? [code(digest.record_digest), ` on both sides, over ${digest.digest_input_bytes} bytes`] : '–'],
+      ['Buyer signed with', outcome.keyid ? code(outcome.keyid) : 'nothing: a bearer token'],
+      ['Seller signed with', buyer ? code(buyer.response.keyid) : '–'],
+      ['Attributed (§ 4.1.2)', String(outcome.attributed)],
+      reverify ? ['Verified again offline', `request and bound answer: ${reverify.response_bound ? 'bound' : 'not bound'}`] : null,
+    ]);
+  }
+
+  function pathMessages(section, bearer) {
+    const { seller, buyer } = section;
+    const parts = [];
+    if (buyer) {
+      const sent = buyer.request;
+      parts.push(...messageSection('The request, as the buyer sent it', `${sent.method} ${sent.url}`, sent,
+        bearer ? 'The request carried the bearer token; the buyer never stores it.' : '', 'Request body: the Commit'));
     }
+    if (seller && seller.request) {
+      const kept = seller.request;
+      parts.push(...messageSection('The same request, as the seller received and kept it', `${kept.method} ${kept.url}`,
+        kept, 'Caddy adds forwarding headers; the signature doesn’t cover them.'));
+    }
+    if (buyer) {
+      parts.push(...messageSection('The seller’s signed answer, as the buyer received it', `HTTP ${buyer.response.status}`,
+        buyer.response, bearer ? 'Unbound: a bearer request carries no signature to bind to.' : '', 'Answer body: the CommitResult'));
+    }
+    return parts;
+  }
 
-    const verdict = run.cloudflare && run.cloudflare.verdict;
-    if (verdict) {
-      root.append(el('details', {}, el('summary', { text: 'Cloudflare’s verifier on the buyer’s signature' }),
-        el('div', {}, el('pre', { text: JSON.stringify(verdict, null, 2) }))));
+  function pathPanel(title, section, bearer) {
+    if (!section || !section.outcome) {
+      return el('details', {}, el('summary', { text: `${title}: no data` }),
+        el('div', {}, el('p', { class: 'note', text: 'This path failed before it produced a record. See the steps.' })));
+    }
+    const { seller, buyer } = section;
+    return el('details', { open: '' }, el('summary', { text: title }), el('div', {},
+      pathFacts(section), pathMessages(section, bearer),
+      directoryBlock('The buyer’s directory, as the seller fetched it', seller && seller.directory),
+      directoryBlock('The seller’s directory, as the buyer fetched it', buyer && buyer.directory)));
+  }
+
+  function pathsSection(run) {
+    return [el('h3', { text: 'What each party saw' }),
+      pathPanel(GROUPS.signature, run.signature, false),
+      pathPanel(GROUPS.bearer, run.bearer, true)];
+  }
+
+  function directoriesSection(run) {
+    const directories = Object.entries(run.directories ?? {}).filter(([, d]) => d);
+    if (!directories.length) return null;
+    return el('details', {}, el('summary', { text: 'Key directories, as the runner fetched and verified them' }),
+      el('div', {}, directories.map(([party, d]) =>
+        directoryBlock(`${party}: valid until ${d.expires}`, d, run.started_at))));
+  }
+
+  function cloudflareSection(run) {
+    if (!run.cloudflare) return null;
+    return el('details', {}, el('summary', { text: 'Cloudflare’s verifier on the buyer’s signature' }),
+      el('div', {}, el('pre', { text: JSON.stringify(run.cloudflare.verdict, null, 2) })));
+  }
+
+  function render(run, history) {
+    const root = document.getElementById('run');
+    root.textContent = '';
+    root.append(summary(run), ...historyStrip(history), ...stepsTable(run.steps), ...pathsSection(run));
+    for (const section of [directoriesSection(run), cloudflareSection(run)]) {
+      if (section) root.append(section);
     }
   }
+
+  // ── Loading ──────────────────────────────────────────────────────────────
 
   function setStatus(state, text) {
     const pill = document.getElementById('run-status');
@@ -171,6 +208,13 @@
     pill.classList.remove('ok', 'bad');
     if (state) pill.classList.add(state);
     pill.lastElementChild.textContent = text;
+  }
+
+  function showEmpty(status, text) {
+    setStatus(null, status);
+    const root = document.getElementById('run');
+    root.textContent = '';
+    root.append(el('p', { class: 'empty', text }));
   }
 
   async function load(path) {
@@ -184,23 +228,19 @@
     try {
       run = await load('latest-run.json');
     } catch (e) {
-      setStatus(null, 'No run report yet');
-      const root = document.getElementById('run');
-      root.textContent = '';
-      root.append(el('p', { class: 'empty', text: `No run report is available yet (${e.message}). The runner writes one every 15 minutes.` }));
-      return;
+      return showEmpty('No run report yet', `No run report is available yet (${e.message}). The runner writes one every 15 minutes.`);
     }
     if (run.format !== FORMAT) {
-      setStatus(null, 'Unsupported run report');
-      const root = document.getElementById('run');
-      root.textContent = '';
-      root.append(el('p', { class: 'empty', text: `The run report has format ${run.format}; this page reads format ${FORMAT}.` }));
-      return;
+      return showEmpty('Unsupported run report', `The run report has format ${run.format}; this page reads format ${FORMAT}.`);
     }
     let history = [];
-    try { history = (await load('history.json')).runs || []; } catch (e) { /* the summary works without it */ }
-    setStatus(run.ok ? 'ok' : 'bad', `Latest run ${run.ok ? 'passed' : 'failed'}, ${ago(run.started_at)}`);
-    render(run, history);
+    try { history = (await load('history.json')).runs ?? []; } catch { /* the summary works without it */ }
+    try {
+      render(run, history);
+    } catch (e) {
+      return showEmpty('Unreadable run report', `The run report can't be rendered: ${e.message}`);
+    }
+    return setStatus(run.ok ? 'ok' : 'bad', `Latest run ${run.ok ? 'passed' : 'failed'}, ${ago(run.started_at)}`);
   }
 
   main();

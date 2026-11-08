@@ -127,7 +127,8 @@ branch = true
 # digest, and runner corruption rows: 97.52; the pure values and the number domain: 97.58;
 # next states built by constructor: 97.61; provenance and the one evidence store: 97.62;
 # one schema owner per party, with rows read by name: 97.72; each party's own identity,
-# keys, and operator key, and one composition pattern: 97.74). It is never lowered.
-fail_under = 97.74
+# keys, and operator key, and one composition pattern: 97.74; total HTTP seams, typed
+# control operations and contracts, and closed report sets: 97.84). It is never lowered.
+fail_under = 97.84
 precision = 2
 show_missing = false

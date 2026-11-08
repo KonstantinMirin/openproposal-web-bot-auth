@@ -4,12 +4,15 @@ The runner reaches the agents' controls and their directories through the
 stack's network, and reads both parties' databases read-only through their
 read models. The report it publishes validates against the committed schema
 (site/report.schema.json), holds public data only, and keeps a short history.
+The passing run's report is published to tests/site/published/, where the node
+test renders it with site/run.js.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+import shutil
 import sqlite3
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -68,8 +71,12 @@ from transport.control import (
     IssueRequest,
 )
 
-SCHEMA_FILE = Path(__file__).resolve().parent.parent / "site" / "report.schema.json"
+SITE = Path(__file__).resolve().parent.parent / "site"
+SCHEMA_FILE = SITE / "report.schema.json"
 SCHEMA = json.loads(SCHEMA_FILE.read_text())
+#: Where the passing run is published for tests/site/render.test.mjs, which renders it with
+#: site/run.js (make test runs it after this suite).
+PUBLISHED = Path(__file__).resolve().parent / "site" / "published"
 
 
 def _settings(stack: Stack, out: Path) -> RunnerSettings:
@@ -131,11 +138,12 @@ def test_a_run_passes_every_step_and_publishes_a_report_the_schema_accepts(
     assert bearer.seller.request is None  # a bearer commit keeps no signed request
     assert "authorization" in bearer.buyer.request.headers.withheld
 
-    publish(_settings(stack, tmp_path / "out"), report)
-    published = json.loads((tmp_path / "out" / "latest-run.json").read_text())
+    shutil.rmtree(PUBLISHED, ignore_errors=True)
+    publish(_settings(stack, PUBLISHED), report)
+    published = json.loads((PUBLISHED / "latest-run.json").read_text())
     jsonschema.validate(published, SCHEMA)
     assert Report.model_validate_json(json.dumps(published)) == report
-    history = History.model_validate_json((tmp_path / "out" / "history.json").read_bytes())
+    history = History.model_validate_json((PUBLISHED / "history.json").read_bytes())
     assert history.runs[0] == HistoryEntry(
         started_at=report.started_at, ok=True, duration_ms=report.duration_ms, failed=[]
     )

@@ -3,7 +3,8 @@
 # Every gate, in order; the first failing stage stops the run.
 quality: lint typecheck guards test
 
-# Formatting, the ruff rule set, the layer bans, cfbot's ESLint, and no placeholder.
+# Formatting, the ruff rule set, the layer bans, ESLint over cfbot, the site, and the
+# node test (eslint.config.mjs), and no placeholder.
 lint: cfbot/node_modules placeholders
 	uv run ruff format --check .
 	uv run ruff check .
@@ -12,7 +13,7 @@ lint: cfbot/node_modules placeholders
 	uv run ruff check --ignore-noqa --config ruff-buyer.toml
 	uv run ruff check --ignore-noqa --config ruff-digest.toml
 	uv run ruff check --ignore-noqa --config ruff-observers.toml
-	cd cfbot && npx --no-install eslint server.mjs
+	cfbot/node_modules/.bin/eslint eslint.config.mjs cfbot site tests
 
 # A placeholder for a link or a value left in the tree. The seed template's own
 # placeholders (seller/seed/proposal.yaml) are the seller's to fill in, so they stay.
@@ -39,9 +40,11 @@ guards:
 # The behavior suite, with branch coverage and the floor in pyproject.toml: each
 # agent's app over a real SQLite store and the real library (both agents in
 # process for the buyer, the runner, and the read models), and the protocol
-# package against the specification's documents.
+# package against the specification's documents. Then site/run.js renders the
+# report the runner's test published (tests/site/render.test.mjs).
 test:
 	uv run pytest --cov --cov-branch
+	node --test tests/site/render.test.mjs
 
 # The whole demo: build, start, run every scenario, tear down.
 e2e:
