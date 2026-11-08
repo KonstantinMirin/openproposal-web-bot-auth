@@ -17,7 +17,8 @@ import httpx
 from iab_agentic_primitives.web_bot_auth import (
     DirectoryResponse,
     ServerIdentity,
-    parse_directory_response,
+    UnixSeconds,
+    verify_directory,
 )
 
 from persistence.observe import BuyerRecords, SellerRecords
@@ -125,9 +126,9 @@ class Observer:
         url = origin.directory_url
         response = await self.web.get(url, headers={"Accept-Encoding": "identity"})
         lines = response.headers.multi_items()
-        now = int(time.time())
+        now = UnixSeconds(int(time.time()))
         fetched = DirectoryResponse(url, response.status_code, lines, response.content, now)
-        verified = parse_directory_response(fetched, library_origin(origin).authority, now)
+        verified = verify_directory(fetched, library_origin(origin), now)
         directory = Directory(
             url=url,
             status=response.status_code,
@@ -237,8 +238,8 @@ class Observer:
             answered.bound and answered.body_covered, "the buyer's evidence doesn't verify again"
         )
         reverified = Reverified(
-            request_components=list(again.components),
-            response_components=list(answered.components),
+            request_components=[str(c) for c in again.components],
+            response_components=[str(c) for c in answered.components],
             response_bound=answered.bound,
         )
         return Done(

@@ -56,9 +56,11 @@ from iab_agentic_primitives.web_bot_auth import (
     RequestSigner,
     ResponseSigner,
     StaticKeyResolver,
+    UnixSeconds,
     keyfile,
+    publish_directory,
 )
-from iab_agentic_primitives.web_bot_auth.asgi import directory_response
+from iab_agentic_primitives.web_bot_auth import Origin as LibraryOrigin
 from pydantic import SecretStr
 from starlette.types import ASGIApp, Receive, Scope, Send
 
@@ -167,7 +169,7 @@ def signed_request(
 ) -> HTTPRequest:
     """The request, signed as `origin` with `key`; a body goes as JSON."""
     headers = {"Content-Type": "application/json"} if body else {}
-    return RequestSigner(key, origin).sign(HTTPRequest(method, url, headers, body))
+    return RequestSigner.of(key, origin).sign(HTTPRequest(method, url, headers, body))
 
 
 def signed_headers(
@@ -190,8 +192,10 @@ class Directories:
         key = self._keys.get(host)
         if key is None or request.url.path != DIRECTORY_PATH:
             return None
-        status, headers, body = directory_response([key], authority=host, now=int(time.time()))
-        return httpx.Response(status, headers=headers, stream=httpx.ByteStream(body))
+        answer = publish_directory(LibraryOrigin(host), [key], now=UnixSeconds(int(time.time())))
+        return httpx.Response(
+            answer.status, headers=answer.headers.items(), stream=httpx.ByteStream(answer.body)
+        )
 
     def resolver(self) -> KeyResolver:
         """The library's directory resolver, reaching these directories only: anything
@@ -422,7 +426,7 @@ class Stack:
             request.method, str(request.url), lines(request.headers.raw), request.content
         )
         answer = HTTPResponse(status, [("content-type", "application/json")], body, sent)
-        signed = ResponseSigner(key, by).sign(answer)
+        signed = ResponseSigner.of(key, by).sign(answer)
         return httpx.Response(status, headers=signed.headers.items(), content=body)
 
     # The agents' controls

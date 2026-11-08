@@ -21,13 +21,14 @@ from pathlib import Path
 
 import httpx
 from iab_agentic_primitives.web_bot_auth import (
+    CachePolicy,
     DirectoryResolver,
     DirectoryResponse,
     HeaderLines,
     HTTPRequest,
     HTTPResponse,
-    MemoryDirectoryStore,
     ServerIdentity,
+    UnixSeconds,
 )
 from iab_agentic_primitives.web_bot_auth import Origin as LibraryOrigin
 from iab_agentic_primitives.web_bot_auth.asgi import Scope, request_url
@@ -80,12 +81,8 @@ def directory_resolver(
     fetch, for the e2e stack's rotation scenario. None keeps the library's
     default, 300 s.
     """
-    store = (
-        MemoryDirectoryStore()
-        if max_cache_age is None
-        else MemoryDirectoryStore(max_cache_age=max_cache_age)
-    )
-    return DirectoryResolver(HttpxDirectoryFetcher(client), store)
+    cache = CachePolicy() if max_cache_age is None else CachePolicy(max_cache_age=max_cache_age)
+    return DirectoryResolver(HttpxDirectoryFetcher(client), cache=cache)
 
 
 # The codec
@@ -150,7 +147,7 @@ def fetch_of(evidence: DirectoryResponse) -> DirectoryFetch:
 def directory_response_of(fetch: DirectoryFetch) -> DirectoryResponse:
     """A kept directory fetch as the library's `DirectoryResponse`, to verify it again."""
     return DirectoryResponse(
-        fetch.url, fetch.status, list(fetch.lines), fetch.body, fetch.fetched_at
+        fetch.url, fetch.status, fetch.lines, fetch.body, UnixSeconds(fetch.fetched_at)
     )
 
 

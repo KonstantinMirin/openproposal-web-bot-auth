@@ -32,7 +32,7 @@ class SignWith:
 
     @property
     def keyid(self) -> str:
-        return self.signer.key.thumbprint
+        return self.signer.config.key.thumbprint
 
 
 @dataclass(frozen=True)

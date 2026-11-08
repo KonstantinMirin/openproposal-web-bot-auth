@@ -85,7 +85,7 @@ def signed(
     """Headers for a request signed as `origin` with `key` (by default, the buyer's active key)."""
     headers = {"Content-Type": "application/json"} if body else {}
     request = HTTPRequest(method, url, headers, body)
-    return dict(RequestSigner(key or buyer_key(), origin).sign(request).headers.items())
+    return dict(RequestSigner.of(key or buyer_key(), origin).sign(request).headers.items())
 
 
 def commit_body(amount: float) -> bytes:

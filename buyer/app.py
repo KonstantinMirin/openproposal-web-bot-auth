@@ -22,7 +22,7 @@ from functools import partial
 from http import HTTPStatus
 
 from fastapi import APIRouter, Depends, FastAPI
-from iab_agentic_primitives.web_bot_auth import KeyResolver, PublishPolicy, ServerIdentity
+from iab_agentic_primitives.web_bot_auth import DirectoryPublisher, KeyResolver, PublishPolicy
 from iab_agentic_primitives.web_bot_auth.asgi import DirectoryMiddleware
 from starlette.types import ASGIApp
 
@@ -48,7 +48,7 @@ from transport.control import (
 )
 from transport.lifespan import lifespan, resolver_or_default
 from transport.operator import ControlError, OperatorKey, control_route
-from transport.wba import Transport
+from transport.wba import Transport, library_origin
 
 from .cfbot import Cfbot
 from .flow import Buyer
@@ -176,9 +176,11 @@ def create_app(
     # A live key source: each fetch lists the keys the store holds now.
     return DirectoryMiddleware(
         agent,
-        keyring.store.published,
-        identity=ServerIdentity.from_config(str(settings.self_origin)),
-        publish=PublishPolicy(max_age=settings.directory_max_age),
+        DirectoryPublisher(
+            library_origin(settings.self_origin),
+            keyring.store.published,
+            PublishPolicy(max_age=settings.directory_max_age),
+        ),
     )
 
 

@@ -27,7 +27,7 @@ from iab_agentic_primitives.web_bot_auth import (
     keyfile,
 )
 from iab_agentic_primitives.web_bot_auth import Origin as LibraryOrigin
-from iab_agentic_primitives.web_bot_auth.sync import SyncResponseVerifier
+from iab_agentic_primitives.web_bot_auth.sync import SyncResponseVerifier, SyncRuntime
 from pydantic import SecretStr
 from starlette.types import ASGIApp
 
@@ -255,7 +255,8 @@ def test_each_fault_mode_breaks_the_answer_the_way_it_names(
     verifier = ResponseVerifier(StaticKeyResolver({SELLER: [seller_key]}))
     lines = [(k, v) for k, v in answer.headers.multi_items()]
     response = HTTPResponse(answer.status_code, lines, answer.content, request)
-    with SyncResponseVerifier(verifier) as sync:
+    with SyncRuntime() as runtime:
+        sync = SyncResponseVerifier(verifier, runtime=runtime)
         if refusal is None:
             assert sync.verify(response, expected_origin=LibraryOrigin.parse(SELLER)).bound
         else:

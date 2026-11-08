@@ -22,9 +22,9 @@ practice, and the keyring enforces its waits:
 2. `activate(kid)` switches signing to it, once `rotation_wait` has passed since
    it was published. That is the longest a verifier may keep using a copy of the
    directory without the new key: an HTTP cache may hold the response for its
-   `Cache-Control: max-age` (`DirectoryMiddleware`'s `max_age`, 300 s by
-   default), and the library's verifier answers from a cached copy for
-   `MemoryDirectoryStore.max_cache_age` (300 s by default), so production waits 600 s.
+   `Cache-Control: max-age` (`PublishPolicy.max_age`, 300 s by default), and the
+   library's resolver answers from a cached copy for `CachePolicy.max_cache_age`
+   (300 s by default), so production waits 600 s.
 3. `retire(kid)` takes the old key out of the directory, once every signature it
    made has expired: `signature_lifetime` after it stopped signing. Its file
    moves to `keys/retired/`.
@@ -45,6 +45,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from iab_agentic_primitives.web_bot_auth import Ed25519Key, RequestSigner, keyfile
+from iab_agentic_primitives.web_bot_auth import Origin as LibraryOrigin
+from iab_agentic_primitives.web_bot_auth.signer import SignerConfig
 
 from persistence.values import Origin
 from protocol.values import Value
@@ -279,7 +281,9 @@ class SigningIdentity:
     def signer(self) -> RequestSigner:
         """Signs as the origin with the key active now, for the keyring's signature lifetime."""
         return RequestSigner(
-            self.keyring.store.active(),
-            str(self.origin),
-            lifetime=self.keyring.signature_lifetime,
+            SignerConfig(
+                self.keyring.store.active(),
+                LibraryOrigin.parse(str(self.origin)),
+                lifetime=self.keyring.signature_lifetime,
+            )
         )

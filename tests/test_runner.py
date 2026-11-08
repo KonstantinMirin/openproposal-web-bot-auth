@@ -256,7 +256,7 @@ def _unbind(stack: Stack, evidence_id: int) -> None:
     unsigned = [line for line in sent.lines if not line[0].lower().startswith("signature")]
     request = HTTPRequest(sent.method, sent.url, unsigned, sent.body)
     answer = HTTPResponse(kept.status, [("content-type", "application/json")], kept.body, request)
-    signed = ResponseSigner(stack.seller_key, SELLER).sign(answer)
+    signed = ResponseSigner.of(stack.seller_key, SELLER).sign(answer)
     with _writable(_db(stack, "buyer")) as db:
         db.execute(
             "UPDATE signed_requests SET headers = ? WHERE id = ?",

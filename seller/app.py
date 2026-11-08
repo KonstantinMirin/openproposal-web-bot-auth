@@ -24,6 +24,7 @@ import httpx
 from fastapi import APIRouter, Depends, FastAPI
 from fastapi.responses import JSONResponse
 from iab_agentic_primitives.web_bot_auth import (
+    DirectoryPublisher,
     KeyResolver,
     MemoryNonceStore,
     NonceStore,
@@ -131,15 +132,15 @@ def create_app(
     agent.include_router(api)
     agent.include_router(operator, dependencies=[Depends(OperatorKey(settings.operator_key))])
 
-    signer = ResponseSigner(key, str(settings.self_origin))
+    signer = ResponseSigner.of(key, identity.origin)
     signed = ResponseSigningMiddleware(agent, signer, identity=identity)
     answering = _with_faults(agent, signed, signer, identity) if settings.faults else signed
     # The signed key directory at the well-known path, for buyers to find the seller's key.
     return DirectoryMiddleware(
         answering,
-        [key],
-        identity=identity,
-        publish=PublishPolicy(max_age=settings.directory_max_age),
+        DirectoryPublisher(
+            identity.origin, [key], PublishPolicy(max_age=settings.directory_max_age)
+        ),
     )
 
 

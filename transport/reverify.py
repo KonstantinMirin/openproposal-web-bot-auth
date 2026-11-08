@@ -15,9 +15,10 @@ from iab_agentic_primitives.web_bot_auth import (
     ResponseVerifier,
     ServerIdentity,
     StaticKeyResolver,
+    UnixSeconds,
     VerifiedRequest,
     VerifiedResponse,
-    parse_directory_response,
+    verify_directory,
 )
 
 from persistence.evidence import NoEvidenceError
@@ -33,8 +34,8 @@ def directory_keys(signer: Signer) -> StaticKeyResolver:
     if fetch is None:
         raise NoEvidenceError(str(signer.origin))
     origin = library_origin(signer.origin)
-    directory = parse_directory_response(
-        directory_response_of(fetch), origin.authority, fetch.fetched_at
+    directory = verify_directory(
+        directory_response_of(fetch), origin, UnixSeconds(fetch.fetched_at)
     )
     return StaticKeyResolver({origin: directory.keys})
 
