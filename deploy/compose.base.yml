@@ -15,10 +15,12 @@ x-python: &python
   image: wba-demo-python
   build:
     context: ..
+    # The image's base stage, which runs as `app` and holds no test code. Only the
+    # e2e scenarios service builds the `scenarios` stage (e2e/docker-compose.yml).
+    target: base
     additional_contexts:
       # The library checkout, which lands at the same relative path as on the host.
       wba-lib: ${WBA_LIB_DIR:-../../iab-agentic-primitives}
-  user: app
   networks: [agents]
   healthcheck:
     test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]

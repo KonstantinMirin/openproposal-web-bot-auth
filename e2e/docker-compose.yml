@@ -82,10 +82,13 @@ services:
       interval: 2s
       retries: 30
 
-  # The e2e scenarios (pytest), not the live runner (runner/, deploy/).
+  # The e2e scenarios (pytest), not the live runner (runner/, deploy/): the image's
+  # `scenarios` stage, the base plus e2e/scenarios and the dev group.
   scenarios:
     extends: { file: ../deploy/compose.base.yml, service: python }
     <<: *test
+    image: wba-demo-python:scenarios
+    build: { target: scenarios }
     profiles: !override [test]
     command: ["pytest", "-v", "-p", "no:cacheprovider", "e2e/scenarios"]
     environment:
