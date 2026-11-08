@@ -35,7 +35,7 @@ The agent publishes its public keys in a signed key directory at
 `/.well-known/http-message-signatures-directory` on that origin, and signs
 with its private key. A verifier reads the origin from the `Signature-Agent`
 header, fetches the directory over HTTPS, and checks the signature, so TLS for
-the host ties the keys to the domain. OpenProposal 3.0 § 2.8 profiles these
+the host ties the keys to the domain. OpenProposal 3.0 [§ 2.8](https://github.com/KonstantinMirin/OpenProposal/blob/op30-signing/spec/openproposal-3.0.md#28-web-bot-auth-profile) profiles these
 rules for agent traffic, and the seller signs its answers the same way.
 
 ```mermaid
@@ -117,7 +117,7 @@ The code path, in order:
    writer's principal id. It writes the buyer's entry through the writer, in
    its transaction, with the `buyer.domain` of the issued record the entry is
    about, and the writer computes there whether the signature attributes the
-   entry to that party (§ 4.1.2): against the record, never against the
+   entry to that party ([§ 4.1.2](https://github.com/KonstantinMirin/OpenProposal/blob/op30-signing/spec/openproposal-3.0.md#412-assent)): against the record, never against the
    principal, as the buyer does for the seller's answer. Storage keeps the
    provenance and, for a signature, the signed request through the one
    `EvidenceStore` in [`persistence/evidence.py`](persistence/evidence.py), in
@@ -164,7 +164,7 @@ the offer logic never sees it.
 The buyer mirrors the seller's boundary
 ([`buyer/seller_client.py`](buyer/seller_client.py)). Its one client to a
 seller verifies each answer, then parses it as the document its status says it
-is (a `Proposal`, a `CommitResult`, or a § 2.4 `errors[]`), inside one refusal
+is (a `Proposal`, a `CommitResult`, or a [§ 2.4](https://github.com/KonstantinMirin/OpenProposal/blob/op30-signing/spec/openproposal-3.0.md#24-errors) `errors[]`), inside one refusal
 boundary. A proposal must be the one the buyer asked for, or it is refused
 `wrong-proposal`, and must name the seller it called and the buyer's own party
 (its `SELF_ORIGIN` host and its legal name, from its settings): one that names
@@ -232,7 +232,7 @@ flowchart TB
 ```
 
 An agreement holds only if both parties compute the same `record_digest`: the
-SHA-256 of the binding record in RFC 8785 canonical form. A party that parses a
+SHA-256 of the binding record in [RFC 8785](https://www.rfc-editor.org/rfc/rfc8785) canonical form. A party that parses a
 field differently, drops an unknown member, or writes a number another way
 computes a different digest, and the seller answers `record_mismatch`. The same
 holds for signatures: two verifiers that read the profile differently accept
@@ -243,8 +243,8 @@ run check it: both parties hold byte-identical digest input and the same
 `record_digest`.
 
 **`protocol/` is the one stopgap.** The generator emits the types but not yet
-the rules that work over them: the § 4.1.1 binding record and `record_digest`,
-the § 3.4 buyer writes they compose over, and the § 5.6.1 rules that tie a
+the rules that work over them: the [§ 4.1.1](https://github.com/KonstantinMirin/OpenProposal/blob/op30-signing/spec/openproposal-3.0.md#411-binding-record-and-record_digest) binding record and `record_digest`,
+the [§ 3.4](https://github.com/KonstantinMirin/OpenProposal/blob/op30-signing/spec/openproposal-3.0.md#34-buyer-writes) buyer writes they compose over, and the [§ 5.6.1](https://github.com/KonstantinMirin/OpenProposal/blob/op30-signing/spec/openproposal-3.0.md#561-commitment) rules that tie a
 `Commit`'s members together. [`protocol/`](protocol) holds those, typed on the
 generated classes, and both parties call it, so each rule has one
 implementation. The binding record works over the raw JSON, never a parsed
@@ -278,13 +278,13 @@ sequenceDiagram
 
 The seller ([`seller/offers/`](seller/offers)) shows an issued proposal only
 to its buyer, recomputes `record_digest` over the line items plus the commit's
-writes, runs the § 5.6.1 checks in order (`checks.py`: one named step each,
+writes, runs the [§ 5.6.1](https://github.com/KonstantinMirin/OpenProposal/blob/op30-signing/spec/openproposal-3.0.md#561-commitment) checks in order (`checks.py`: one named step each,
 the first that rejects decides), and answers a replay with the same
 `idempotency_key` from its stored result (`ledger.py`). `answer_commit`
 (`acceptance.py`) decides and stores in one transaction and returns its
 answer, a `CommitResult` or a rejection, which
 [`seller/http.py`](seller/http.py) renders as `{"errors": [...]}` with the
-§ 2.4 status. A control-plane failure (the operator key, a control route's bad
+[§ 2.4](https://github.com/KonstantinMirin/OpenProposal/blob/op30-signing/spec/openproposal-3.0.md#24-errors) status. A control-plane failure (the operator key, a control route's bad
 input, a route the seller doesn't have) is `{"error": ..., "detail": ...}`. The buyer
 ([`buyer/flow.py`](buyer/flow.py)) runs the same protocol operations in
 order: read, `compose_commit`, commit, `check_result`, and keep the agreement.
@@ -293,7 +293,7 @@ settles a commit as rejected only on a stored rejection (`retry` other than
 `same`). Both parties keep the counterparty's signed message
 as exact bytes, with the exact directory bytes it verified against and the
 instant it verified the message, so the evidence verifies again offline
-(§ 4.1.2). Verifying it again is a function of the kept row alone: the
+([§ 4.1.2](https://github.com/KonstantinMirin/OpenProposal/blob/op30-signing/spec/openproposal-3.0.md#412-assent)). Verifying it again is a function of the kept row alone: the
 directory is checked at its `fetched_at` and the message at its `verified_at`,
 so a record still verifies long after its signatures expired. The buyer keeps
 its own request as the wire carried it, the URL as encoded and signed.
@@ -369,7 +369,7 @@ fresh stack:
 | 7 | Cloudflare verifies the buyer | cfbot verifies a request the buyer signed, with `web-bot-auth`'s `verify()`, after fetching the buyer's directory and verifying the directory's own signature by that key with `http-message-sig`. |
 | 8 | No credential | A commit with no credential gets `403 not_eligible`. An invalid token gets `401`, never "no credential". A failing credential is refused at the boundary even with a body that isn't JSON. |
 | 9 | Buyer refuses an unverifiable answer | With the seller's test-only fault toggle, the buyer refuses an unsigned answer, an unbound one, one bound to another request, and one whose `Content-Digest` doesn't match its body, on a read and on a commit, by signature and by bearer token (a bearer request has no signature to bind to, so only the unsigned and the wrong-digest answers apply). On a commit, the seller accepted on the first attempt; each re-sent `Commit` keeps its `idempotency_key`, the seller answers from its stored result and writes no second entry, and the buyer agrees once the answer verifies. |
-| 10 | Key rotation | The standard order. The buyer publishes a new key and keeps signing with the old one, which the seller accepts. Once no verifier can still hold a copy without the new key, it switches; the seller fetches the directory again and accepts the new key. Once the old key's signatures have expired the buyer removes it, and after the seller's next refresh a request signed with it gets `403 key-not-found`. The wait is derived from the directory's `Cache-Control: max-age` plus the profile's 300 s cache lifetime (§ 2.8.3), never set apart from it: the stack serves `max-age=0` and waits 300 s, and production waits 600 s. |
+| 10 | Key rotation | The standard order. The buyer publishes a new key and keeps signing with the old one, which the seller accepts. Once no verifier can still hold a copy without the new key, it switches; the seller fetches the directory again and accepts the new key. Once the old key's signatures have expired the buyer removes it, and after the seller's next refresh a request signed with it gets `403 key-not-found`. The wait is derived from the directory's `Cache-Control: max-age` plus the profile's 300 s cache lifetime ([§ 2.8.3](https://github.com/KonstantinMirin/OpenProposal/blob/op30-signing/spec/openproposal-3.0.md#283-key-directories)), never set apart from it: the stack serves `max-age=0` and waits 300 s, and production waits 600 s. |
 | 11 | Operator controls | The front never routes an agent's own controls (`/operator/`, cfbot's `/run/`), and each agent refuses a call without its own `OPERATOR_KEY`, another party's included. The seller issues a fresh proposal on an operator call, which the live runner uses. |
 
 ## Run it locally
@@ -452,10 +452,10 @@ The live deployment differs from the local test only where production needs it:
   command that refreshes the copy. To install it from git instead, change one
   line in `[tool.uv.sources]`:
   `iab-agentic-primitives = { git = "https://github.com/KonstantinMirin/iab-agentic-primitives", rev = "<sha>" }`.
-- **The specification**: [OpenProposal 3.0](https://github.com/IABTechLab/OpenProposal/pull/142). The demo follows § 1.2
-  (identity layers), § 2.8 (the Web Bot Auth profile), § 4.1.1 (binding
-  record), § 4.1.2 (assent and signed-message evidence), § 4.3 (issued
-  proposals), and § 5.6.1 (`Commit` and `CommitResult`). The seller's seed
+- **The specification**: [OpenProposal 3.0](https://github.com/IABTechLab/OpenProposal/pull/142). The demo follows [§ 1.2](https://github.com/KonstantinMirin/OpenProposal/blob/op30-signing/spec/openproposal-3.0.md#12-relationship-to-other-aamp-artifacts)
+  (identity layers), [§ 2.8](https://github.com/KonstantinMirin/OpenProposal/blob/op30-signing/spec/openproposal-3.0.md#28-web-bot-auth-profile) (the Web Bot Auth profile), [§ 4.1.1](https://github.com/KonstantinMirin/OpenProposal/blob/op30-signing/spec/openproposal-3.0.md#411-binding-record-and-record_digest) (binding
+  record), [§ 4.1.2](https://github.com/KonstantinMirin/OpenProposal/blob/op30-signing/spec/openproposal-3.0.md#412-assent) (assent and signed-message evidence), [§ 4.3](https://github.com/KonstantinMirin/OpenProposal/blob/op30-signing/spec/openproposal-3.0.md#43-lifecycle) (issued
+  proposals), and [§ 5.6.1](https://github.com/KonstantinMirin/OpenProposal/blob/op30-signing/spec/openproposal-3.0.md#561-commitment) (`Commit` and `CommitResult`). The seller's seed
   proposal ([`seller/seed/proposal.yaml`](seller/seed/proposal.yaml)) is
   adapted from `examples/proposal-issued.yaml`.
 - **The OpenProposal types**: the Python SDK generated by
@@ -464,7 +464,7 @@ The live deployment differs from the local test only where production needs it:
   vendored unchanged in [`vendor/openproposal-sdk/`](vendor/openproposal-sdk),
   whose `pyproject.toml` records the source commit.
 - **The protocol stopgap**: [`protocol/`](protocol), the binding record,
-  `record_digest`, and the § 5.6.1 commit rules, until the generator emits them.
+  `record_digest`, and the [§ 5.6.1](https://github.com/KonstantinMirin/OpenProposal/blob/op30-signing/spec/openproposal-3.0.md#561-commitment) commit rules, until the generator emits them.
 - **cfbot**: [`cfbot/`](cfbot), a Node service on `web-bot-auth@0.2.0` and
   `http-message-sig@0.3.0`, pinned in its lockfile.
 - **The explainer site**: [`site/`](site), plain HTML and CSS with inline SVG.
@@ -475,11 +475,11 @@ The live deployment differs from the local test only where production needs it:
 - **Address policy.** A production deployment injects an SSRF-guarded client
   into the directory resolver; the demo doesn't, because address policy is
   outside what it demonstrates.
-- **Offer judgment.** The seller accepts every commit that passes the § 5.6.1
+- **Offer judgment.** The seller accepts every commit that passes the [§ 5.6.1](https://github.com/KonstantinMirin/OpenProposal/blob/op30-signing/spec/openproposal-3.0.md#561-commitment)
   checks. It doesn't check buyer values against the declared option space
-  (§ 3), and it keeps one version per proposal.
+  ([§ 3](https://github.com/KonstantinMirin/OpenProposal/blob/op30-signing/spec/openproposal-3.0.md#3-field-mutability)), and it keeps one version per proposal.
 - **Shared state.** The nonce store and the directory cache are in memory, in
   one process.
 - **Distinct parties.** All agents sit under `noetis.dev`, so `Party.domain`
   stores each agent's host. Real parties have distinct registrable domains
-  (§ 2.2), and § 4.1.2 attributes an entry by the party's domain.
+  ([§ 2.2](https://github.com/KonstantinMirin/OpenProposal/blob/op30-signing/spec/openproposal-3.0.md#22-shared-types)), and [§ 4.1.2](https://github.com/KonstantinMirin/OpenProposal/blob/op30-signing/spec/openproposal-3.0.md#412-assent) attributes an entry by the party's domain.

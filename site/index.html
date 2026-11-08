@@ -121,7 +121,7 @@ signature-agent: sig1="https://buyer.wba-demo.noetis.dev/.well-known/http-messag
 signature-input: sig1=("@method" "@target-uri" "@authority" "content-type" "content-digest" "signature-agent";key="sig1");created=1794068629;keyid="ZKFm7HPxqUK7ECl0ppoCPHjrE2qTrz_bc_rJ58ippbA";alg="ed25519";expires=1794068929;nonce="Qb7KCDWAcaX2…";tag="web-bot-auth"
 signature: sig1=:5kF9XH4bsuauHZoFccx+QIPx31fC1lEEETIkSXE22ZRLN8OIL1otTSDNxFNjTIxgN+hb387+KZBuexTHnt1SAA==:</code></pre>
 <div class="prose">
-<p>OpenProposal § 2.8 profiles these rules for agent traffic: Ed25519 keys, exactly one signature per message, a lifetime of at most 300 seconds, and 60 seconds of clock skew. It adds no header, tag, key field, or error code, so a standard Web Bot Auth implementation configured with these rules interoperates. Read the <a href="https://github.com/IABTechLab/OpenProposal/pull/142">OpenProposal 3.0 specification</a> and the <a href="https://github.com/KonstantinMirin/iab-agentic-primitives/blob/feat/web-bot-auth/WEB_BOT_AUTH.md">Web Bot Auth library</a> both agents use.</p>
+<p>OpenProposal <a href="https://github.com/KonstantinMirin/OpenProposal/blob/op30-signing/spec/openproposal-3.0.md#28-web-bot-auth-profile">§ 2.8</a> profiles these rules for agent traffic: Ed25519 keys, exactly one signature per message, a lifetime of at most 300 seconds, and 60 seconds of clock skew. It adds no header, tag, key field, or error code, so a standard Web Bot Auth implementation configured with these rules interoperates. Read the <a href="https://github.com/IABTechLab/OpenProposal/pull/142">OpenProposal 3.0 specification</a> and the <a href="https://github.com/KonstantinMirin/iab-agentic-primitives/blob/feat/web-bot-auth/WEB_BOT_AUTH.md">Web Bot Auth library</a> both agents use.</p>
 </div>
 </section>
 
@@ -201,7 +201,7 @@ signature: sig1=:5kF9XH4bsuauHZoFccx+QIPx31fC1lEEETIkSXE22ZRLN8OIL1otTSDNxFNjTIx
   <li><strong>Resolve.</strong> The confirmed credential maps to the principal in the seller's own <code>credentials</code> table: by verified origin, or by token hash. A verified origin with no row is an established identity with no principal: a <code>PublicCaller</code> that carries the signature.</li>
   <li><strong>Freeze.</strong> The boundary returns one immutable value, <code>ResolvedCaller</code> or <code>PublicCaller</code>. Nothing downstream can change it.</li>
 </ol>
-<p>The offer logic is credential-blind. The boundary records only what it confirmed of the caller, as a provenance: the principal, the credential method, and, for a signature, the signed request and whether it covers the body. The offer logic receives only the principal, and an entry writer that holds the provenance, never the caller or its credential, so no offer decision depends on which credential the caller used. When it writes the buyer's entry, the writer decides whether the signature attributes it (§ 4.1.2) against the buyer the issued record names, not against the caller. The boundary writes nothing: the signed request is kept only with an entry it carried.</p>
+<p>The offer logic is credential-blind. The boundary records only what it confirmed of the caller, as a provenance: the principal, the credential method, and, for a signature, the signed request and whether it covers the body. The offer logic receives only the principal, and an entry writer that holds the provenance, never the caller or its credential, so no offer decision depends on which credential the caller used. When it writes the buyer's entry, the writer decides whether the signature attributes it (<a href="https://github.com/KonstantinMirin/OpenProposal/blob/op30-signing/spec/openproposal-3.0.md#412-assent">§ 4.1.2</a>) against the buyer the issued record names, not against the caller. The boundary writes nothing: the signed request is kept only with an entry it carried.</p>
 <p>A credential that fails is refused at the boundary, before anything parses the body. The refusal is a transport status with no <code>errors[]</code> object:</p>
 </div>
 <div class="table-wrap">
@@ -290,7 +290,7 @@ signature: sig1=:5kF9XH4bsuauHZoFccx+QIPx31fC1lEEETIkSXE22ZRLN8OIL1otTSDNxFNjTIx
   <rect class="box" x="480" y="478" width="220" height="66" rx="6"/>
   <text class="t-small" x="590" y="499" text-anchor="middle">Verify; the same principal</text>
   <text class="t-small" x="590" y="516" text-anchor="middle">Recompute record_digest</text>
-  <text class="t-small" x="590" y="533" text-anchor="middle">Check § 5.6.1; write the entries</text>
+  <text class="t-small" x="590" y="533" text-anchor="middle">Check <a href="https://github.com/KonstantinMirin/OpenProposal/blob/op30-signing/spec/openproposal-3.0.md#561-commitment">§ 5.6.1</a>; write the entries</text>
 
   <path class="wire-muted" d="M590,578 H174" marker-end="url(#a-muted)"/>
   <text x="380" y="570" text-anchor="middle"><tspan class="t-step">4 </tspan>200, the CommitResult</text>
@@ -307,9 +307,9 @@ signature: sig1=:5kF9XH4bsuauHZoFccx+QIPx31fC1lEEETIkSXE22ZRLN8OIL1otTSDNxFNjTIx
 <div class="prose">
 <p>Each side does the following:</p>
 <ul>
-  <li><strong>The seller</strong> shows an issued proposal only to its buyer. On a commit it recomputes <code>record_digest</code> over the line items plus the commit's writes, runs the checks of § 5.6.1, and writes the buyer's <code>commitment</code> entry and its own <code>acceptance</code>. A repeated commit with the same <code>idempotency_key</code> gets the stored result.</li>
+  <li><strong>The seller</strong> shows an issued proposal only to its buyer. On a commit it recomputes <code>record_digest</code> over the line items plus the commit's writes, runs the checks of <a href="https://github.com/KonstantinMirin/OpenProposal/blob/op30-signing/spec/openproposal-3.0.md#561-commitment">§ 5.6.1</a>, and writes the buyer's <code>commitment</code> entry and its own <code>acceptance</code>. A repeated commit with the same <code>idempotency_key</code> gets the stored result.</li>
   <li><strong>The buyer</strong> refuses an answer it can't verify: unsigned, unbound, bound to another request, or with a <code>Content-Digest</code> that doesn't match its body. It refuses an answer that verifies but doesn't parse, too. It re-sends the same <code>Commit</code> until an answer verifies, and then checks that the acceptance matches its commitment.</li>
-  <li><strong>Both</strong> keep the counterparty's signed message as exact bytes, with the exact directory bytes it verified against. That evidence verifies again later, offline, which is what § 4.1.2 asks a party to be able to show.</li>
+  <li><strong>Both</strong> keep the counterparty's signed message as exact bytes, with the exact directory bytes it verified against. That evidence verifies again later, offline, which is what <a href="https://github.com/KonstantinMirin/OpenProposal/blob/op30-signing/spec/openproposal-3.0.md#412-assent">§ 4.1.2</a> asks a party to be able to show.</li>
 </ul>
 </div>
 </section>
@@ -357,10 +357,10 @@ signature: sig1=:5kF9XH4bsuauHZoFccx+QIPx31fC1lEEETIkSXE22ZRLN8OIL1otTSDNxFNjTIx
   <text class="t-small" x="380" y="188" text-anchor="middle">same pair rule</text>
 
   <rect class="box" x="20" y="220" width="280" height="46" rx="6"/>
-  <text class="t-title" x="36" y="240">Record rules (§ 4.1.1)</text>
+  <text class="t-title" x="36" y="240">Record rules (<a href="https://github.com/KonstantinMirin/OpenProposal/blob/op30-signing/spec/openproposal-3.0.md#411-binding-record-and-record_digest">§ 4.1.1</a>)</text>
   <text class="t-mono t-small" x="36" y="258">protocol/record.py</text>
   <rect class="box" x="460" y="220" width="280" height="46" rx="6"/>
-  <text class="t-title" x="476" y="240">Record rules (§ 4.1.1)</text>
+  <text class="t-title" x="476" y="240">Record rules (<a href="https://github.com/KonstantinMirin/OpenProposal/blob/op30-signing/spec/openproposal-3.0.md#411-binding-record-and-record_digest">§ 4.1.1</a>)</text>
   <text class="t-mono t-small" x="476" y="258">protocol/record.py</text>
   <path class="wire-muted" d="M302,243 H324 M436,243 H458"/>
   <text class="t-small" x="380" y="248" text-anchor="middle">same digest rule</text>
@@ -390,7 +390,7 @@ signature: sig1=:5kF9XH4bsuauHZoFccx+QIPx31fC1lEEETIkSXE22ZRLN8OIL1otTSDNxFNjTIx
 <div class="prose">
 <p>An agreement holds only if both parties compute the same <code>record_digest</code>: the SHA-256 of the binding record in RFC 8785 canonical form. A party that parses one field differently, drops an unknown member, or writes a number another way computes a different digest, and the seller answers <code>record_mismatch</code>. The same holds for signatures: two verifiers that read the profile differently accept different messages.</p>
 <p>A generated SDK removes that risk at the source. Every party, in every language, gets types generated from one schema, so each one parses and serializes the same way. The Web Bot Auth library does the same for signing and verification. When the buyer and the seller each use these packages, they agree by construction rather than by testing each pair.</p>
-<p class="callout"><strong>Stopgap:</strong> <code>protocol/</code> holds the rules the SDK generator doesn't emit yet: the binding record and <code>record_digest</code>, and the § 5.6.1 rules that tie a <code>Commit</code>'s members together. It is typed on the generated classes, and both parties call it. When the generator emits these helpers, both parties import them from <code>openproposal</code> like every type.</p>
+<p class="callout"><strong>Stopgap:</strong> <code>protocol/</code> holds the rules the SDK generator doesn't emit yet: the binding record and <code>record_digest</code>, and the <a href="https://github.com/KonstantinMirin/OpenProposal/blob/op30-signing/spec/openproposal-3.0.md#561-commitment">§ 5.6.1</a> rules that tie a <code>Commit</code>'s members together. It is typed on the generated classes, and both parties call it. When the generator emits these helpers, both parties import them from <code>openproposal</code> like every type.</p>
 </div>
 </section>
 
@@ -594,7 +594,7 @@ http-signature-directory https://buyer.wba-demo.noetis.dev/.well-known/http-mess
 </main>
 
 <footer>
-  Source: the <a href="https://github.com/KonstantinMirin/iab-agentic-primitives/blob/feat/web-bot-auth/WEB_BOT_AUTH.md">Web Bot Auth library</a> and the <a href="https://github.com/IABTechLab/OpenProposal/pull/142">OpenProposal 3.0 specification</a>, § 2.8. Diagrams and text describe the demo as deployed.
+  Source: the <a href="https://github.com/KonstantinMirin/iab-agentic-primitives/blob/feat/web-bot-auth/WEB_BOT_AUTH.md">Web Bot Auth library</a> and the <a href="https://github.com/IABTechLab/OpenProposal/pull/142">OpenProposal 3.0 specification</a>, <a href="https://github.com/KonstantinMirin/OpenProposal/blob/op30-signing/spec/openproposal-3.0.md#28-web-bot-auth-profile">§ 2.8</a>. Diagrams and text describe the demo as deployed.
 </footer>
 
 <script src="run.js" defer></script>
