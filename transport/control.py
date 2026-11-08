@@ -2,8 +2,14 @@
 
 Both agents declare their routes with these models, and the live runner reads
 every answer through the same ones, so a route and its reader can't drift
-apart. The module imports pydantic and the pure values only, so the runner
-reads the answers without loading an HTTP framework.
+apart. The module imports pydantic, the SDK, the pure values, and the Web Bot
+Auth library's refusal vocabulary, so the runner reads the answers without
+loading an HTTP framework.
+
+Every error body either agent sends outside § 2.4 is an `ErrorBody`: a closed
+`error` code and a `detail`. The codes are the control plane's (`ControlCode`),
+the seller's identity boundary's own (`BoundaryReason`), and the library's
+refusal reasons.
 
 The buyer's `Outcome` is a discriminated union on `state`. Each variant carries
 only its own fields, and every one names the authentication method it used.
@@ -11,15 +17,96 @@ only its own fields, and every one names the authentication method it used.
 
 from __future__ import annotations
 
+from enum import StrEnum
 from typing import Annotated, Literal
 
-from pydantic import Field, TypeAdapter
+from iab_agentic_primitives.web_bot_auth import Refusal
+from pydantic import Field, PlainSerializer, PlainValidator, TypeAdapter, WithJsonSchema
 
 from persistence.values import AuthMethod, Origin
 from protocol.values import JsonObject, JsonValue, Value
 
 #: The header every control call carries the operator key in (transport/operator.py).
 OPERATOR_HEADER = "X-Operator-Key"
+
+
+# The error vocabulary
+
+#: Why a control call fails, or a route the agent doesn't serve.
+ControlCode = Literal[
+    "operator-key",
+    "validation",
+    "not-found",
+    "method-not-allowed",
+    "bad-request",
+    "unknown-principal",
+    "rotation",
+    "not-pending",
+    "cfbot-unreachable",
+    "cfbot-malformed",
+    "internal",
+]
+#: The seller's identity boundary's own refusals, beside the library's for a signature.
+BoundaryReason = Literal["invalid-authorization", "two-credentials", "invalid-token"]
+#: The library's answer to a response it can't sign (its `ResponseSigningMiddleware`).
+UnsignableCode = Literal["response-unsignable"]
+
+
+def _refusal(value: object) -> Refusal:
+    """A `Refusal` as given, or the one whose reason code `value` is; else `ValueError`."""
+    return value if isinstance(value, Refusal) else Refusal.of(str(value))
+
+
+#: A library refusal, read from its reason code and written as it.
+RefusalCode = Annotated[
+    Refusal,
+    PlainValidator(_refusal),
+    PlainSerializer(lambda refusal: refusal.code, return_type=str),
+    WithJsonSchema({"type": "string", "enum": sorted(r.code for r in Refusal)}),
+]
+
+
+class Reason(StrEnum):
+    """Why the buyer refuses, when the library's own refusal codes don't say."""
+
+    #: The trigger names a seller this buyer has no record of.
+    UNKNOWN_SELLER = "unknown-seller"
+    #: The trigger names a line item the buyer's plan has no writes for.
+    UNKNOWN_LINE_ITEM = "unknown-line-item"
+    #: A bearer call to a seller that issued this buyer no token.
+    NOT_ISSUED = "credential-not-issued"
+    #: The seller didn't answer.
+    UNREACHABLE = "unreachable"
+    #: A verified answer that isn't the document its status says it is.
+    MALFORMED_ANSWER = "malformed-answer"
+    #: A verified proposal that names another seller.
+    WRONG_SELLER = "wrong-seller"
+    #: The seller's identity boundary refused the buyer's credential.
+    CREDENTIAL_REFUSED = "credential-refused"
+    #: The seller answered the read of the proposal to commit to with an error.
+    UNREADABLE_PROPOSAL = "unreadable-proposal"
+    #: A verified `CommitResult` that doesn't answer the buyer's `commit` (§ 4.1.2, § 5.6.1).
+    RESULT_MISMATCH = "result-mismatch"
+
+
+#: Why the buyer refused: its own reason, or the library's refusal of the seller's answer.
+BuyerReason = Reason | RefusalCode
+
+
+def code_of(reason: str | Refusal) -> str:
+    """The code a reason goes on the wire as."""
+    return reason.code if isinstance(reason, Refusal) else str(reason)
+
+
+class ErrorBody(Value):
+    """Every error body outside § 2.4: `{"error": <code>, "detail": <text>}`."""
+
+    error: ControlCode | BoundaryReason | UnsignableCode | RefusalCode
+    detail: str
+
+    @property
+    def code(self) -> str:
+        return code_of(self.error)
 
 
 class _Answer(Value):
@@ -136,8 +223,8 @@ class Refused(_Answer):
     #: None when the trigger names no seller this buyer deals with.
     seller: SellerView | None
     authentication_method: AuthMethod
-    #: The library's refusal code, or the buyer's own (buyer/refusal.py).
-    reason: str
+    #: The buyer's own reason, or the library's refusal of the seller's answer.
+    reason: BuyerReason
     detail: str
 
 

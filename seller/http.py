@@ -13,36 +13,34 @@ seller error body has one of two forms:
 
 - `{"errors": [ErrorObject, ...]}` (§ 2.4), for the offer logic's `Rejected`,
   with the status `status_for` gives;
-- `{"error": ..., "detail": ...}`, for the identity boundary (`Refused`) and
-  the control plane (`ControlError`, a validation error on a control route, or
-  a route FastAPI doesn't have).
+- an `ErrorBody` (`{"error": ..., "detail": ...}`, transport/control.py) for
+  everything else: the control plane's errors, which
+  `install_control_handlers` renders for both agents, and the identity
+  boundary's `Refused`, which this module adds.
 
-The identity boundary's refusal has the second form too: the library's
-`refusal_response` body, `error` being the library's reason or the boundary's
-own (`BoundaryReason`).
+A refusal answers the body the boundary built: for a signature, the library's
+`refusal_response` body, whose `error` is the library's reason; for the
+boundary's own reasons (`BoundaryReason`), an `ErrorBody`.
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping
-from http import HTTPStatus
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, Request
-from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from openproposal import CommitResult, ErrorObject, ErrorObjectCode, dump
-from starlette.exceptions import HTTPException
 
 from persistence.values import Provenance
 from protocol.operations import is_stored_result
 from protocol.values import JsonObject
 from transport.handlers import on_error
-from transport.operator import ControlError, render_control
+from transport.operator import install_control_handlers
 
 from .boundary import Refused
 from .caller import Caller, ResolvedCaller
-from .errors import Rejected, validation_detail
+from .errors import Rejected
 from .resources import BoundaryDep
 
 
@@ -108,30 +106,20 @@ def answer(outcome: CommitResult | JsonObject | Rejected) -> JSONResponse:
     return JSONResponse(outcome if isinstance(outcome, dict) else dump(outcome))
 
 
-# The other errors, each rendered once.
+# The boundary's refusal, rendered once.
 
 
-def refused(error: Refused) -> JSONResponse:
-    """The identity boundary's refusal."""
-    body = {"error": error.reason, "detail": error.detail}
-    return JSONResponse(body, status_code=error.status, headers=dict(error.headers))
-
-
-def invalid_control_call(error: RequestValidationError) -> JSONResponse:
-    """A body or parameter a control route refuses. No agent-facing route parses with
-    FastAPI (they take the raw body), so this is never a § 2.4 `validation` error."""
-    return render_control(ControlError(422, "validation", validation_detail(error.errors())))
-
-
-def no_route(error: HTTPException) -> JSONResponse:
-    """A path or method this seller doesn't serve."""
-    phrase = HTTPStatus(error.status_code).phrase.lower().replace(" ", "-")
-    return render_control(ControlError(error.status_code, phrase, str(error.detail)))
+def refused(error: Refused) -> Response:
+    """The identity boundary's refusal: the body it built, with its status and hint."""
+    return Response(
+        error.body,
+        status_code=error.status,
+        headers=dict(error.headers),
+        media_type="application/json",
+    )
 
 
 def install_handlers(app: FastAPI) -> None:
-    """Registers each error's renderer, once."""
+    """Registers the control plane's renderers, and the boundary's refusal, once each."""
+    install_control_handlers(app)
     on_error(app, Refused, refused)
-    on_error(app, ControlError, render_control)
-    on_error(app, RequestValidationError, invalid_control_call)
-    on_error(app, HTTPException, no_route)

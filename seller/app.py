@@ -18,6 +18,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from functools import partial
+from http import HTTPStatus
 
 import httpx
 from fastapi import APIRouter, Depends, FastAPI
@@ -101,7 +102,7 @@ async def issue_proposal(body: IssueRequest, store: OnboardingDep, issuer: Issue
     try:
         issued = issue_fresh(store, issuer, body.principal_id, datetime.now(UTC))
     except UnknownPrincipal as e:
-        raise ControlError(404, "unknown-principal", f"no principal {e}") from e
+        raise ControlError(HTTPStatus.NOT_FOUND, "unknown-principal", f"no principal {e}") from e
     return Issued(proposal_id=issued.proposal_id, principal_id=issued.buyer_principal_id)
 
 

@@ -25,11 +25,12 @@ from iab_agentic_primitives.web_bot_auth import (
 )
 from iab_agentic_primitives.web_bot_auth.httpx import verified_response
 from openproposal import CommitResult, ErrorObject, Proposal
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import ValidationError
 
 from persistence.values import KeptRequest, KeptResponse, Origin, SignedResponse, Signer
 from protocol.operations import RECEIVE, parse_errors, parse_result
 from protocol.values import JsonObject, read_json
+from transport.control import ErrorBody
 from transport.wba import fetch_of, lines_of, origin_of
 
 from .credentials import BuyerCredential
@@ -39,15 +40,6 @@ from .repository import Counterparty
 #: The client every call goes through. The rest of the buyer holds one and passes it
 #: here; only this module, buyer/credentials.py, and buyer/cfbot.py touch httpx.
 HTTPClient = httpx.AsyncClient
-
-
-class _BoundaryRefusal(BaseModel):
-    """The seller's identity-boundary refusal body (`{"error", "detail"}`)."""
-
-    model_config = ConfigDict(frozen=True, extra="ignore")
-
-    error: str
-    detail: str
 
 
 class _Unsigned(Exception):
@@ -110,7 +102,7 @@ class Rejection:
 def _refusal(error: Exception) -> Refusal:
     """What the buyer says about an answer it can't take."""
     if isinstance(error, WebBotAuthError):
-        return Refusal(error.reason, f"the seller's answer is refused: {error.reason}: {error}")
+        return Refusal(error.refusal, f"the seller's answer is refused: {error.reason}: {error}")
     if isinstance(error, httpx.HTTPError):
         return Refusal(Reason.UNREACHABLE, f"the seller didn't answer: {error}")
     return Refusal(Reason.MALFORMED_ANSWER, f"the seller's answer doesn't parse: {error}")
@@ -129,10 +121,10 @@ def _rejection(exchange: Exchange) -> Rejection | Refusal:
     try:
         return Rejection(parse_errors(body), exchange)
     except ValidationError:
-        refused = _BoundaryRefusal.model_validate_json(body)  # neither form: malformed
+        refused = ErrorBody.model_validate_json(body)  # neither form: malformed
     return Refusal(
         Reason.CREDENTIAL_REFUSED,
-        f"the seller refused the credential: {exchange.response.status} {refused.error}: "
+        f"the seller refused the credential: {exchange.response.status} {refused.code}: "
         f"{refused.detail}",
     )
 

@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from datetime import UTC, datetime
 from typing import NoReturn
 
@@ -32,6 +32,7 @@ __all__ = [
     "objects",
     "read_json",
     "strings",
+    "validation_detail",
 ]
 
 
@@ -91,6 +92,16 @@ def read_json(raw: bytes) -> JsonObject:
         detail = f"the body holds a number with no RFC 8785 form: {e}"
         raise MalformedJsonError(detail) from e
     return value
+
+
+def validation_detail(errors: Iterable[Mapping[str, object]]) -> str:
+    """One line from pydantic's error list: `loc: msg` for each error, joined by `; `."""
+    parts = []
+    for error in errors:
+        loc = error.get("loc", ())
+        path = "/".join(map(str, loc)) if isinstance(loc, tuple | list) else str(loc)
+        parts.append(f"{path}: {error.get('msg', '')}")
+    return "; ".join(parts)
 
 
 def objects(value: JsonValue) -> list[JsonObject]:

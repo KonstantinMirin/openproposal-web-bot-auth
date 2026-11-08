@@ -18,6 +18,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from functools import partial
+from http import HTTPStatus
 
 from fastapi import APIRouter, Depends, FastAPI
 from iab_agentic_primitives.web_bot_auth import KeyResolver, PublishPolicy, ServerIdentity
@@ -37,14 +38,14 @@ from transport.control import (
     ReadTrigger,
 )
 from transport.lifespan import lifespan, resolver_or_default
-from transport.operator import OperatorKey
+from transport.operator import ControlError, OperatorKey
 from transport.wba import Transport
 
 from .cfbot import Cfbot
 from .flow import Buyer
 from .http import install_handlers
 from .plan import Plan
-from .repository import BuyerRepository, Counterparty
+from .repository import BuyerRepository, Counterparty, NotPendingError
 from .resources import BuyerResources, CfbotDep, FlowDep, KeyringDep, SettingsDep
 from .seller_client import HTTPClient, SellerClient
 from .settings import BuyerSettings
@@ -68,10 +69,21 @@ def _seller(trigger: ReadTrigger, settings: BuyerSettings) -> Origin:
 
 @operator.post("/commit")
 async def operator_commit(trigger: CommitTrigger, flow: FlowDep, settings: SettingsDep) -> Outcome:
-    """Runs the whole flow: read, commit, verify the signed answer, keep the evidence."""
-    return await flow.commit(
-        _seller(trigger, settings), trigger.proposal_id, trigger.line_item_ids, trigger.credential
-    )
+    """Runs the whole flow: read, commit, verify the signed answer, keep the evidence.
+
+    A commit another trigger settled while this one waited for the seller answers 409
+    `not-pending`, and nothing of this trigger's answer is kept.
+    """
+    try:
+        return await flow.commit(
+            _seller(trigger, settings),
+            trigger.proposal_id,
+            trigger.line_item_ids,
+            trigger.credential,
+        )
+    except NotPendingError as e:
+        detail = f"commit {e} is no longer pending, so it stays settled"
+        raise ControlError(HTTPStatus.CONFLICT, "not-pending", detail) from e
 
 
 @operator.post("/read")

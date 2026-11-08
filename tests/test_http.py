@@ -1,32 +1,32 @@
-"""The seller's rendering seam: a status for every error code, and two error body forms.
+"""Both agents' HTTP seams: a status for every error code, and two error body forms only.
 
 - `status_for` is total over `ErrorObjectCode`. Each core code gets § 2.4's informative status, an
   extension code acts on `retry`, and a code that is neither can't be built.
-- Through the app: a § 2.4 rejection is `{"errors": [...]}`; a control-plane
-  failure (the operator key, an unknown principal, a control route's
-  validation error, a route the seller doesn't have) is `{"error", "detail"}`.
+- Through both apps (tests/stack.py): every route answers a request that
+  fails, for a missing operator key, a method or path it doesn't serve, a body
+  it refuses, a domain error, a refused credential, or a failure nothing
+  handles, with a body that is either a § 2.4 `{"errors": [...]}` or an
+  `ErrorBody` (`{"error", "detail"}`), and a 500 holds no traceback.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterator
-from dataclasses import dataclass
+import sqlite3
+from collections.abc import Callable, Iterator
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import get_args
 
+import httpx
 import pytest
-from fastapi.testclient import TestClient
-from iab_agentic_primitives.web_bot_auth import MemoryNonceStore, StaticKeyResolver
 from openproposal import ErrorObject, ErrorObjectCode
 from pydantic import ValidationError
 
-from persistence.values import Origin
-from seller.app import create_app
+from protocol.operations import parse_errors
 from seller.http import status_for
-from tests.stack import SELLER_OPERATOR, Origins, seller_settings
+from tests.stack import BUYER_OPERATOR, SELLER_OPERATOR, TOKEN, Stack
+from transport.control import ErrorBody
 
-SELLER = "https://seller.example.com"
-OPERATOR = SELLER_OPERATOR
 #: § 2.4, informative: the status each core code fits over HTTP.
 SPEC_STATUS = {
     "validation": 400,
@@ -65,72 +65,372 @@ def test_a_code_that_is_neither_core_nor_namespaced_cannot_be_built() -> None:
         _error("bogus")
 
 
+# Every failing answer, from every route of both apps
+
+
 @pytest.fixture
-def seller(tmp_path: Path) -> Iterator[TestClient]:
-    origins = Origins(seller=Origin.parse(SELLER), buyer=Origin.parse("https://buyer.example.com"))
-    settings = seller_settings(tmp_path, origins=origins)
-    app = create_app(settings, nonces=MemoryNonceStore(), resolver=StaticKeyResolver({}))
-    with TestClient(app, base_url=SELLER) as client:
-        yield client
+def stack(tmp_path: Path) -> Iterator[Stack]:
+    with Stack(tmp_path, faults=True) as running:
+        yield running
+
+
+def _drop(table: str, database: Callable[[Stack], Path]) -> Callable[[Stack], None]:
+    """Injects a failure nothing handles: a table the agent reads is gone."""
+
+    def drop(stack: Stack) -> None:
+        db = sqlite3.connect(database(stack))
+        try:
+            db.execute(f"DROP TABLE {table}")
+            db.commit()
+        finally:
+            db.close()
+
+    return drop
+
+
+def _seller_db(stack: Stack) -> Path:
+    return stack.seller_dir / "seller.db"
+
+
+def _cfbot_down(stack: Stack) -> None:
+    def down(request: httpx.Request) -> httpx.Response:
+        refused = "connection refused"
+        raise httpx.ConnectError(refused, request=request)
+
+    stack.cfbot = down
+
+
+def _cfbot_breaks(stack: Stack) -> None:
+    """Injects a failure nothing handles: the call to cfbot raises a non-HTTP error."""
+
+    def broken(_request: httpx.Request) -> httpx.Response:
+        message = "the transport broke"
+        raise RuntimeError(message)
+
+    stack.cfbot = broken
+
+
+def _settled_meanwhile(stack: Stack) -> None:
+    """Another trigger settles the commit while this one waits for the seller's answer."""
+
+    def answer(request: httpx.Request) -> httpx.Response | None:
+        if request.method != "POST":
+            return None
+        db = sqlite3.connect(stack.buyer_dir / "buyer.db")
+        try:
+            db.execute("UPDATE commits SET state = 'rejected'")
+            db.commit()
+        finally:
+            db.close()
+        return stack.forward(request)
+
+    stack.answer = answer
 
 
 @dataclass(frozen=True)
-class ControlCall:
+class Failing:
+    """A request one app's route fails, and the status and code it answers."""
+
     name: str
+    app: str
     method: str
     path: str
-    body: dict[str, str] | None
-    headers: dict[str, str]
     status: int
-    error: str
+    code: str
+    body: dict[str, object] | None = None
+    headers: dict[str, str] = field(default_factory=dict)
+    #: Changes the stack before the request: an injected failure.
+    before: Callable[[Stack], None] | None = None
 
 
-CONTROL_CALLS = [
-    ControlCall(
-        "no operator key",
+COMMIT: dict[str, object] = {
+    "proposal_id": "demo-wba-1",
+    "line_item_ids": ["business-daily-display"],
+}
+SIGNATURE_GARBAGE = {"Signature-Input": "garbage(", "Signature": "sig1=:AAAA:"}
+
+FAILING = [
+    # The seller's agent-facing routes
+    Failing("proposal not issued", "seller", "GET", "/proposals/demo-wba-1", 404, "not_found"),
+    Failing(
+        "proposal wrong method", "seller", "PUT", "/proposals/demo-wba-1", 405, "method-not-allowed"
+    ),
+    Failing(
+        "proposal bad token",
+        "seller",
+        "GET",
+        "/proposals/demo-wba-1",
+        401,
+        "invalid-token",
+        headers={"Authorization": "Bearer wrong"},
+    ),
+    Failing(
+        "proposal store fails",
+        "seller",
+        "GET",
+        "/proposals/demo-wba-1",
+        500,
+        "internal",
+        headers={"Authorization": f"Bearer {TOKEN}"},
+        before=_drop("proposals", _seller_db),
+    ),
+    Failing(
+        "commit not a Commit",
+        "seller",
+        "POST",
+        "/proposals/demo-wba-1/commit",
+        400,
+        "validation",
+        body={},
+    ),
+    Failing(
+        "commit bad signature",
+        "seller",
+        "POST",
+        "/proposals/demo-wba-1/commit",
+        400,
+        "parse",
+        body={},
+        headers=SIGNATURE_GARBAGE,
+    ),
+    Failing(
+        "commit wrong method",
+        "seller",
+        "GET",
+        "/proposals/demo-wba-1/commit",
+        405,
+        "method-not-allowed",
+    ),
+    Failing(
+        "whoami bad authorization",
+        "seller",
+        "GET",
+        "/whoami",
+        401,
+        "invalid-authorization",
+        headers={"Authorization": "Basic x"},
+    ),
+    Failing("whoami wrong method", "seller", "PUT", "/whoami", 405, "method-not-allowed"),
+    Failing("seller health wrong method", "seller", "POST", "/health", 405, "method-not-allowed"),
+    Failing("seller unknown path", "seller", "GET", "/no-such-route", 404, "not-found"),
+    # The seller's controls
+    Failing(
+        "issue no key",
+        "seller",
         "POST",
         "/operator/issue",
-        {"principal_id": "buyer-wba"},
-        {},
+        403,
+        "operator-key",
+        body={"principal_id": "buyer-wba"},
+    ),
+    Failing(
+        "issue wrong method",
+        "seller",
+        "GET",
+        "/operator/issue",
+        405,
+        "method-not-allowed",
+        headers=SELLER_OPERATOR,
+    ),
+    Failing(
+        "issue invalid body",
+        "seller",
+        "POST",
+        "/operator/issue",
+        422,
+        "validation",
+        body={"principal": "buyer-wba"},
+        headers=SELLER_OPERATOR,
+    ),
+    Failing(
+        "issue unknown principal",
+        "seller",
+        "POST",
+        "/operator/issue",
+        404,
+        "unknown-principal",
+        body={"principal_id": "nobody"},
+        headers=SELLER_OPERATOR,
+    ),
+    Failing(
+        "issue store fails",
+        "seller",
+        "POST",
+        "/operator/issue",
+        500,
+        "internal",
+        body={"principal_id": "buyer-wba"},
+        headers=SELLER_OPERATOR,
+        before=_drop("proposals", _seller_db),
+    ),
+    Failing(
+        "seller unknown control",
+        "seller",
+        "GET",
+        "/operator/nope",
+        404,
+        "not-found",
+        headers=SELLER_OPERATOR,
+    ),
+    Failing(
+        "fault invalid body",
+        "seller",
+        "PUT",
+        "/test/fault",
+        422,
+        "validation",
+        body={"mode": "bogus"},
+    ),
+    Failing("fault wrong method", "seller", "GET", "/test/fault", 405, "method-not-allowed"),
+    # The buyer's routes
+    Failing("buyer health wrong method", "buyer", "POST", "/health", 405, "method-not-allowed"),
+    Failing("buyer unknown path", "buyer", "GET", "/no-such-route", 404, "not-found"),
+    Failing(
+        "buyer unknown control",
+        "buyer",
+        "GET",
+        "/operator/nope",
+        404,
+        "not-found",
+        headers=BUYER_OPERATOR,
+    ),
+    # The buyer's controls
+    Failing(
+        "read no key",
+        "buyer",
+        "POST",
+        "/operator/read",
+        403,
+        "operator-key",
+        body={"proposal_id": "demo-wba-1"},
+    ),
+    Failing(
+        "read wrong method",
+        "buyer",
+        "GET",
+        "/operator/read",
+        405,
+        "method-not-allowed",
+        headers=BUYER_OPERATOR,
+    ),
+    Failing(
+        "read invalid body",
+        "buyer",
+        "POST",
+        "/operator/read",
+        422,
+        "validation",
+        body={},
+        headers=BUYER_OPERATOR,
+    ),
+    Failing(
+        "commit trigger no key",
+        "buyer",
+        "POST",
+        "/operator/commit",
+        403,
+        "operator-key",
+        body=COMMIT,
+    ),
+    Failing(
+        "commit trigger invalid body",
+        "buyer",
+        "POST",
+        "/operator/commit",
+        422,
+        "validation",
+        body={"proposal_id": "x"},
+        headers=BUYER_OPERATOR,
+    ),
+    Failing(
+        "commit trigger settled meanwhile",
+        "buyer",
+        "POST",
+        "/operator/commit",
+        409,
+        "not-pending",
+        body=COMMIT,
+        headers=BUYER_OPERATOR,
+        before=_settled_meanwhile,
+    ),
+    Failing("keys no key", "buyer", "GET", "/operator/keys", 403, "operator-key"),
+    Failing(
+        "keys wrong method",
+        "buyer",
+        "PUT",
+        "/operator/keys",
+        405,
+        "method-not-allowed",
+        headers=BUYER_OPERATOR,
+    ),
+    Failing("publish no key", "buyer", "POST", "/operator/keys", 403, "operator-key"),
+    Failing("activate no key", "buyer", "POST", "/operator/keys/kid/activate", 403, "operator-key"),
+    Failing(
+        "activate out of order",
+        "buyer",
+        "POST",
+        "/operator/keys/no-such-kid/activate",
+        409,
+        "rotation",
+        headers=BUYER_OPERATOR,
+    ),
+    Failing("retire no key", "buyer", "DELETE", "/operator/keys/kid", 403, "operator-key"),
+    Failing(
+        "retire out of order",
+        "buyer",
+        "DELETE",
+        "/operator/keys/no-such-kid",
+        409,
+        "rotation",
+        headers=BUYER_OPERATOR,
+    ),
+    Failing(
+        "cloudflare-check no key",
+        "buyer",
+        "POST",
+        "/operator/cloudflare-check",
         403,
         "operator-key",
     ),
-    ControlCall(
-        "unknown principal",
+    Failing(
+        "cloudflare-check cfbot down",
+        "buyer",
         "POST",
-        "/operator/issue",
-        {"principal_id": "nobody"},
-        OPERATOR,
-        404,
-        "unknown-principal",
+        "/operator/cloudflare-check",
+        502,
+        "cfbot-unreachable",
+        headers=BUYER_OPERATOR,
+        before=_cfbot_down,
     ),
-    ControlCall(
-        "a control route's bad body",
+    Failing(
+        "cloudflare-check breaks",
+        "buyer",
         "POST",
-        "/operator/issue",
-        {"principal": "buyer-wba"},
-        OPERATOR,
-        422,
-        "validation",
+        "/operator/cloudflare-check",
+        500,
+        "internal",
+        headers=BUYER_OPERATOR,
+        before=_cfbot_breaks,
     ),
-    ControlCall("no route", "GET", "/no-such-route", None, {}, 404, "not-found"),
-    ControlCall("no method", "PUT", "/whoami", None, {}, 405, "method-not-allowed"),
 ]
 
 
-@pytest.mark.parametrize("call", CONTROL_CALLS, ids=lambda call: call.name)
-def test_a_control_plane_failure_is_error_and_detail(seller: TestClient, call: ControlCall) -> None:
-    response = seller.request(call.method, call.path, json=call.body, headers=call.headers)
-    assert response.status_code == call.status
-    assert response.json().keys() == {"error", "detail"}
-    assert response.json()["error"] == call.error
+def _code(response: httpx.Response) -> str:
+    """The code of a failing answer, read as one of the two forms; neither fails the test."""
+    try:
+        return ErrorBody.model_validate_json(response.content).code
+    except ValidationError:
+        (error,) = parse_errors(response.content)
+        return error.code
 
 
-def test_an_offer_rejection_is_errors(seller: TestClient) -> None:
-    response = seller.get("/proposals/demo-wba-1")  # no credential: not issued to this caller
-    assert response.status_code == 404
-    assert response.json() == {
-        "errors": [
-            {"code": "not_found", "detail": response.json()["errors"][0]["detail"], "retry": "none"}
-        ]
-    }
+@pytest.mark.parametrize("row", FAILING, ids=lambda row: row.name)
+def test_every_failing_answer_is_an_error_body_or_the_errors_envelope(
+    stack: Stack, row: Failing
+) -> None:
+    if row.before is not None:
+        row.before(stack)
+    app = stack.seller if row.app == "seller" else stack.buyer
+    response = app.request(row.method, row.path, json=row.body, headers=row.headers)
+    assert (response.status_code, _code(response)) == (row.status, row.code), response.text
+    assert "Traceback" not in response.text

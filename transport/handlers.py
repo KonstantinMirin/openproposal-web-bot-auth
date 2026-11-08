@@ -5,16 +5,14 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import Response
 
 
-def on_error[E: Exception](
-    app: FastAPI, kind: type[E], render: Callable[[E], JSONResponse]
-) -> None:
+def on_error[E: Exception](app: FastAPI, kind: type[E], render: Callable[[E], Response]) -> None:
     """Renders every `kind` the app raises with `render`, in an async handler, so it runs on
     the event loop's thread."""
 
-    async def handler(_request: Request, error: Exception) -> JSONResponse:
+    async def handler(_request: Request, error: Exception) -> Response:
         if not isinstance(error, kind):  # Starlette dispatches by type; this never happens
             raise error
         return render(error)

@@ -182,6 +182,12 @@ const json = (res, status, value) => {
   res.end(JSON.stringify(value));
 };
 
+/**
+ * An error answer in the control plane's form (transport/control.py ErrorBody):
+ * `error` is one of its codes ('operator-key', 'not-found', 'internal').
+ */
+const failed = (res, status, error, detail) => json(res, status, { error, detail });
+
 function exampleCommit(lineItemId) {
   return JSON.stringify({
     entry: { role: 'commitment', version: 1, record_digest: `sha256:${'0'.repeat(64)}`, line_item_ids: [lineItemId],
@@ -218,7 +224,7 @@ function route(req, pathname) {
   const name = `${req.method} ${pathname}`;
   if (routes[name]) return routes[name];
   if (!pathname.startsWith('/run/')) return undefined;
-  if (!isOperator(req)) return (_req, res) => json(res, 403, { error: 'operator key required' });
+  if (!isOperator(req)) return (_req, res) => failed(res, 403, 'operator-key', 'operator key required');
   return operatorRoutes[name];
 }
 
@@ -227,10 +233,12 @@ createServer(async (req, res) => {
   for await (const chunk of req) chunks.push(chunk);
   const body = Buffer.concat(chunks).toString('utf8');
   const { pathname, searchParams } = new URL(req.url, ORIGIN);
-  const handler = route(req, pathname) ?? ((_req, out) => json(out, 404, { error: 'not found' }));
+  const handler = route(req, pathname) ?? ((_req, out) => failed(out, 404, 'not-found', `no route ${req.method} ${pathname}`));
   try {
     await handler(req, res, { body, proposal: searchParams.get('proposal_id') ?? 'demo-wba-1' });
   } catch (e) {
-    json(res, 500, { error: String(e?.stack ?? e) });
+    // The stack goes to the log, never into the body.
+    console.error(e?.stack ?? e);
+    if (!res.headersSent) failed(res, 500, 'internal', 'cfbot failed to answer; its log holds why');
   }
 }).listen(8000, () => console.log(`cfbot ${signer.keyid} as ${ORIGIN}`));

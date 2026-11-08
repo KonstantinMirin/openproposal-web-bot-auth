@@ -8,6 +8,8 @@ signs with the buyer's signing identity, so a rotation reaches cfbot's checks to
 
 from __future__ import annotations
 
+from http import HTTPStatus
+
 import httpx
 from iab_agentic_primitives.web_bot_auth.httpx import WebBotAuth
 from pydantic import TypeAdapter, ValidationError
@@ -16,6 +18,7 @@ from persistence.values import Origin
 from protocol.values import JsonValue
 from shared.keyring import SigningIdentity
 from transport.control import CloudflareCheck
+from transport.operator import ControlError
 
 _VERDICT: TypeAdapter[JsonValue] = TypeAdapter(JsonValue)
 
@@ -25,13 +28,18 @@ class Cfbot:
         self._http, self._url, self._signing = http, f"{origin}/verify", signing
 
     async def verify(self, body: bytes) -> CloudflareCheck:
-        """Signs `body` to cfbot's `/verify` and returns its status and verdict."""
-        response = await self._http.post(
-            self._url,
-            content=body,
-            headers={"Content-Type": "application/json"},
-            auth=WebBotAuth(self._signing.signer()),
-        )
+        """Signs `body` to cfbot's `/verify` and returns its status and verdict. A cfbot that
+        doesn't answer is a 502 `cfbot-unreachable`."""
+        try:
+            response = await self._http.post(
+                self._url,
+                content=body,
+                headers={"Content-Type": "application/json"},
+                auth=WebBotAuth(self._signing.signer()),
+            )
+        except httpx.HTTPError as e:
+            detail = f"cfbot didn't answer: {e}"
+            raise ControlError(HTTPStatus.BAD_GATEWAY, "cfbot-unreachable", detail) from e
         try:
             verdict = _VERDICT.validate_json(response.content)
         except ValidationError:

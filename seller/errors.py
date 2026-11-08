@@ -7,7 +7,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 
 from openproposal import ErrorObject, ErrorObjectCode, ErrorObjectRetry
@@ -43,13 +42,3 @@ class Rejected:
 
 class UnknownPrincipal(LookupError):
     """No principal has this id in the seller's records."""
-
-
-def validation_detail(errors: Iterable[Mapping[str, object]]) -> str:
-    """One line from pydantic's error list: `loc: msg` for each error, joined by `; `."""
-    parts = []
-    for error in errors:
-        loc = error.get("loc", ())
-        path = "/".join(map(str, loc)) if isinstance(loc, tuple | list) else str(loc)
-        parts.append(f"{path}: {error.get('msg', '')}")
-    return "; ".join(parts)

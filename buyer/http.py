@@ -1,34 +1,29 @@
-"""How the buyer renders a failing control call: `{"error": ..., "detail": ...}`, each once."""
+"""The buyer's HTTP seam: the control plane's renderers, and the one error the buyer adds.
+
+Every failing call answers an `ErrorBody` (transport/control.py). The control
+plane's renderers are both agents' (`install_control_handlers`); the buyer adds
+only `RotationError`, a rotation step taken out of order or too early.
+"""
 
 from __future__ import annotations
+
+from http import HTTPStatus
 
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
 from shared.keyring import RotationError
+from transport.control import ErrorBody
 from transport.handlers import on_error
-from transport.operator import ControlError, render_control
-
-from .repository import NotPendingError
+from transport.operator import error_response, install_control_handlers
 
 
 def rotation_refused(error: RotationError) -> JSONResponse:
     """A rotation step taken out of order, or too early: 409 (shared/keyring.py)."""
-    return render_control(ControlError(409, "rotation", str(error)))
-
-
-def not_pending(error: NotPendingError) -> JSONResponse:
-    """The commit was settled while this trigger waited for the seller: 409. Nothing of
-    this trigger's answer is kept."""
-    return render_control(
-        ControlError(
-            409, "not-pending", f"commit {error} is no longer pending, so it stays settled"
-        )
-    )
+    return error_response(HTTPStatus.CONFLICT, ErrorBody(error="rotation", detail=str(error)))
 
 
 def install_handlers(app: FastAPI) -> None:
-    """Registers each control error's renderer, once."""
-    on_error(app, ControlError, render_control)
+    """Registers the control plane's renderers, and the rotation's, once each."""
+    install_control_handlers(app)
     on_error(app, RotationError, rotation_refused)
-    on_error(app, NotPendingError, not_pending)

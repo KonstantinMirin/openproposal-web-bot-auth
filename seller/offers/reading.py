@@ -7,8 +7,8 @@ from pydantic import ValidationError
 
 from protocol.operations import ProtocolViolation
 from protocol.operations import parse_commit as parse_commit_body
-from protocol.values import JsonObject, JsonValue, MalformedJsonError
-from seller.errors import Rejected, validation_detail
+from protocol.values import JsonObject, JsonValue, MalformedJsonError, validation_detail
+from seller.errors import Rejected
 from seller.ports import OfferRepository, StoredProposal
 
 

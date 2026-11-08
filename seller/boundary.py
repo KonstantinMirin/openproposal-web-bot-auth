@@ -43,6 +43,7 @@ from starlette.requests import Request
 
 from persistence.values import KeptRequest, Origin, Provenance, SignedRequest, Signer
 from protocol.attribution import attributes
+from transport.control import BoundaryReason, ErrorBody
 from transport.wba import fetch_of, is_signed, origin_of, request_of, to_library
 
 from .caller import (
@@ -54,31 +55,35 @@ from .caller import (
 )
 from .ports import Principal
 
-#: The boundary's own refusals, beside the library's `Refusal` for a signature.
-BoundaryReason = Literal["invalid-authorization", "two-credentials", "invalid-token"]
 #: The statuses a refusal answers with: the library's, and 401 for a bearer token.
 RefusalStatus = Literal[400, 401, 403, 429, 503]
 
 
 class Refused(Exception):
-    """The boundary refused the credential. The handler never runs."""
+    """The boundary refused the credential. The handler never runs.
+
+    `body` is what the refusal answers with: for a signature, the body the
+    library's `refusal_response` renders; for the boundary's own reasons, the
+    same `ErrorBody` form (transport/control.py).
+    """
 
     def __init__(
         self,
         status: RefusalStatus,
-        error: Refusal | BoundaryReason,
+        reason: Refusal | BoundaryReason,
         detail: str,
         *,
         headers: Mapping[str, str] | None = None,
+        body: bytes | None = None,
     ) -> None:
         super().__init__(detail)
-        self.status, self.error, self.detail = status, error, detail
+        self.status, self.reason, self.detail = status, reason, detail
         self.headers: Mapping[str, str] = headers or {}
-
-    @property
-    def reason(self) -> str:
-        """The machine-readable reason: the library's code, or the boundary's own."""
-        return self.error.code if isinstance(self.error, Refusal) else self.error
+        self.body = (
+            ErrorBody(error=reason, detail=detail).model_dump_json().encode()
+            if body is None
+            else body
+        )
 
 
 class PrincipalDirectory(Protocol):
@@ -128,9 +133,9 @@ def _bearer(value: str | None) -> str | None:
 def _signature_refused(error: WebBotAuthError, *, has_body: bool) -> Refused:
     """The library's refusal of a signature: its status, and the hint it presents with it
     (`Accept-Signature` on 403 and 429, `Retry-After` on 503)."""
-    _status, lines, _body = refusal_response(error, has_body=has_body)
+    _status, lines, body = refusal_response(error, has_body=has_body)
     hint = {name: value for name, value in lines if name.lower() != "content-type"}
-    return Refused(error.status, error.refusal, str(error), headers=hint)
+    return Refused(error.status, error.refusal, str(error), headers=hint, body=body)
 
 
 class IdentityBoundary:
