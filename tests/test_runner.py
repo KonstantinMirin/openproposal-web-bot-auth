@@ -11,13 +11,21 @@ from __future__ import annotations
 import asyncio
 import json
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 
 import httpx
 import jsonschema
 import pytest
-from iab_agentic_primitives.web_bot_auth import Origin
+from iab_agentic_primitives.web_bot_auth import (
+    HTTPRequest,
+    HTTPResponse,
+    Origin,
+    RequestSigner,
+    ResponseSigner,
+)
 from pydantic import SecretStr
 
 from runner.main import main, publish, run_once
@@ -31,7 +39,7 @@ from runner.report import (
     schema,
 )
 from runner.settings import RunnerSettings
-from tests.stack import BUYER, CFBOT, OPERATOR, SELLER, TOKEN, Stack
+from tests.stack import BUYER, CFBOT, OPERATOR, RESELLER, SELLER, TOKEN, Stack
 
 SCHEMA_FILE = Path(__file__).resolve().parent.parent / "site" / "report.schema.json"
 SCHEMA = json.loads(SCHEMA_FILE.read_text())
@@ -134,48 +142,285 @@ def test_a_failed_commit_fails_its_step_and_skips_what_needs_it(
     jsonschema.validate(json.loads(report.model_dump_json()), SCHEMA)
 
 
-def _corrupt_after_commit(stack: Stack, path: Path, statement: str) -> httpx.MockTransport:
-    """The runner's network, which changes a party's records once the buyer's commit answers."""
+#: What a run's network does to an answer the runner gets: here, the answer unchanged, or
+#: another one, after changing what the parties kept.
+After = Callable[[httpx.Request, httpx.Response], httpx.Response]
+#: A change to the stack, made before the run, that returns what the network does after.
+Corruption = Callable[[Stack], After]
+
+
+@contextmanager
+def _writable(path: Path) -> Iterator[sqlite3.Connection]:
+    """A party's database, opened to tamper with it, committed on leaving."""
+    db = sqlite3.connect(path)
+    try:
+        yield db
+        db.commit()
+    finally:
+        db.close()
+
+
+def _db(stack: Stack, party: str) -> Path:
+    return stack.buyer_dir / "buyer.db" if party == "buyer" else stack.seller_dir / "seller.db"
+
+
+def _after_commit(*changes: Callable[[Stack], None]) -> Corruption:
+    """The parties' records, changed once each of the buyer's commits answers."""
+
+    def corrupt(stack: Stack) -> After:
+        def after(request: httpx.Request, response: httpx.Response) -> httpx.Response:
+            if request.url.path == "/operator/commit":
+                for change in changes:
+                    change(stack)
+            return response
+
+        return after
+
+    return corrupt
+
+
+def _sql(party: str, statement: str, *params: object) -> Callable[[Stack], None]:
+    def change(stack: Stack) -> None:
+        with _writable(_db(stack, party)) as db:
+            db.execute(statement, params)
+
+    return change
+
+
+def _request_signed_without_its_body(stack: Stack) -> None:
+    """Tamper: the seller's kept request for the signed commit becomes one the buyer signed,
+    with its own key, but without a body, so the signature covers no body."""
+    sent = HTTPRequest("GET", f"{SELLER}/proposals/demo-wba-1", [], b"")
+    signed = RequestSigner(stack.buyer_keys.active(), BUYER).sign(sent)
+    headers = json.dumps([list(line) for line in signed.headers])
+    with _writable(_db(stack, "seller")) as db:
+        db.execute(
+            "UPDATE signed_requests SET method = 'GET', url = ?, headers = ?, body = ?"
+            " WHERE id = (SELECT evidence_id FROM assent"
+            " WHERE role = 'commitment' AND authentication_method = 'web_bot_auth')",
+            (sent.url, headers, b""),
+        )
+
+
+def _answer_bound_to_nothing(stack: Stack) -> None:
+    """Tamper: the buyer's kept answer to the signed commit becomes one the seller signed, with
+    its own key, for the request with its signature taken off, so it is bound to nothing."""
+    with _writable(_db(stack, "buyer")) as db:
+        db.row_factory = sqlite3.Row
+        kept = db.execute(
+            "SELECT r.id, r.status, r.body, q.id AS request_id, q.method, q.url, q.headers,"
+            " q.body AS request_body FROM signed_responses r"
+            " JOIN signed_requests q ON q.id = r.request_id WHERE q.keyid IS NOT NULL"
+        ).fetchone()
+        unsigned = [
+            (name, value)
+            for name, value in json.loads(kept["headers"])
+            if not name.lower().startswith("signature")
+        ]
+        request = HTTPRequest(kept["method"], kept["url"], unsigned, kept["request_body"])
+        answer = HTTPResponse(
+            kept["status"], [("content-type", "application/json")], kept["body"], request
+        )
+        signed = ResponseSigner(stack.seller_key, SELLER).sign(answer)
+        db.execute(
+            "UPDATE signed_requests SET headers = ? WHERE id = ?",
+            (json.dumps([list(line) for line in unsigned]), kept["request_id"]),
+        )
+        db.execute(
+            "UPDATE signed_responses SET headers = ? WHERE id = ?",
+            (json.dumps([list(line) for line in signed.headers]), kept["id"]),
+        )
+
+
+def _answered(path: str, status: int) -> Corruption:
+    """The network answers every call to `path` with `status`, whatever the agent said."""
+
+    def corrupt(_stack: Stack) -> After:
+        def after(request: httpx.Request, response: httpx.Response) -> httpx.Response:
+            return httpx.Response(status, text="down") if request.url.path == path else response
+
+        return after
+
+    return corrupt
+
+
+def _signed_commit_reported_as_bearer(_stack: Stack) -> After:
+    """The network rewrites the buyer's outcome of a signed commit to name the bearer token."""
+
+    def after(request: httpx.Request, response: httpx.Response) -> httpx.Response:
+        if request.url.path != "/operator/commit":
+            return response
+        outcome = json.loads(response.read())
+        if outcome.get("authentication_method") == "web_bot_auth":
+            outcome["authentication_method"] = "bearer"
+        return httpx.Response(response.status_code, json=outcome)
+
+    return after
+
+
+def _cfbot_sees_the_reseller(stack: Stack) -> After:
+    """cfbot verifies the buyer's signature as another origin's."""
+    stack.cfbot = lambda _: httpx.Response(
+        200, json={"ok": True, "identity": RESELLER, "verifier": "web-bot-auth (test)"}
+    )
+    return lambda _request, response: response
+
+
+@dataclass(frozen=True)
+class Corrupted:
+    """A run whose network or records don't add up, and the check that catches it."""
+
+    name: str
+    corrupt: Corruption
+    step: str
+    detail: str
+
+
+CORRUPTED = [
+    Corrupted(
+        "the seller fails to issue",
+        _answered("/operator/issue", 500),
+        "signature-issue",
+        "issue returned 500: down",
+    ),
+    Corrupted(
+        "the buyer fails to commit",
+        _answered("/operator/commit", 500),
+        "signature-commit",
+        "commit returned 500: down",
+    ),
+    Corrupted(
+        "the buyer used another credential",
+        _signed_commit_reported_as_bearer,
+        "signature-commit",
+        "the buyer used another credential",
+    ),
+    Corrupted(
+        "the seller holds no commitment",
+        _after_commit(
+            _sql("seller", "DELETE FROM assent WHERE role = 'commitment'"),
+        ),
+        "signature-seller",
+        "the seller holds no commitment entry",
+    ),
+    Corrupted(
+        "the seller resolved another principal",
+        _after_commit(
+            _sql(
+                "seller",
+                "UPDATE assent SET principal_id = 'buyer-bearer'"
+                " WHERE role = 'commitment' AND authentication_method = 'web_bot_auth'",
+            )
+        ),
+        "signature-seller",
+        "the seller resolved buyer-bearer, not buyer-wba",
+    ),
+    Corrupted(
+        "the seller recorded another method",
+        _after_commit(
+            _sql(
+                "seller",
+                "UPDATE assent SET authentication_method = 'bearer'"
+                " WHERE role = 'commitment' AND authentication_method = 'web_bot_auth'",
+            )
+        ),
+        "signature-seller",
+        "the seller recorded bearer",
+    ),
+    Corrupted(
+        "a bearer entry with evidence",
+        _after_commit(
+            _sql(
+                "seller", "UPDATE assent SET evidence_id = 1 WHERE authentication_method = 'bearer'"
+            )
+        ),
+        "bearer-seller",
+        "a bearer commit has no signature evidence",
+    ),
+    Corrupted(
+        "a signed entry without its request",
+        _after_commit(
+            _sql(
+                "seller",
+                "UPDATE assent SET evidence_id = NULL WHERE authentication_method = 'web_bot_auth'",
+            )
+        ),
+        "signature-seller",
+        "a signed commit keeps its request",
+    ),
+    Corrupted(
+        "the seller's evidence from another origin",
+        _after_commit(_sql("seller", "UPDATE signed_requests SET origin = ?", RESELLER)),
+        "signature-seller",
+        f"evidence from {RESELLER}",
+    ),
+    Corrupted(
+        "the buyer's evidence from another origin",
+        _after_commit(_sql("buyer", "UPDATE signed_responses SET origin = ?", RESELLER)),
+        "signature-buyer",
+        f"answer from {RESELLER}",
+    ),
+    Corrupted(
+        "no agreed record",
+        _after_commit(_sql("seller", "DELETE FROM agreed_records")),
+        "signature-digest",
+        "the seller holds 0 agreed records",
+    ),
+    Corrupted(
+        "no buyer commit",
+        _after_commit(_sql("buyer", "DELETE FROM commits")),
+        "signature-digest",
+        "the buyer holds no such commit",
+    ),
+    Corrupted(
+        "the digest inputs differ",
+        _after_commit(_sql("buyer", "UPDATE commits SET digest_input = CAST('{}' AS BLOB)")),
+        "signature-digest",
+        "the parties' digest inputs differ",
+    ),
+    Corrupted(
+        "the same digest input that isn't the agreed record's",
+        _after_commit(
+            _sql("buyer", "UPDATE commits SET digest_input = CAST('{}' AS BLOB)"),
+            _sql("seller", "UPDATE agreed_records SET digest_input = CAST('{}' AS BLOB)"),
+        ),
+        "signature-digest",
+        "record_digest doesn't recompute from the digest input",
+    ),
+    Corrupted(
+        "the seller's evidence covers no body",
+        _after_commit(_request_signed_without_its_body),
+        "signature-reverify",
+        "the seller's evidence doesn't verify again",
+    ),
+    Corrupted(
+        "the buyer's evidence is bound to nothing",
+        _after_commit(_answer_bound_to_nothing),
+        "signature-reverify",
+        "the buyer's evidence doesn't verify again",
+    ),
+    Corrupted(
+        "cfbot sees another origin",
+        _cfbot_sees_the_reseller,
+        "cloudflare",
+        f"cfbot saw {RESELLER}",
+    ),
+]
+
+
+@pytest.mark.parametrize("row", CORRUPTED, ids=lambda row: row.name)
+def test_a_run_fails_when_the_parties_records_dont_add_up(
+    stack: Stack, tmp_path: Path, row: Corrupted
+) -> None:
+    after = row.corrupt(stack)
 
     async def route(request: httpx.Request) -> httpx.Response:
-        response = await stack.runner_route(request)
-        if request.url.path == "/operator/commit":
-            db = sqlite3.connect(path)
-            try:
-                db.execute(statement)
-                db.commit()
-            finally:
-                db.close()
-        return response
+        return after(request, await stack.runner_route(request))
 
-    return httpx.MockTransport(route)
-
-
-@pytest.mark.parametrize(
-    ("corruption", "step", "detail"),
-    [
-        (
-            ("buyer", "UPDATE commits SET digest_input = CAST('{}' AS BLOB)"),
-            "signature-digest",
-            "the parties' digest inputs differ",
-        ),
-        (
-            ("seller", "UPDATE assent SET evidence_id = 1 WHERE authentication_method = 'bearer'"),
-            "bearer-seller",
-            "a bearer commit has no signature evidence",
-        ),
-    ],
-    ids=["digest-inputs-differ", "bearer-entry-with-evidence"],
-)
-def test_a_run_fails_when_the_parties_records_dont_add_up(
-    stack: Stack, tmp_path: Path, corruption: tuple[str, str], step: str, detail: str
-) -> None:
-    party, statement = corruption
-    db = stack.buyer_dir / "buyer.db" if party == "buyer" else stack.seller_dir / "seller.db"
-    transport = _corrupt_after_commit(stack, db, statement)
+    transport = httpx.MockTransport(route)
     report = asyncio.run(run_once(_settings(stack, tmp_path / "out"), transport=transport))
     failed = {s.id: s.detail for s in report.steps if not s.ok}
-    assert failed.get(step) == f"CheckFailed: {detail}", failed
+    assert failed.get(row.step) == f"CheckFailed: {row.detail}", failed
 
 
 def test_a_cfbot_refusal_fails_the_cloudflare_step(stack: Stack, tmp_path: Path) -> None:

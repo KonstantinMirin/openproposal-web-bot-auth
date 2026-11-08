@@ -147,14 +147,6 @@ def test_check_result_refuses(answer: Callable[[Commit], CommitResult], rule: Ru
     assert refused.value.rule is rule
 
 
-def test_check_result_refuses_a_digest_that_does_not_recompute() -> None:
-    commit, data = _composed("business-daily-display")
-    answer = _answer(commit, acceptance_for(commit.entry, NOW))
-    with pytest.raises(ResultMismatch) as refused:
-        check_result(commit, answer, data + b" ")
-    assert refused.value.rule is Rule.DIGEST
-
-
 def test_compose_and_check_leave_their_inputs_unchanged() -> None:
     raw, writes = _raw(), _writes("business-daily-display")
     proposal = Proposal.model_validate(raw)

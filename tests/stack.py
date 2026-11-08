@@ -4,14 +4,20 @@ Each app is built by its own `create_app`, with the library's real signer and
 verifiers. The buyer's one client reaches the seller app through `Stack.route`,
 an in-process transport, so a test drives the buyer's operator routes and
 reads what each party kept. A test can stand in for the seller (`answer`), for
-example to send a correctly signed answer that is malformed, and the transport
-records every request the buyer sent.
+example to send a correctly signed answer that is malformed, or one signed by
+the reseller, a third party with its own key and origin.
+
+The transport records the exact header lines on both sides: every request the
+buyer sent and every answer it got (`requests`, `responses`), and each
+request's lines as the seller app received them (`received`).
 
 Each party finds the other's keys as in production: the library's
-`DirectoryResolver` fetches the counterparty's signed directory, which the
-counterparty app serves, and each party keeps the directory it verified
-against. Calls between the apps are forwarded on a worker thread, so an app
-that waits on the other never blocks the other's event loop.
+`DirectoryResolver` fetches the signed directory of the origin a signature
+names, and the stack routes each directory fetch by its host, to the app that
+serves it or to the stand-in that owns it (cfbot, the reseller). Each party
+keeps the directory it verified against. Calls between the apps are forwarded
+on a worker thread, so an app that waits on the other never blocks the other's
+event loop.
 
 `runner_transport` is the network as the live runner sees it: the agents'
 controls at `http://seller:8000` and `http://buyer:8000`, their directories, and
@@ -24,6 +30,7 @@ import sqlite3
 import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from types import TracebackType
 
@@ -42,6 +49,7 @@ from iab_agentic_primitives.web_bot_auth import (
 )
 from iab_agentic_primitives.web_bot_auth.asgi import directory_response
 from pydantic import SecretStr
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from buyer.app import create_app as create_buyer
 from buyer.settings import BuyerSettings
@@ -53,6 +61,8 @@ from transport.wba import directory_resolver, http_client, tls_context
 SELLER = "https://seller.wba-demo.noetis.dev"
 BUYER = "https://buyer.wba-demo.noetis.dev"
 CFBOT = "https://cfbot.wba-demo.noetis.dev"
+#: A third party with its own key and directory, and no seller of the buyer's.
+RESELLER = "https://reseller.wba-demo.noetis.dev"
 OPERATOR = {"X-Operator-Key": "operator-key-for-tests"}
 TOKEN = "bearer-token-for-tests"  # noqa: S105 -- a test value, not a deployed secret
 
@@ -89,6 +99,42 @@ def read_only(path: Path) -> sqlite3.Connection:
     return db
 
 
+Lines = list[tuple[str, str]]
+
+
+def lines(raw: list[tuple[bytes, bytes]]) -> Lines:
+    """Header lines as text, in their order and case."""
+    return [(k.decode("latin-1"), v.decode("latin-1")) for k, v in raw]
+
+
+@dataclass(frozen=True)
+class Received:
+    """A request as an app received it: the header lines are the ASGI scope's own."""
+
+    method: str
+    path: str
+    headers: Lines
+
+
+class Recorder:
+    """An ASGI app in front of `app` that records each HTTP request as `app` receives it."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+        self.received: list[Received] = []
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] == "http":
+            self.received.append(Received(scope["method"], scope["path"], lines(scope["headers"])))
+        await self.app(scope, receive, send)
+
+
+def _directory_of(key: Ed25519Key, host: str) -> httpx.Response:
+    """The signed directory that publishes `key`, served as `host` serves it."""
+    status, headers, body = directory_response([key], authority=host, now=int(time.time()))
+    return httpx.Response(status, headers=headers, stream=httpx.ByteStream(body))
+
+
 class Stack:
     def __init__(self, root: Path, *, faults: bool = False, token: bool = True) -> None:
         self.seller_dir, self.buyer_dir = root / "seller", root / "buyer"
@@ -97,8 +143,17 @@ class Stack:
         self.seller_key = keyfile.load_or_create(self.seller_dir / "wba-key.jwk")
         #: cfbot's key, which its directory publishes.
         self.cfbot_key = Ed25519Key.generate()
-        #: Every request the buyer sent, directory fetches left out.
+        #: The reseller's key, which its directory publishes; `signed` can sign as it.
+        self.reseller_key = Ed25519Key.generate()
+        #: The parties whose directories the stack serves itself, by host.
+        self._published = {
+            Origin.parse(CFBOT).host: self.cfbot_key,
+            Origin.parse(RESELLER).host: self.reseller_key,
+        }
+        #: Every request the buyer sent, directory fetches left out, as its client sent it.
         self.requests: list[httpx.Request] = []
+        #: The answer to each of `requests`, as the transport delivered it.
+        self.responses: list[httpx.Response] = []
         #: Stands in for the seller when set; see `Answer`.
         self.answer: Answer | None = None
         #: What cfbot answers the buyer's signed check.
@@ -116,8 +171,10 @@ class Stack:
             nonces=MemoryNonceStore(),
             resolver=directory_resolver(to_buyer, max_cache_age=None),
         )
-        self.seller = TestClient(seller, base_url=SELLER)
-        self.buyer = TestClient(buyer, base_url=BUYER)
+        self._seller = Recorder(seller)
+        # A server error is an answer the test reads, as a client would, never an exception.
+        self.seller = TestClient(self._seller, base_url=SELLER, raise_server_exceptions=False)
+        self.buyer = TestClient(buyer, base_url=BUYER, raise_server_exceptions=False)
 
     def __enter__(self) -> Stack:
         self.seller.__enter__()
@@ -133,11 +190,21 @@ class Stack:
         self.buyer.__exit__(kind, error, trace)
         self.seller.__exit__(kind, error, trace)
 
+    @property
+    def received(self) -> list[Received]:
+        """Every request the seller app received, as it received it."""
+        return self._seller.received
+
     async def route(self, request: httpx.Request) -> httpx.Response:
         """The network, as the buyer's client sees it."""
         if request.url.path == DIRECTORY_PATH:
-            return await self._call(self.seller, request)
+            return await self._directory(request)
         self.requests.append(request)
+        response = await self._answer(request)
+        self.responses.append(response)
+        return response
+
+    async def _answer(self, request: httpx.Request) -> httpx.Response:
         if request.url.host == Origin.parse(CFBOT).host:
             return self.cfbot(request)
         await request.aread()
@@ -148,19 +215,27 @@ class Stack:
             return replaced
         return await self._call(self.seller, request)
 
+    async def _directory(self, request: httpx.Request) -> httpx.Response:
+        """A directory fetch, routed by its host to the party that publishes it."""
+        host = request.url.host
+        key = self._published.get(host)
+        if key is not None:
+            return _directory_of(key, host)
+        apps = {Origin.parse(SELLER).host: self.seller, Origin.parse(BUYER).host: self.buyer}
+        app = apps.get(host)
+        if app is None:
+            return httpx.Response(404)
+        return await self._call(app, request)
+
     async def _to_buyer(self, request: httpx.Request) -> httpx.Response:
         """The network, as the seller's directory resolver sees it."""
-        return await self._call(self.buyer, request)
+        return await self._directory(request)
 
     async def runner_route(self, request: httpx.Request) -> httpx.Response:
-        """The network, as the live runner sees it."""
-        host = request.url.host
-        if host == Origin.parse(CFBOT).host:
-            status, headers, body = directory_response(
-                [self.cfbot_key], authority=host, now=int(time.time())
-            )
-            return httpx.Response(status, headers=headers, stream=httpx.ByteStream(body))
-        app = self.seller if host in ("seller", Origin.parse(SELLER).host) else self.buyer
+        """The network, as the live runner sees it: the agents' controls, and every directory."""
+        if request.url.path == DIRECTORY_PATH:
+            return await self._directory(request)
+        app = self.seller if request.url.host == "seller" else self.buyer
         return await self._call(app, request)
 
     @staticmethod
@@ -177,10 +252,11 @@ class Stack:
             content=request.content,
             headers=request.headers,
         )
-        # A stream, as the network gives one: the library's directory fetcher streams the body.
+        # The app's own header lines, in order and case, and a stream, as the network gives
+        # one: the library's directory fetcher streams the body.
         return httpx.Response(
             answer.status_code,
-            headers=answer.headers.multi_items(),
+            headers=answer.headers.raw,
             stream=httpx.ByteStream(answer.content),
         )
 
@@ -190,13 +266,17 @@ class Stack:
         answer.read()
         return answer
 
-    def signed(self, request: httpx.Request, status: int, body: bytes) -> httpx.Response:
-        """An answer signed with the seller's key and bound to `request`, as the seller signs."""
+    def signed(
+        self, request: httpx.Request, status: int, body: bytes, *, by: str = SELLER
+    ) -> httpx.Response:
+        """An answer bound to `request`, signed as the seller signs, by the seller or by the
+        reseller (`by`) with its own key under its own origin."""
+        key = {SELLER: self.seller_key, RESELLER: self.reseller_key}[by]
         sent = HTTPRequest(
-            request.method, str(request.url), request.headers.multi_items(), request.content
+            request.method, str(request.url), lines(request.headers.raw), request.content
         )
         answer = HTTPResponse(status, [("content-type", "application/json")], body, sent)
-        signed = ResponseSigner(self.seller_key, SELLER).sign(answer)
+        signed = ResponseSigner(key, by).sign(answer)
         return httpx.Response(status, headers=signed.headers.items(), content=body)
 
     # The buyer's controls

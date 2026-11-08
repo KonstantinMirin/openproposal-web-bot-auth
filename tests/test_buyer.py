@@ -5,12 +5,16 @@ verified, then parsed, inside one refusal boundary. Each test drives
 `/operator/read` or `/operator/commit` and reads the outcome and what each
 party kept.
 
-- A signed or bearer commit is agreed, and both parties keep the agreement.
+- A signed or bearer commit is agreed, and both parties keep the agreement,
+  with the header lines exactly as the transport carried them.
 - A verified answer that is malformed, an error without `retry`, or a boundary
-  refusal is refused, never a 500, and settles nothing (defects 4 and 5).
-- An unknown line item or seller is refused before anything is sent (defect 4, M10).
-- A proposal that names another seller is refused (M11); a `CommitResult` that
-  doesn't answer the commit is refused (M9).
+  refusal is refused, never a 500, and settles nothing.
+- An unknown line item or seller is refused before anything is sent.
+- A proposal that names another seller is refused; a `CommitResult` that
+  doesn't answer the commit is refused, and so is one whose `record_digest`
+  doesn't recompute from the digest input the buyer kept.
+- An answer correctly signed by another origin than the seller's is refused,
+  on a read and on a commit, under either credential.
 - A stored rejection settles the commit; `retry: same` keeps it pending.
 - Each seller fault mode is refused, on a read and on a commit, for each
   credential that it breaks.
@@ -26,8 +30,8 @@ from pathlib import Path
 import httpx
 import pytest
 
-from buyer.repository import NotPendingError
-from tests.stack import BUYER, CFBOT, OPERATOR, SELLER, Stack
+from persistence.observe import BuyerRecords, SellerRecords
+from tests.stack import BUYER, CFBOT, OPERATOR, RESELLER, SELLER, Lines, Stack, lines
 
 DISPLAY = "business-daily-display"
 CTV = "weather-app-ctv"
@@ -74,7 +78,7 @@ def test_a_signed_commit_is_agreed_and_both_parties_keep_it(stack: Stack) -> Non
     }
     assert outcome["attributed"] is True  # the verified host is the proposal's seller domain
     assert [e["role"] for e in outcome["entries"]] == ["commitment", "acceptance"]
-    # The trigger named no seller, so it went to the configured one (defect 7a).
+    # The trigger named no seller, so it went to the configured one.
     assert _sent(stack) == [
         ("GET", f"{SELLER}/proposals/demo-wba-1"),
         ("POST", f"{SELLER}/proposals/demo-wba-1/commit"),
@@ -92,6 +96,7 @@ def test_a_signed_commit_is_agreed_and_both_parties_keep_it(stack: Stack) -> Non
         ).fetchone()
     assert (kept["origin"], kept["status"]) == (SELLER, 200)
     assert kept["keyid"] == stack.seller_key.thumbprint
+    _assert_kept_as_carried(stack, "demo-wba-1", outcome["evidence_id"])
 
 
 def test_a_bearer_commit_is_agreed_with_no_signing_key(stack: Stack) -> None:
@@ -107,6 +112,31 @@ def test_a_bearer_commit_is_agreed_with_no_signing_key(stack: Stack) -> None:
             "SELECT q.headers FROM signed_responses r JOIN signed_requests q ON q.id = r.request_id"
         ).fetchone()
     assert "authorization" not in sent["headers"].lower()  # the token is never kept
+    with BuyerRecords.open(stack.buyer_dir / "buyer.db") as records:
+        kept = records.response(outcome["evidence_id"])
+    assert list(kept.request.request.headers) == _sent_lines(commit)
+
+
+def _sent_lines(request: httpx.Request) -> Lines:
+    """The lines the buyer's client sent, as it sent them, the bearer token left out."""
+    return [(k, v) for k, v in lines(request.headers.raw) if k.lower() != "authorization"]
+
+
+def _assert_kept_as_carried(stack: Stack, proposal_id: str, evidence_id: int) -> None:
+    """Each party kept the header lines of the signed commit exactly as the transport carried
+    them: in order, in case, and every line."""
+    (sent,) = [r for r in stack.requests if r.method == "POST"]
+    (delivered,) = [a for r, a in zip(stack.requests, stack.responses, strict=True) if r is sent]
+    with BuyerRecords.open(stack.buyer_dir / "buyer.db") as records:
+        kept = records.response(evidence_id)
+    assert list(kept.request.request.headers) == _sent_lines(sent)
+    assert list(kept.response.headers) == lines(delivered.headers.raw)
+    (received,) = [r for r in stack.received if r.method == "POST"]
+    with SellerRecords.open(stack.seller_dir / "seller.db") as records:
+        (commitment, _) = records.entries(proposal_id)
+        assert commitment.evidence_id is not None
+        kept_request = records.request(commitment.evidence_id)
+    assert list(kept_request.request.headers) == received.headers
 
 
 def test_a_read_answers_the_proposal_as_received(stack: Stack) -> None:
@@ -128,7 +158,6 @@ def test_a_read_the_seller_refuses_is_rejected_with_its_errors(stack: Stack) -> 
 
 
 def test_an_unknown_line_item_is_refused_unsent(stack: Stack) -> None:
-    """Defect 4: the plan lookup raised KeyError, so the trigger answered 500."""
     response = stack.commit("demo-wba-1", ["no-such-item"])
     assert response.status_code == 200
     outcome = response.json()
@@ -138,7 +167,7 @@ def test_an_unknown_line_item_is_refused_unsent(stack: Stack) -> None:
 
 
 def test_a_trigger_for_another_seller_is_refused_unsent(stack: Stack) -> None:
-    """M10: the seller is resolved once, from the buyer's own records."""
+    """The seller is resolved once, from the buyer's own records."""
     read = {"seller": "https://other.example", "proposal_id": "p-1"}
     for route, trigger in (
         ("/operator/read", read),
@@ -212,7 +241,7 @@ def test_a_malformed_read_is_refused(stack: Stack, status: int, body: bytes) -> 
         (200, b'{"version": 1}', "malformed-answer"),
         (200, b'{"entries": []}', "malformed-answer"),
         (200, b"\xff", "malformed-answer"),
-        # Defect 5: an error without retry used to settle the commit as rejected.
+        # An error without retry is no § 2.4 answer, so it settles nothing.
         (409, NO_RETRY, "malformed-answer"),
         (401, BOUNDARY, "credential-refused"),
     ],
@@ -230,12 +259,13 @@ def test_a_malformed_answer_to_a_commit_is_refused_and_settles_nothing(
     assert _kept_answers(stack) == 0
 
 
-def test_an_unreachable_seller_is_refused(stack: Stack) -> None:
-    def down(request: httpx.Request) -> httpx.Response:
-        refused = "connection refused"
-        raise httpx.ConnectError(refused, request=request)
+def _down(request: httpx.Request) -> httpx.Response:
+    refused = "connection refused"
+    raise httpx.ConnectError(refused, request=request)
 
-    stack.answer = down
+
+def test_an_unreachable_seller_is_refused(stack: Stack) -> None:
+    stack.answer = _down
     outcome = stack.read("demo-wba-1").json()
     assert (outcome["state"], outcome["reason"]) == ("refused", "unreachable")
 
@@ -255,7 +285,7 @@ def _edited(stack: Stack, method: str, edit: Callable[[dict[str, object]], None]
 
 
 def test_a_proposal_that_names_another_seller_is_refused(stack: Stack) -> None:
-    """M11: a correctly signed proposal from this seller that names another seller."""
+    """A correctly signed proposal from this seller that names another seller."""
     _edited(stack, "GET", lambda d: d.update(seller={"domain": "other.example", "legal_name": "X"}))
     outcome = stack.commit("demo-wba-1", [DISPLAY]).json()
     assert (outcome["state"], outcome["reason"]) == ("refused", "wrong-seller"), outcome
@@ -277,7 +307,7 @@ def _entries(
 @pytest.mark.parametrize(
     ("edit", "rule"),
     [
-        # M9: the result doesn't start with the commit's own entry.
+        # The result doesn't start with the commit's own entry.
         (_entries(lambda e: e[0].update(at="2020-01-01T00:00:00Z")), "doesn't start with"),
         (_entries(lambda e: e.pop()), "no acceptance"),
         (_entries(lambda e: e[1].update(line_item_ids=[CTV])), "no acceptance"),
@@ -299,8 +329,8 @@ def test_a_result_that_doesnt_answer_the_commit_is_refused_then_replayed(
 
 
 def test_a_settlement_that_fails_keeps_no_evidence(stack: Stack) -> None:
-    """Defect 3: the buyer kept the answer and settled the commit in two autocommits, so a
-    failed settlement left the evidence behind. Now both are one transaction."""
+    """The buyer keeps the answer and settles the commit in one transaction, so a commit
+    another trigger settled meanwhile keeps nothing of this answer."""
 
     def settled_meanwhile(request: httpx.Request) -> httpx.Response | None:
         if request.method != "POST":
@@ -314,11 +344,79 @@ def test_a_settlement_that_fails_keeps_no_evidence(stack: Stack) -> None:
         return stack.forward(request)
 
     stack.answer = settled_meanwhile
-    with pytest.raises(NotPendingError):
-        stack.commit("demo-wba-1", [DISPLAY])
+    response = stack.commit("demo-wba-1", [DISPLAY])
+    assert response.status_code == 409
+    assert response.json() == {
+        "error": "not-pending",
+        "detail": "commit 1 is no longer pending, so it stays settled",
+    }
     assert _kept_answers(stack) == 0
     with stack.buyer_db() as db:
         assert db.execute("SELECT COUNT(*) FROM signed_requests").fetchone()[0] == 0
+
+
+def _corrupt_digest_input(stack: Stack, commit_id: int) -> None:
+    """Tamper: the buyer's stored digest input for `commit_id` no longer matches its body."""
+    db = sqlite3.connect(stack.buyer_dir / "buyer.db")
+    try:
+        (kept,) = db.execute(
+            "SELECT digest_input FROM commits WHERE id = ?", (commit_id,)
+        ).fetchone()
+        db.execute(
+            "UPDATE commits SET digest_input = ? WHERE id = ?", (bytes(kept) + b" ", commit_id)
+        )
+        db.commit()
+    finally:
+        db.close()
+
+
+def test_a_digest_that_doesnt_recompute_from_the_kept_input_is_refused(stack: Stack) -> None:
+    """The seller's acceptance matches the commit, but its record_digest isn't the digest of
+    the input the buyer kept for that commit."""
+    stack.answer = lambda request: _down(request) if request.method == "POST" else None
+    first = stack.commit("demo-wba-1", [DISPLAY]).json()
+    assert (first["state"], first["reason"]) == ("refused", "unreachable"), first
+    assert _commits(stack, "demo-wba-1") == ["pending"]
+    _corrupt_digest_input(stack, 1)
+    stack.answer = None
+    outcome = stack.commit("demo-wba-1", [DISPLAY]).json()
+    assert (outcome["state"], outcome["reason"]) == ("refused", "result-mismatch"), outcome
+    assert "record_digest doesn't recompute" in outcome["detail"]
+    assert _commits(stack, "demo-wba-1") == ["pending"] and _kept_answers(stack) == 0
+
+
+# Refused: an answer signed by another origin
+
+
+def _signed_by_the_reseller(stack: Stack, method: str) -> None:
+    """The seller's own answers to `method` requests, signed again by the reseller, under its
+    own origin, with its own key, which its directory publishes."""
+
+    def answer(request: httpx.Request) -> httpx.Response | None:
+        if request.method != method:
+            return None
+        real = stack.forward(request)
+        return stack.signed(request, real.status_code, real.content, by=RESELLER)
+
+    stack.answer = answer
+
+
+@pytest.mark.parametrize("credential", ["web_bot_auth", "bearer"])
+@pytest.mark.parametrize("on", ["read", "commit"])
+def test_an_answer_signed_by_another_origin_is_refused(
+    stack: Stack, credential: str, on: str
+) -> None:
+    proposal_id = PROPOSAL[credential]
+    _signed_by_the_reseller(stack, "GET" if on == "read" else "POST")
+    if on == "read":
+        outcome = stack.read(proposal_id, credential).json()
+    else:
+        outcome = stack.commit(proposal_id, [CTV], credential).json()
+    assert (outcome["state"], outcome["reason"]) == ("refused", "origin-mismatch"), outcome
+    assert RESELLER in outcome["detail"]
+    assert outcome["authentication_method"] == credential
+    assert _kept_answers(stack) == 0
+    assert _commits(stack, proposal_id) == ([] if on == "read" else ["pending"])
 
 
 def test_a_pending_commit_is_found_whatever_the_order_of_its_line_items(stack: Stack) -> None:

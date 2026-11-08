@@ -200,6 +200,8 @@ class Row:
     code: str
     status: int
     stored: bool
+    #: What the error tells the buyer to do next: retry the same commit, refetch, or stop.
+    retry: str
     edit: Edit = _keep
     change: Edit = _keep
     prior: list[AssentEntry] = field(default_factory=list)
@@ -211,6 +213,7 @@ ROWS = [
         "expired",
         410,
         stored=True,
+        retry="none",
         edit=_window("2026-01-01T00:00:00Z", "2026-02-01T00:00:00Z"),
     ),
     Row(
@@ -218,17 +221,24 @@ ROWS = [
         "expired",
         410,
         stored=True,
+        retry="none",
         edit=_price_until("2026-02-01T00:00:00Z"),
     ),
     Row(
-        "another version", "stale_version", 409, stored=True, change=_set(("entry",), "version", 2)
+        "another version",
+        "stale_version",
+        409,
+        stored=True,
+        retry="refetch",
+        change=_set(("entry",), "version", 2),
     ),
-    Row("no such line item", "not_found", 404, stored=True, change=_rename_item),
+    Row("no such line item", "not_found", 404, stored=True, retry="none", change=_rename_item),
     Row(
         "a write § 3.4 doesn't list",
         "validation",
         400,
         stored=True,
+        retry="none",
         change=_set(
             ("writes", ITEM),
             "daypart",
@@ -240,6 +250,7 @@ ROWS = [
         "validation",
         400,
         stored=True,
+        retry="none",
         change=_set(("writes", ITEM, "commitment"), "pricing_id", "no-such-entry"),
     ),
     Row(
@@ -247,6 +258,7 @@ ROWS = [
         "not_committable",
         409,
         stored=True,
+        retry="none",
         edit=_item_status("sold_out"),
     ),
     Row(
@@ -254,6 +266,7 @@ ROWS = [
         "not_committable",
         503,
         stored=False,
+        retry="same",
         edit=_window("2029-01-01T00:00:00Z", "2029-12-31T23:59:59Z"),
     ),
     Row(
@@ -261,6 +274,7 @@ ROWS = [
         "not_committable",
         503,
         stored=False,
+        retry="same",
         prior=[_entry("commitment", idempotency_key="earlier")],
     ),
     Row(
@@ -268,6 +282,7 @@ ROWS = [
         "record_mismatch",
         409,
         stored=True,
+        retry="refetch",
         change=_set(("entry",), "record_digest", "sha256:" + "0" * 64),
     ),
 ]
@@ -288,6 +303,7 @@ ROWS += [
         "expired",
         410,
         stored=True,
+        retry="none",
         edit=_window("2026-01-01T00:00:00Z", "2026-02-01T00:00:00Z"),
         change=_set(("entry",), "version", 2),
     ),
@@ -296,6 +312,7 @@ ROWS += [
         "stale_version",
         409,
         stored=True,
+        retry="refetch",
         change=_both(_rename_item, _set(("entry",), "version", 2)),
     ),
     Row(
@@ -303,6 +320,7 @@ ROWS += [
         "not_committable",
         409,
         stored=True,
+        retry="none",
         edit=_item_status("sold_out"),
         change=_set(("entry",), "record_digest", "sha256:" + "0" * 64),
     ),
@@ -318,7 +336,7 @@ def test_each_check_rejects_with_its_code(seller_with: StartSeller, row: Row) ->
     assert answer.status_code == row.status, answer.text
     (error,) = answer.json()["errors"]
     assert error["code"] == row.code and error["version"] == 1
-    assert error["retry"] == ("same" if not row.stored else error["retry"])
+    assert error["retry"] == row.retry
     assert len(seller.ledger("k-1")) == int(row.stored)
     # Nothing was written to the record.
     assert seller.rows("SELECT role FROM assent WHERE idempotency_key = 'k-1'") == []

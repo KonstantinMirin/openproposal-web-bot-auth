@@ -10,9 +10,9 @@ kept.
   refused with its status, reason, and hint; none of them comes back as a
   public caller.
 - The boundary writes nothing. Only a commit that writes an entry keeps the
-  signed request, in the same transaction (defect 2).
+  signed request, with its header lines as received, in the same transaction.
 - The offer logic is credential-blind: the same principal committing the same
-  commit by signature and by token gets the same result (mutant M7).
+  commit by signature and by token gets the same result.
 """
 
 from __future__ import annotations
@@ -56,7 +56,7 @@ from seller.offers.issuance import load_template
 from seller.seed import seed
 from seller.settings import SellerSettings
 from seller.sqlite_store import SqliteSellerStore
-from tests.stack import TOKEN
+from tests.stack import TOKEN, Recorder
 from transport.wba import directory_resolver, http_client, tls_context
 
 SELLER = "https://seller.example.com"
@@ -276,7 +276,7 @@ def test_a_verified_origin_with_a_principal_resolves_it(
 def test_a_verified_origin_without_a_principal_is_public_and_writes_nothing(
     seller: TestClient, parties: Parties, tmp_path: Path
 ) -> None:
-    """Defect 2: a signed request from an origin with a directory and no principal."""
+    """A signed request from an origin with a directory and no principal keeps nothing."""
     headers = signed("GET", "/whoami", parties.stranger, origin=STRANGER)
     assert seller.get("/whoami", headers=headers).json() == {
         "kind": "public",
@@ -328,16 +328,16 @@ def _assent(data_dir: Path) -> list[sqlite3.Row]:
         db.close()
 
 
-def test_a_signed_commit_keeps_its_request_with_the_entry(
-    seller: TestClient, parties: Parties, tmp_path: Path
-) -> None:
+def test_a_signed_commit_keeps_its_request_with_the_entry(parties: Parties, tmp_path: Path) -> None:
     path = "/proposals/demo-wba-1/commit"
-    document = _issued(seller, signed("GET", "/proposals/demo-wba-1", parties.buyer))
-    assert _kept(tmp_path)[0] == 0  # reading kept nothing
+    app = Recorder(_app(tmp_path, parties))
+    with TestClient(app, base_url=SELLER) as seller:
+        document = _issued(seller, signed("GET", "/proposals/demo-wba-1", parties.buyer))
+        assert _kept(tmp_path)[0] == 0  # reading kept nothing
 
-    body = _commit_body(document, key=str(uuid.uuid4()), at=datetime.now(UTC))
-    headers = signed("POST", path, parties.buyer, body=body)
-    answer = seller.post(path, content=body, headers=headers)
+        body = _commit_body(document, key=str(uuid.uuid4()), at=datetime.now(UTC))
+        headers = signed("POST", path, parties.buyer, body=body)
+        answer = seller.post(path, content=body, headers=headers)
     assert answer.status_code == 200, answer.text
 
     commitment, acceptance = _assent(tmp_path)
@@ -352,8 +352,9 @@ def test_a_signed_commit_keeps_its_request_with_the_entry(
         directory = reader.directory(kept_request.directory_digest or "")
     kept = kept_request.request
     assert (kept.method, kept.url, kept.body) == ("POST", f"{SELLER}{path}", body)
-    sent = {name.lower(): value for name, value in headers.items()}
-    assert {name: value for name, value in kept.headers.items() if name in sent} == sent
+    # The header lines exactly as the app received them: in order, in case, and every line.
+    (received,) = [r for r in app.received if r.method == "POST"]
+    assert list(kept.headers) == received.headers
     assert directory.url == f"{BUYER}{DIRECTORY_PATH}"
 
 
