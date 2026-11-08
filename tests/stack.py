@@ -35,6 +35,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from types import TracebackType
 
+import anyio
 import anyio.to_thread
 import httpx
 from fastapi.testclient import TestClient
@@ -58,12 +59,13 @@ from persistence.values import Origin
 from seller.app import create_app as create_seller
 from seller.settings import SellerSettings
 from shared.keyring import KeyStore
+from shared.settings import DEFAULT_ORIGINS
 from transport.control import OPERATOR_HEADER
 from transport.wba import directory_resolver, http_client, tls_context
 
-SELLER = "https://seller.wba-demo.noetis.dev"
-BUYER = "https://buyer.wba-demo.noetis.dev"
-CFBOT = "https://cfbot.wba-demo.noetis.dev"
+SELLER = str(DEFAULT_ORIGINS["seller"])
+BUYER = str(DEFAULT_ORIGINS["buyer"])
+CFBOT = str(DEFAULT_ORIGINS["cfbot"])
 #: A third party with its own key and directory, and no seller of the buyer's.
 RESELLER = "https://reseller.wba-demo.noetis.dev"
 #: Each agent's own operator key, distinct per party, as the header its controls require.
@@ -76,8 +78,8 @@ TOKEN = "bearer-token-for-tests"  # noqa: S105 -- a test value, not a deployed s
 class Origins:
     """The origins the two agents run under: the demo's own by default."""
 
-    seller: Origin = Origin.parse(SELLER)
-    buyer: Origin = Origin.parse(BUYER)
+    seller: Origin = DEFAULT_ORIGINS["seller"]
+    buyer: Origin = DEFAULT_ORIGINS["buyer"]
 
 
 #: The demo's own origins, which a stack runs under unless a test names others.
@@ -91,10 +93,12 @@ Answer = Callable[[httpx.Request], httpx.Response | None]
 def seller_settings(
     data_dir: Path, *, origins: Origins = DEMO, faults: bool = False
 ) -> SellerSettings:
+    """The seller over one directory, its database and its key both."""
     return SellerSettings(
         self_origin=origins.seller,
         peer_buyer_origin=origins.buyer,
         data_dir=data_dir,
+        keys_dir=data_dir,
         operator_key=SecretStr(SELLER_OPERATOR[OPERATOR_HEADER]),
         bearer_token=SecretStr(TOKEN),
         faults=faults,
@@ -102,11 +106,12 @@ def seller_settings(
 
 
 def buyer_settings(data_dir: Path, *, origins: Origins = DEMO, token: bool = True) -> BuyerSettings:
+    """The buyer over one directory: its database, and its keyring in `keys/`."""
     return BuyerSettings(
         self_origin=origins.buyer,
         peer_seller_origin=origins.seller,
-        peer_cfbot_origin=Origin.parse(CFBOT),
         data_dir=data_dir,
+        keys_dir=data_dir / "keys",
         operator_key=SecretStr(BUYER_OPERATOR[OPERATOR_HEADER]),
         bearer_token=SecretStr(TOKEN) if token else None,
     )
@@ -186,11 +191,14 @@ class Stack:
             buyer_settings(self.buyer_dir, origins=origins, token=token),
             transport=httpx.MockTransport(self.route),
         )
-        to_buyer = http_client(tls_context(None), transport=httpx.MockTransport(self._to_buyer))
+        #: The seller's directory client, which the stack builds, owns, and closes.
+        self._to_buyer = http_client(
+            tls_context(None), transport=httpx.MockTransport(self._seller_network)
+        )
         seller = create_seller(
             seller_settings(self.seller_dir, origins=origins, faults=faults),
             nonces=MemoryNonceStore(),
-            resolver=directory_resolver(to_buyer, max_cache_age=None),
+            resolver=directory_resolver(self._to_buyer, max_cache_age=None),
         )
         self._seller = Recorder(seller)
         # A server error is an answer the test reads, as a client would, never an exception.
@@ -212,6 +220,7 @@ class Stack:
     ) -> None:
         self.buyer.__exit__(kind, error, trace)
         self.seller.__exit__(kind, error, trace)
+        anyio.run(self._to_buyer.aclose)
 
     @property
     def buyer_keys(self) -> KeyStore:
@@ -256,7 +265,7 @@ class Stack:
             return httpx.Response(404)
         return await self._call(app, request)
 
-    async def _to_buyer(self, request: httpx.Request) -> httpx.Response:
+    async def _seller_network(self, request: httpx.Request) -> httpx.Response:
         """The network, as the seller's directory resolver sees it."""
         return await self._directory(request)
 

@@ -54,7 +54,7 @@ from seller.seed import seed
 from seller.settings import SellerSettings
 from seller.sqlite_store import SqliteSellerStore
 from tests._tools import load_yaml, seed_issuer
-from tests.stack import TOKEN, Recorder
+from tests.stack import TOKEN, Origins, Recorder, seller_settings
 from transport.wba import directory_resolver, http_client, tls_context
 
 SELLER = "https://seller.example.com"
@@ -98,11 +98,8 @@ def parties() -> Parties:
 
 
 def _settings(data_dir: Path) -> SellerSettings:
-    return SellerSettings(
-        self_origin=Origin.parse(SELLER),
-        peer_buyer_origin=Origin.parse(BUYER),
-        data_dir=data_dir,
-        bearer_token=SecretStr(TOKEN),
+    return seller_settings(
+        data_dir, origins=Origins(seller=Origin.parse(SELLER), buyer=Origin.parse(BUYER))
     )
 
 

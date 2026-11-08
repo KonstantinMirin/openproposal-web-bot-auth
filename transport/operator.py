@@ -48,7 +48,7 @@ class OperatorKey:
     def __init__(self, expected: SecretStr | None) -> None:
         self._expected = b"" if expected is None else expected.get_secret_value().encode()
 
-    def __call__(self, x_operator_key: Annotated[str | None, Header()] = None) -> None:
+    async def __call__(self, x_operator_key: Annotated[str | None, Header()] = None) -> None:
         if (
             not self._expected
             or x_operator_key is None

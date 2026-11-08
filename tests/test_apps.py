@@ -1,14 +1,17 @@
 """Each agent's composition root: built from settings over tmp_path, never from /data.
 
-The lifespan opens the store and the one client and closes both on shutdown.
-The fault switch belongs to one app instance. The buyer's flow is in
+The lifespan opens the store and the one client and closes both on shutdown,
+and an agent that fails to start, on a CA bundle it can't read, leaves no store
+open. The fault switch belongs to one app instance. The buyer's flow is in
 tests/test_buyer.py.
 """
 
 from __future__ import annotations
 
+import os
 import sqlite3
 from collections.abc import Iterator
+from dataclasses import replace
 from pathlib import Path
 
 import httpx
@@ -28,7 +31,6 @@ from iab_agentic_primitives.web_bot_auth import (
 )
 from iab_agentic_primitives.web_bot_auth import Origin as LibraryOrigin
 from iab_agentic_primitives.web_bot_auth.sync import SyncResponseVerifier
-from pydantic import SecretStr
 from starlette.types import ASGIApp
 
 from buyer.app import create_app as create_buyer
@@ -38,33 +40,21 @@ from persistence.values import Origin
 from seller.app import create_app as create_seller
 from seller.resources import SellerResources
 from seller.settings import SellerSettings
-from tests.stack import TOKEN
+from tests import stack
+from tests.stack import BUYER_OPERATOR, SELLER_OPERATOR, TOKEN, Origins
 
 SELLER = "https://seller.example"
 BUYER = "https://buyer.example"
-OPERATOR = {"X-Operator-Key": "operator-key-for-tests"}
+#: Each agent alone, under origins of its own.
+EXAMPLE = Origins(seller=Origin.parse(SELLER), buyer=Origin.parse(BUYER))
 
 
 def seller_settings(data_dir: Path, *, faults: bool = False) -> SellerSettings:
-    return SellerSettings(
-        self_origin=Origin.parse(SELLER),
-        peer_buyer_origin=Origin.parse(BUYER),
-        data_dir=data_dir,
-        operator_key=SecretStr(OPERATOR["X-Operator-Key"]),
-        bearer_token=SecretStr(TOKEN),
-        faults=faults,
-    )
+    return stack.seller_settings(data_dir, origins=EXAMPLE, faults=faults)
 
 
 def buyer_settings(data_dir: Path) -> BuyerSettings:
-    return BuyerSettings(
-        self_origin=Origin.parse(BUYER),
-        peer_seller_origin=Origin.parse(SELLER),
-        peer_cfbot_origin=Origin.parse("https://cfbot.example"),
-        data_dir=data_dir,
-        operator_key=SecretStr(OPERATOR["X-Operator-Key"]),
-        bearer_token=SecretStr(TOKEN),
-    )
+    return stack.buyer_settings(data_dir, origins=EXAMPLE)
 
 
 def seller_app(data_dir: Path, *, faults: bool = False, key: Ed25519Key | None = None) -> ASGIApp:
@@ -131,20 +121,20 @@ def test_the_seller_operator_controls_take_the_key_from_settings(seller: TestCli
     assert seller.post("/operator/issue", json=body).status_code == 403
     wrong = {"X-Operator-Key": "not-the-operator-key"}
     assert seller.post("/operator/issue", json=body, headers=wrong).status_code == 403
-    issued = seller.post("/operator/issue", json=body, headers=OPERATOR)
+    issued = seller.post("/operator/issue", json=body, headers=SELLER_OPERATOR)
     assert issued.status_code == 200, issued.text
     assert issued.json()["proposal_id"].startswith("live-buyer-wba-")
-    unknown = seller.post("/operator/issue", json={"principal_id": "nobody"}, headers=OPERATOR)
+    unknown = seller.post(
+        "/operator/issue", json={"principal_id": "nobody"}, headers=SELLER_OPERATOR
+    )
     assert unknown.status_code == 404
 
 
 def test_a_seller_without_an_operator_key_refuses_every_operator_call(tmp_path: Path) -> None:
-    settings = SellerSettings(
-        self_origin=Origin.parse(SELLER), peer_buyer_origin=Origin.parse(BUYER), data_dir=tmp_path
-    )
+    settings = replace(seller_settings(tmp_path), operator_key=None)
     with TestClient(create_seller(settings, resolver=StaticKeyResolver({}))) as client:
         response = client.post(
-            "/operator/issue", json={"principal_id": "buyer-wba"}, headers=OPERATOR
+            "/operator/issue", json={"principal_id": "buyer-wba"}, headers=SELLER_OPERATOR
         )
         assert response.status_code == 403
 
@@ -155,6 +145,36 @@ def test_the_seller_lifespan_closes_the_client_and_the_store(tmp_path: Path) -> 
         assert isinstance(resources, SellerResources)
         assert not resources.client.is_closed and not resources.store.is_closed
     assert resources.client.is_closed and resources.store.is_closed
+
+
+def _open_handles(path: Path) -> int:
+    """How many of this process's file descriptors have `path` open."""
+    target = path.stat()
+    count = 0
+    for entry in Path("/dev/fd").iterdir():
+        try:
+            held = os.fstat(int(entry.name))
+        except OSError:  # the descriptor listdir itself used, closed by now
+            continue
+        count += (held.st_dev, held.st_ino) == (target.st_dev, target.st_ino)
+    return count
+
+
+@pytest.mark.parametrize("agent", ["seller", "buyer"])
+def test_an_agent_that_cant_read_its_ca_bundle_fails_to_start_and_closes_its_store(
+    tmp_path: Path, agent: str
+) -> None:
+    """The lifespan opens the store before the client, so the client's failure closes it."""
+    missing = tmp_path / "no-such-bundle.pem"
+    if agent == "seller":
+        app = create_seller(replace(seller_settings(tmp_path), ca_bundle=missing))
+    else:
+        app = create_buyer(replace(buyer_settings(tmp_path), ca_bundle=missing))
+    with pytest.raises(FileNotFoundError), TestClient(app):
+        pass
+    database = tmp_path / f"{agent}.db"
+    assert database.exists()  # the store opened before the client failed
+    assert _open_handles(database) == 0
 
 
 def test_the_store_refuses_a_thread_other_than_the_one_that_opened_it(tmp_path: Path) -> None:
@@ -262,7 +282,7 @@ def test_a_trigger_that_omits_the_seller_targets_the_configured_seller(tmp_path:
     app = create_buyer(buyer_settings(tmp_path), transport=httpx.MockTransport(network))
     with TestClient(app) as client:
         outcome = client.post(
-            "/operator/read", json={"proposal_id": "p-1"}, headers=OPERATOR
+            "/operator/read", json={"proposal_id": "p-1"}, headers=BUYER_OPERATOR
         ).json()
     assert sent == [f"{SELLER}/proposals/p-1"]  # https://seller.example, as configured
     assert (outcome["state"], outcome["reason"]) == ("refused", "signature-missing")

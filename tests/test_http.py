@@ -18,15 +18,15 @@ import pytest
 from fastapi.testclient import TestClient
 from iab_agentic_primitives.web_bot_auth import MemoryNonceStore, StaticKeyResolver
 from openproposal import ErrorObject, ErrorObjectCode
-from pydantic import SecretStr, ValidationError
+from pydantic import ValidationError
 
 from persistence.values import Origin
 from seller.app import create_app
 from seller.http import status_for
-from seller.settings import SellerSettings
+from tests.stack import SELLER_OPERATOR, Origins, seller_settings
 
 SELLER = "https://seller.example.com"
-OPERATOR = {"X-Operator-Key": "operator-key-for-tests"}
+OPERATOR = SELLER_OPERATOR
 #: § 2.4, informative: the status each core code fits over HTTP.
 SPEC_STATUS = {
     "validation": 400,
@@ -67,12 +67,8 @@ def test_a_code_that_is_neither_core_nor_namespaced_cannot_be_built() -> None:
 
 @pytest.fixture
 def seller(tmp_path: Path) -> Iterator[TestClient]:
-    settings = SellerSettings(
-        self_origin=Origin.parse(SELLER),
-        peer_buyer_origin=Origin.parse("https://buyer.example.com"),
-        data_dir=tmp_path,
-        operator_key=SecretStr(OPERATOR["X-Operator-Key"]),
-    )
+    origins = Origins(seller=Origin.parse(SELLER), buyer=Origin.parse("https://buyer.example.com"))
+    settings = seller_settings(tmp_path, origins=origins)
     app = create_app(settings, nonces=MemoryNonceStore(), resolver=StaticKeyResolver({}))
     with TestClient(app, base_url=SELLER) as client:
         yield client

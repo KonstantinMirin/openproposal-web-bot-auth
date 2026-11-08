@@ -15,12 +15,12 @@ it to the request it answers.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from datetime import UTC, datetime
+from functools import partial
 from pathlib import Path
-from typing import TypedDict
 
+import httpx
 from fastapi import APIRouter, Depends, FastAPI
 from fastapi.responses import JSONResponse
 from iab_agentic_primitives.web_bot_auth import (
@@ -38,8 +38,8 @@ from starlette.types import ASGIApp
 
 from protocol.documents import loads_yaml
 from transport.control import Health, Issued, IssueRequest
+from transport.lifespan import lifespan, resolver_or_default
 from transport.operator import ControlError, OperatorKey
-from transport.wba import directory_resolver, http_client, tls_context
 
 from .boundary import IdentityBoundary
 from .errors import Rejected, UnknownPrincipal
@@ -109,12 +109,6 @@ async def issue_proposal(body: IssueRequest, store: OnboardingDep, issuer: Issue
     return Issued(proposal_id=issued.proposal_id, principal_id=issued.buyer_principal_id)
 
 
-class _State(TypedDict):
-    """What the lifespan yields; requests read it through seller/resources.py."""
-
-    resources: SellerResources
-
-
 def create_app(
     settings: SellerSettings,
     *,
@@ -124,42 +118,17 @@ def create_app(
     """The seller, from its settings. Its lifespan owns the store, the client, and the boundary.
 
     `nonces` and `resolver` replace the in-memory nonce store and the directory
-    resolver, as a deployment with several workers or a test does.
-
-    The result is the FastAPI app wrapped in the library's middlewares, so that
-    every response is signed, a server error's included.
+    resolver, as a deployment with several workers or a test does. The result is
+    the FastAPI app wrapped in the library's middlewares, so that every response
+    is signed, a server error's included.
     """
     # The seller mints its key on first boot. No buyer is ever configured with it.
     key = keyfile.load_or_create(settings.key_file)
     identity = ServerIdentity.from_config(str(settings.self_origin))
     issuer = Issuer(settings.own, loads_yaml(TEMPLATE.read_text(encoding="utf-8")))
-
-    @asynccontextmanager
-    async def lifespan(_app: FastAPI) -> AsyncIterator[_State]:
-        store = SqliteSellerStore(settings.data_dir / "seller.db")
-        client = http_client(tls_context(settings.ca_bundle))
-        try:
-            seed(
-                store,
-                issuer,
-                buyer_origin=settings.peer_buyer_origin,
-                bearer_token=settings.bearer_token,
-            )
-            keys: KeyResolver = (
-                directory_resolver(client, max_cache_age=settings.max_cache_age)
-                if resolver is None
-                else resolver
-            )
-            verifier = RequestVerifier(
-                keys, identity=identity, nonces=MemoryNonceStore() if nonces is None else nonces
-            )
-            boundary = IdentityBoundary(store, verifier, identity)
-            yield {"resources": SellerResources(store, client, boundary, issuer)}
-        finally:
-            await client.aclose()
-            store.close()
-
-    agent = FastAPI(title="Demo seller", lifespan=lifespan)
+    resources = _Parts(settings, issuer, identity, nonces, resolver).resources
+    store = partial(SqliteSellerStore, settings.data_dir / "seller.db")
+    agent = FastAPI(title="Demo seller", lifespan=lifespan(store, settings.ca_bundle, resources))
     install_handlers(agent)
     agent.include_router(api)
     agent.include_router(operator, dependencies=[Depends(OperatorKey(settings.operator_key))])
@@ -174,6 +143,33 @@ def create_app(
         identity=identity,
         publish=PublishPolicy(max_age=settings.directory_max_age),
     )
+
+
+@dataclass(frozen=True)
+class _Parts:
+    """What `create_app` builds before the lifespan opens the store and the client."""
+
+    settings: SellerSettings
+    issuer: Issuer
+    identity: ServerIdentity
+    nonces: NonceStore | None
+    resolver: KeyResolver | None
+
+    def resources(self, store: SqliteSellerStore, client: httpx.AsyncClient) -> SellerResources:
+        """The seller's resources over its open store and client: the first-boot records,
+        and the identity boundary over the store's principals and the request verifier."""
+        settings = self.settings
+        seed(
+            store,
+            self.issuer,
+            buyer_origin=settings.peer_buyer_origin,
+            bearer_token=settings.bearer_token,
+        )
+        keys = resolver_or_default(client, settings.max_cache_age, self.resolver)
+        nonces = MemoryNonceStore() if self.nonces is None else self.nonces
+        verifier = RequestVerifier(keys, identity=self.identity, nonces=nonces)
+        boundary = IdentityBoundary(store, verifier, self.identity)
+        return SellerResources(store, client, boundary, self.issuer)
 
 
 def _with_faults(

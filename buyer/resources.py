@@ -2,7 +2,9 @@
 
 `create_app` (buyer/app.py) opens these once at startup and closes them on
 shutdown. `resources` is the one function that reads the lifespan's state
-(through transport/lifespan.py).
+(through transport/lifespan.py). Every provider is `async def`, so FastAPI runs
+it on the event loop's thread, where the store's connection lives
+(persistence/sqlite.py).
 """
 
 from __future__ import annotations
@@ -35,7 +37,7 @@ class BuyerResources:
     cfbot: Cfbot
 
 
-def resources(request: Request) -> BuyerResources:
+async def resources(request: Request) -> BuyerResources:
     """The resources the lifespan yielded."""
     return state_of(request, BuyerResources)
 
@@ -43,19 +45,19 @@ def resources(request: Request) -> BuyerResources:
 ResourcesDep = Annotated[BuyerResources, Depends(resources)]
 
 
-def settings(resources: ResourcesDep) -> BuyerSettings:
+async def settings(resources: ResourcesDep) -> BuyerSettings:
     return resources.settings
 
 
-def keyring(resources: ResourcesDep) -> Keyring:
+async def keyring(resources: ResourcesDep) -> Keyring:
     return resources.keyring
 
 
-def flow(resources: ResourcesDep) -> Buyer:
+async def flow(resources: ResourcesDep) -> Buyer:
     return resources.flow
 
 
-def cfbot(resources: ResourcesDep) -> Cfbot:
+async def cfbot(resources: ResourcesDep) -> Cfbot:
     return resources.cfbot
 
 

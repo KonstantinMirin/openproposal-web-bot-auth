@@ -25,6 +25,7 @@ from pydantic import SecretStr
 
 from persistence.values import Origin
 from shared import settings as read
+from shared.settings import DEFAULT_ORIGINS
 
 #: Environment variables whose values must never reach a report.
 SECRET_VARIABLES = ("SELLER_OPERATOR_KEY", "BUYER_OPERATOR_KEY", "DEMO_BEARER_TOKEN")
@@ -56,9 +57,9 @@ class RunnerSettings:
         """Reads the settings once; raises `SettingsError`, naming the variable, for a bad value."""
         env = os.environ if env is None else env
         return cls(
-            seller=read.origin(env, "PEER_SELLER_ORIGIN", "https://seller.wba-demo.noetis.dev"),
-            buyer=read.origin(env, "PEER_BUYER_ORIGIN", "https://buyer.wba-demo.noetis.dev"),
-            cfbot=read.origin(env, "PEER_CFBOT_ORIGIN", "https://cfbot.wba-demo.noetis.dev"),
+            seller=read.origin(env, "PEER_SELLER_ORIGIN", DEFAULT_ORIGINS["seller"]),
+            buyer=read.origin(env, "PEER_BUYER_ORIGIN", DEFAULT_ORIGINS["buyer"]),
+            cfbot=read.origin(env, "PEER_CFBOT_ORIGIN", DEFAULT_ORIGINS["cfbot"]),
             seller_control=env.get("SELLER_CONTROL", "http://seller:8000"),
             buyer_control=env.get("BUYER_CONTROL", "http://buyer:8000"),
             seller_db=env.get("SELLER_DB", "/seller-data/seller.db"),

@@ -5,7 +5,8 @@ shutdown. `resources` is the one function that reads the lifespan's state
 (through transport/lifespan.py). Every route asks for a port of the one store
 (`OfferStoreDep`, `OnboardingDep`), and seller/http.py takes the identity
 boundary from here, so the boundary resolves the caller in the same database
-the handlers then write to.
+the handlers then write to. Every provider is `async def`, so FastAPI runs it on
+the event loop's thread, where the store's connection lives (persistence/sqlite.py).
 """
 
 from __future__ import annotations
@@ -35,7 +36,7 @@ class SellerResources:
     issuer: Issuer
 
 
-def resources(request: Request) -> SellerResources:
+async def resources(request: Request) -> SellerResources:
     """The resources the lifespan yielded."""
     return state_of(request, SellerResources)
 
@@ -43,19 +44,19 @@ def resources(request: Request) -> SellerResources:
 ResourcesDep = Annotated[SellerResources, Depends(resources)]
 
 
-def offer_store(resources: ResourcesDep) -> OfferStore:
+async def offer_store(resources: ResourcesDep) -> OfferStore:
     return resources.store
 
 
-def onboarding(resources: ResourcesDep) -> Onboarding:
+async def onboarding(resources: ResourcesDep) -> Onboarding:
     return resources.store
 
 
-def boundary(resources: ResourcesDep) -> IdentityBoundary:
+async def boundary(resources: ResourcesDep) -> IdentityBoundary:
     return resources.boundary
 
 
-def issuer(resources: ResourcesDep) -> Issuer:
+async def issuer(resources: ResourcesDep) -> Issuer:
     return resources.issuer
 
 

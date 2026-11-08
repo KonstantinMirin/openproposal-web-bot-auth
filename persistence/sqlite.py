@@ -2,11 +2,11 @@
 
 Concurrency model. Each agent process holds one connection, opened by its app
 lifespan and closed on shutdown. The connection is bound to the thread that
-opened it (`check_same_thread=True`, sqlite3's default): every route that
-touches storage is `async def` and runs on the event loop's thread, and none
-awaits inside a transaction, so transactions never interleave. Storage reached
-from a worker thread, as a sync route would reach it, raises
-`sqlite3.ProgrammingError` instead of sharing the connection.
+opened it (`check_same_thread=True`, sqlite3's default): every route and every
+dependency provider that touches storage is `async def` and runs on the event
+loop's thread, and none awaits inside a transaction, so transactions never
+interleave. Storage reached from a worker thread, as a sync route would reach
+it, raises `sqlite3.ProgrammingError` instead of sharing the connection.
 
 The connection runs in autocommit, so a statement outside `transaction()`
 commits on its own. Every write that must land with another runs inside one

@@ -33,9 +33,9 @@ from protocol.record import items_by_id
 from protocol.values import JsonObject, JsonValue
 from seller.app import create_app
 from seller.seed import seed
-from seller.settings import SellerSettings
 from seller.sqlite_store import SqliteSellerStore
 from tests._tools import load_yaml, seed_issuer, seed_template
+from tests.stack import Origins, seller_settings
 
 SELLER = "https://seller.example.com"
 BUYER = "https://buyer.example.com"
@@ -133,11 +133,8 @@ def seller_with(tmp_path: Path) -> Iterator[StartSeller]:
     def start(edit: Edit = _keep, prior: list[AssentEntry] | None = None) -> Seller:
         data_dir = tmp_path / f"seller-{len(clients)}"
         _seed(data_dir, edit, prior or [])
-        settings = SellerSettings(
-            self_origin=Origin.parse(SELLER),
-            peer_buyer_origin=Origin.parse(BUYER),
-            data_dir=data_dir,
-        )
+        origins = Origins(seller=Origin.parse(SELLER), buyer=Origin.parse(BUYER))
+        settings = seller_settings(data_dir, origins=origins)
         app = create_app(settings, nonces=MemoryNonceStore(), resolver=StaticKeyResolver({}))
         client = TestClient(app, base_url=SELLER).__enter__()
         clients.append(client)

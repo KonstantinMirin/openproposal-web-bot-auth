@@ -11,7 +11,7 @@ from buyer.settings import BuyerSettings
 from persistence.values import Origin
 from runner.settings import RunnerSettings
 from seller.settings import SellerSettings
-from shared.settings import SettingsError
+from shared.settings import DEFAULT_ORIGINS, SettingsError
 
 Reader = Callable[[Mapping[str, str]], object]
 
@@ -48,11 +48,13 @@ NOT_ORIGINS = [
 def test_the_seller_defaults_to_the_demo_deployment() -> None:
     settings = SellerSettings.from_env({})
     assert settings == SellerSettings(
-        self_origin=Origin.parse("https://seller.wba-demo.noetis.dev"),
-        peer_buyer_origin=Origin.parse("https://buyer.wba-demo.noetis.dev"),
+        self_origin=DEFAULT_ORIGINS["seller"],
+        peer_buyer_origin=DEFAULT_ORIGINS["buyer"],
         data_dir=Path("/data"),
         keys_dir=Path("/keys"),
     )
+    assert str(settings.self_origin) == "https://seller.wba-demo.noetis.dev"
+    assert settings.own.legal_name == "Demo Seller Inc."
     # The key lives on its own volume, apart from the database.
     assert settings.key_file == Path("/keys/wba-key.jwk")
 
@@ -113,7 +115,7 @@ def test_the_buyer_reads_every_variable() -> None:
     )
     assert settings.operator_key is None and settings.bearer_token is None
     assert settings.max_cache_age is None  # the library's default
-    assert (settings.data_dir, settings.keyring_dir) == (
+    assert (settings.data_dir, settings.keys_dir) == (
         Path("/srv/buyer"),
         Path("/srv/buyer-keys"),
     )
@@ -121,7 +123,8 @@ def test_the_buyer_reads_every_variable() -> None:
 
 def test_the_buyer_defaults_to_the_production_rotation() -> None:
     settings = BuyerSettings.from_env({})
-    assert settings.keyring_dir == Path("/keys")  # apart from the database
+    assert settings.keys_dir == Path("/keys")  # apart from the database
+    assert str(settings.peer_cfbot_origin) == "https://cfbot.wba-demo.noetis.dev"
     assert (settings.rotation_wait, settings.signature_lifetime, settings.directory_max_age) == (
         600.0,
         300,

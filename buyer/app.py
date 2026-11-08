@@ -15,10 +15,10 @@ from __future__ import annotations
 
 import json
 import time
-from collections.abc import AsyncIterator, Callable
-from contextlib import asynccontextmanager
+from collections.abc import Callable
+from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
-from typing import TypedDict
 
 from fastapi import APIRouter, Depends, FastAPI
 from iab_agentic_primitives.web_bot_auth import KeyResolver, PublishPolicy, ServerIdentity
@@ -37,8 +37,9 @@ from transport.control import (
     PublishedKey,
     ReadTrigger,
 )
+from transport.lifespan import lifespan, resolver_or_default
 from transport.operator import OperatorKey
-from transport.wba import Transport, directory_resolver, http_client, tls_context
+from transport.wba import Transport
 
 from .cfbot import Cfbot
 from .flow import Buyer
@@ -123,12 +124,6 @@ async def cloudflare_check(cfbot: CfbotDep, settings: SettingsDep) -> Cloudflare
     return await cfbot.verify(body)
 
 
-class _State(TypedDict):
-    """What the lifespan yields; requests read it through buyer/resources.py."""
-
-    resources: BuyerResources
-
-
 def create_app(
     settings: BuyerSettings,
     *,
@@ -148,30 +143,16 @@ def create_app(
     # The buyer mints its first key on first boot only. Its signer and its directory read the
     # key store, which each rotation step refreshes.
     keyring = Keyring.create(
-        settings.keyring_dir,
+        settings.keys_dir,
         rotation_wait=settings.rotation_wait,
         signature_lifetime=settings.signature_lifetime,
         clock=clock,
     )
     signing = SigningIdentity(keyring, settings.self_origin)
-
-    @asynccontextmanager
-    async def lifespan(_app: FastAPI) -> AsyncIterator[_State]:
-        store = BuyerRepository(settings.data_dir / "buyer.db")
-        client = http_client(tls_context(settings.ca_bundle), transport=transport)
-        try:
-            keys = (
-                directory_resolver(client, max_cache_age=settings.max_cache_age)
-                if resolver is None
-                else resolver
-            )
-            flow = Buyer(store, SellerClient(client, keys), signing, plan, settings.self_origin)
-            yield {"resources": _resources(settings, store, client, keyring, flow)}
-        finally:
-            await client.aclose()
-            store.close()
-
-    agent = FastAPI(title="Demo buyer", lifespan=lifespan)
+    resources = _Parts(settings, signing, plan, resolver).resources
+    store = partial(BuyerRepository, settings.data_dir / "buyer.db")
+    opened = lifespan(store, settings.ca_bundle, resources, transport=transport)
+    agent = FastAPI(title="Demo buyer", lifespan=opened)
     install_handlers(agent)
     agent.include_router(api)
     agent.include_router(operator, dependencies=[Depends(OperatorKey(settings.operator_key))])
@@ -184,26 +165,36 @@ def create_app(
     )
 
 
-def _resources(
-    settings: BuyerSettings,
-    store: BuyerRepository,
-    client: HTTPClient,
-    keyring: Keyring,
-    flow: Buyer,
-) -> BuyerResources:
-    # The buyer knows the seller by its origin only, and its domain is that origin's host.
-    # Its legal name and the token, the bearer flow's credential, come from the settings.
-    seller = settings.peer_seller_origin
-    store.add_counterparty(
-        Counterparty(
-            origin=seller,
-            domain=seller.host,
-            legal_name=settings.peer_seller_legal_name,
-            bearer_token=settings.bearer_token,
+@dataclass(frozen=True)
+class _Parts:
+    """What `create_app` builds before the lifespan opens the store and the client."""
+
+    settings: BuyerSettings
+    #: The buyer's one signing identity, over its keyring; the flow and cfbot both sign with it.
+    signing: SigningIdentity
+    plan: Plan
+    resolver: KeyResolver | None
+
+    def resources(self, store: BuyerRepository, client: HTTPClient) -> BuyerResources:
+        """The buyer's resources over its open store and client: its record of its seller,
+        the offer flow, and cfbot, both signing with the one signing identity."""
+        settings = self.settings
+        # The buyer knows the seller by its origin only, and its domain is that origin's host.
+        # Its legal name and the token, the bearer flow's credential, come from the settings.
+        seller = settings.peer_seller_origin
+        store.add_counterparty(
+            Counterparty(
+                origin=seller,
+                domain=seller.host,
+                legal_name=settings.peer_seller_legal_name,
+                bearer_token=settings.bearer_token,
+            )
         )
-    )
-    cfbot = Cfbot(client, settings.peer_cfbot_origin, flow.signing)
-    return BuyerResources(settings, store, keyring, client, flow, cfbot)
+        signing = self.signing
+        keys = resolver_or_default(client, settings.max_cache_age, self.resolver)
+        flow = Buyer(store, SellerClient(client, keys), signing, self.plan, settings.self_origin)
+        cfbot = Cfbot(client, settings.peer_cfbot_origin, signing)
+        return BuyerResources(settings, store, signing.keyring, client, flow, cfbot)
 
 
 def app_from_env() -> ASGIApp:
