@@ -1,13 +1,17 @@
-"""How the buyer authenticates a request to a seller: one credential, as a type.
+"""How the buyer authenticates a request to a seller, and verifies the answer: one factory.
 
-A request carries exactly one credential. `SignWith` signs it with Web Bot
-Auth; `Bearer` carries the token the seller issued. Either way the seller signs
-its answer, and the auth each credential builds verifies that signature against
-the seller's origin, and, for a signed request, its binding to the request.
+A request carries exactly one credential. `SignWith` holds the signer of the
+buyer's active key; `Bearer` holds the token the seller issued. Neither builds
+an auth: `seller_call` does, and it is the only builder of one for a seller.
+It requires the response verifier and the seller's origin, so every call to a
+seller verifies the signed answer against that origin and, for a signed
+request, its binding to the request. The credential adds only what it carries:
+the signer, or the token's header.
 """
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 
 import httpx
@@ -30,13 +34,6 @@ class SignWith:
     def keyid(self) -> str:
         return self.signer.key.thumbprint
 
-    def headers(self) -> dict[str, str]:
-        return {}
-
-    def auth(self, verifier: ResponseVerifier, seller: Origin) -> httpx.Auth:
-        """Signs the request, then verifies the answer and its binding to the request."""
-        return WebBotAuth(self.signer, verifier, expect=library_origin(seller))
-
 
 @dataclass(frozen=True)
 class Bearer:
@@ -49,13 +46,30 @@ class Bearer:
     def keyid(self) -> None:
         return None
 
-    def headers(self) -> dict[str, str]:
-        return {"Authorization": f"Bearer {self.token.get_secret_value()}"}
-
-    def auth(self, verifier: ResponseVerifier, seller: Origin) -> httpx.Auth:
-        """Sends the request unsigned, and still verifies the seller's signed answer."""
-        return WebBotAuth.verify_only(verifier, expect=library_origin(seller))
-
 
 #: The one credential a request carries.
 BuyerCredential = SignWith | Bearer
+
+
+@dataclass(frozen=True)
+class SellerCall:
+    """How one request to a seller goes out: the auth, and the header lines the credential
+    adds."""
+
+    #: Signs the request with a signature credential; always verifies the signed answer.
+    auth: httpx.Auth
+    headers: Mapping[str, str]
+
+
+def seller_call(
+    credential: BuyerCredential, verifier: ResponseVerifier, seller: Origin
+) -> SellerCall:
+    """The auth and headers of a request to `seller`: the answer must carry `seller`'s
+    verified signature, bound to the request when the request is signed."""
+    if isinstance(credential, SignWith):
+        signer, headers = credential.signer, {}
+    else:
+        signer = None
+        headers = {"Authorization": f"Bearer {credential.token.get_secret_value()}"}
+    auth = WebBotAuth(signer, verifier, expect=library_origin(seller))
+    return SellerCall(auth, headers)

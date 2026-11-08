@@ -1,18 +1,31 @@
-# The buyer verifies every seller answer and its binding: each WebBotAuth it
-# builds names the origin it expects (expect=). The one sign-only peer is cfbot
-# (buyer/cfbot.py), whose origin the buyer binds when it builds it.
+# The buyer verifies every seller answer and its binding: one factory,
+# seller_call (buyer/credentials.py), builds the auth of a call to a seller,
+# and it names the origin it expects (expect=). The buyer builds a WebBotAuth
+# nowhere else. The one sign-only peer is cfbot (buyer/cfbot.py), whose origin
+# the buyer binds when it builds it.
 id: buyer-verifies-every-answer
 language: Python
 severity: error
-message: Every WebBotAuth the buyer builds verifies the answer against the origin it expects (expect=); only buyer/cfbot.py signs without verifying.
+message: The buyer builds a WebBotAuth only in seller_call (buyer/credentials.py), which verifies the answer against the origin it expects (expect=); only buyer/cfbot.py signs without verifying.
 files: ["buyer/**/*.py"]
 ignores: ["buyer/cfbot.py"]
 rule:
   all:
-    - pattern: WebBotAuth($$$A)
-    - not:
-        has:
-          kind: argument_list
-          has:
-            kind: keyword_argument
-            regex: '^expect='
+    - any:
+        - pattern: WebBotAuth($$$A)
+        - pattern: WebBotAuth.verify_only($$$A)
+        - pattern: $M.WebBotAuth($$$A)
+    - any:
+        - not:
+            inside:
+              kind: function_definition
+              stopBy: end
+              has:
+                field: name
+                regex: '^seller_call$'
+        - not:
+            has:
+              kind: argument_list
+              has:
+                kind: keyword_argument
+                regex: '^expect='

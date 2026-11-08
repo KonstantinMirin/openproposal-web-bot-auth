@@ -11,7 +11,7 @@ select = ["TID251"]
 [lint.per-file-ignores]
 # The one client to a seller, which verifies and parses every answer.
 "buyer/seller_client.py" = ["TID251"]
-# Each credential builds the auth that signs the request or verifies the answer.
+# The one factory of the auth of a call to a seller, which always verifies the answer.
 "buyer/credentials.py" = ["TID251"]
 # The one sign-only peer.
 "buyer/cfbot.py" = ["TID251"]

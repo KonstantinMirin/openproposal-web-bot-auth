@@ -9,7 +9,10 @@ refusal boundary, so whatever the seller sends comes back as a value
 (`ReadProposal`, `Accepted`, `Rejection`) or as a `Refusal`, never as an
 exception. No HTTP status leaves this module.
 
-Every call goes through the client the buyer's lifespan owns (buyer/app.py).
+Every call goes through the client the buyer's lifespan owns (buyer/app.py),
+with the auth `seller_call` builds (buyer/credentials.py), which always
+verifies the answer against the seller's origin. It is the only way the buyer
+sends to a seller.
 """
 
 from __future__ import annotations
@@ -33,7 +36,7 @@ from protocol.values import JsonObject, read_json
 from transport.control import ErrorBody
 from transport.wba import fetch_of, lines_of, origin_of
 
-from .credentials import BuyerCredential
+from .credentials import BuyerCredential, seller_call
 from .refusal import Reason, Refusal
 from .repository import Counterparty
 
@@ -186,13 +189,10 @@ class SellerClient:
     ) -> Exchange:
         """The one send path: the request with its credential, and the verified answer."""
         url = f"{seller.origin}{path}"
+        call = seller_call(credential, self._verifier, seller.origin)
         headers = {"Content-Type": "application/json"} if body else {}
         response = await self._http.request(
-            method,
-            url,
-            content=body,
-            headers=headers | credential.headers(),
-            auth=credential.auth(self._verifier, seller.origin),
+            method, url, content=body, headers=headers | dict(call.headers), auth=call.auth
         )
         verified = verified_response(response)
         if verified is None:  # the auth refuses an unsigned answer, so this can't happen
