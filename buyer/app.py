@@ -18,7 +18,6 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from functools import partial
-from pathlib import Path
 
 from fastapi import APIRouter, Depends, FastAPI
 from iab_agentic_primitives.web_bot_auth import KeyResolver, PublishPolicy, ServerIdentity
@@ -49,9 +48,6 @@ from .repository import BuyerRepository, Counterparty
 from .resources import BuyerResources, CfbotDep, FlowDep, KeyringDep, SettingsDep
 from .seller_client import HTTPClient, SellerClient
 from .settings import BuyerSettings
-
-#: The § 3.4 writes the buyer commits for each line item it buys.
-PLAN = Path(__file__).resolve().parent / "plan.yaml"
 
 #: The routes any caller reaches. Agents reach only the directory, which the middleware serves.
 api = APIRouter()
@@ -139,7 +135,7 @@ def create_app(
 
     The result is the FastAPI app inside the library's `DirectoryMiddleware`.
     """
-    plan = Plan.of(loads_yaml(PLAN.read_text(encoding="utf-8")))
+    plan = Plan.of(loads_yaml(settings.plan_file.read_text(encoding="utf-8")))
     # The buyer mints its first key on first boot only. Its signer and its directory read the
     # key store, which each rotation step refreshes.
     keyring = Keyring.create(

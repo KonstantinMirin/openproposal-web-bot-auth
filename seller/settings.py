@@ -9,7 +9,8 @@ The seller reads every `AgentSettings` variable (shared/settings.py), and these:
 | `DEMO_FAULT_INJECTION` | off | TEST ONLY: mounts `PUT /test/fault` |
 
 Its database is `seller.db` in `DATA_DIR`, and its signing key `wba-key.jwk` in
-`KEYS_DIR`.
+`KEYS_DIR`. `template_file` is the proposal it issues every buyer, the one this
+package ships by default; the composition root reads it once.
 """
 
 from __future__ import annotations
@@ -23,6 +24,9 @@ from shared import settings as read
 from shared.party import OwnParty
 from shared.settings import DEFAULT_ORIGINS, AgentSettings, Role
 
+#: The proposal every buyer is issued, as the seller's onboarding wrote it.
+TEMPLATE_FILE = Path(__file__).resolve().parent / "seed" / "proposal.yaml"
+
 
 @dataclass(frozen=True, kw_only=True)
 class SellerSettings(AgentSettings):
@@ -30,6 +34,7 @@ class SellerSettings(AgentSettings):
 
     peer_buyer_origin: Origin = DEFAULT_ORIGINS["buyer"]
     self_legal_name: str = "Demo Seller Inc."
+    template_file: Path = TEMPLATE_FILE
     #: TEST ONLY: install seller/faults.py.
     faults: bool = False
 

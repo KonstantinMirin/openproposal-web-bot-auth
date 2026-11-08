@@ -1,7 +1,8 @@
 """The buyer's plan: the § 3.4 writes it commits for each line item it buys.
 
-The buyer's composition root (buyer/app.py) reads plan.yaml once, and the plan
-checks it strictly as `LineItemWrites`. A trigger names line items; the plan gives their writes, or
+The buyer's composition root (buyer/app.py) reads the plan file its settings
+name once and passes the parsed document in; the plan checks it strictly as
+`LineItemWrites`. A trigger names line items; the plan gives their writes, or
 refuses a line item it has none for.
 """
 

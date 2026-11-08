@@ -18,7 +18,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from functools import partial
-from pathlib import Path
 
 import httpx
 from fastapi import APIRouter, Depends, FastAPI
@@ -52,9 +51,6 @@ from .resources import IssuerDep, OfferStoreDep, OnboardingDep, SellerResources
 from .seed import seed
 from .settings import SellerSettings
 from .sqlite_store import SqliteSellerStore
-
-#: The proposal every buyer is issued, as the seller's onboarding wrote it.
-TEMPLATE = Path(__file__).resolve().parent / "seed" / "proposal.yaml"
 
 #: The agent-facing routes. Each one takes its caller from the identity boundary.
 api = APIRouter()
@@ -125,7 +121,7 @@ def create_app(
     # The seller mints its key on first boot. No buyer is ever configured with it.
     key = keyfile.load_or_create(settings.key_file)
     identity = ServerIdentity.from_config(str(settings.self_origin))
-    issuer = Issuer(settings.own, loads_yaml(TEMPLATE.read_text(encoding="utf-8")))
+    issuer = Issuer(settings.own, loads_yaml(settings.template_file.read_text(encoding="utf-8")))
     resources = _Parts(settings, issuer, identity, nonces, resolver).resources
     store = partial(SqliteSellerStore, settings.data_dir / "seller.db")
     agent = FastAPI(title="Demo seller", lifespan=lifespan(store, settings.ca_bundle, resources))

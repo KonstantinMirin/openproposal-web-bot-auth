@@ -1,5 +1,5 @@
 # Layer ban: the protocol rules and the offer logic import no HTTP framework,
-# HTTP client, storage engine, or environment read, and no identity type: the
+# HTTP client, storage engine, file access, or environment read, and no identity type: the
 # offer logic takes a principal id and an opaque Provenance, never a caller or
 # a credential, so it can't read how a caller authenticated.
 #
@@ -19,4 +19,5 @@ select = ["TID251"]
 "sqlite3".msg = "The protocol rules store nothing; storage sits behind a repository."
 "os.environ".msg = "The protocol rules read no configuration; settings are passed in."
 "os.getenv".msg = "The protocol rules read no configuration; settings are passed in."
+"pathlib".msg = "The protocol rules read no files; the composition root reads them and passes the parsed values in."
 "seller.caller".msg = "The offer logic is credential-blind: take the principal id or the Provenance the HTTP seam passes."

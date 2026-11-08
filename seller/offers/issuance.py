@@ -1,7 +1,8 @@
 """Issuing a proposal to a buyer (§ 4.3): the template, made out by this seller to one principal.
 
-The seller's composition root (seller/app.py) reads the template once, at
-startup, and builds the `Issuer` from it and the seller's own party. Every
+The seller's composition root (seller/app.py) reads the template file its
+settings name once, at startup, and builds the `Issuer` from the parsed
+template and the seller's own party. Every
 issued document is a fresh copy of the template.
 """
 

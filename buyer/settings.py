@@ -10,7 +10,9 @@ The buyer reads every `AgentSettings` variable (shared/settings.py), and these:
 | `WBA_ROTATION_WAIT` | `600` | how long a published key waits before it signs |
 | `WBA_SIGNATURE_LIFETIME` | `300` | how long its signatures last |
 
-Its database is `buyer.db` in `DATA_DIR`, and its keyring is `KEYS_DIR`. In
+Its database is `buyer.db` in `DATA_DIR`, and its keyring is `KEYS_DIR`.
+`plan_file` is its plan, the one this package ships by default; the composition
+root reads it once. In
 production, the rotation wait is the directory's max-age (300 s) plus the
 library's default max_cache_age (300 s), and signatures last the profile's 300 s
 maximum (shared/keyring.py).
@@ -19,11 +21,15 @@ maximum (shared/keyring.py).
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from pathlib import Path
 from typing import ClassVar, Self
 
 from persistence.values import Origin
 from shared import settings as read
 from shared.settings import DEFAULT_ORIGINS, AgentSettings, Role
+
+#: The § 3.4 writes the buyer commits for each line item it buys.
+PLAN_FILE = Path(__file__).resolve().parent / "plan.yaml"
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -35,6 +41,7 @@ class BuyerSettings(AgentSettings):
     peer_cfbot_origin: Origin = DEFAULT_ORIGINS["cfbot"]
     rotation_wait: float = 600.0
     signature_lifetime: int = 300
+    plan_file: Path = PLAN_FILE
 
     @classmethod
     def from_env(cls, env: read.Environment | None = None) -> Self:

@@ -7,9 +7,9 @@ from pathlib import Path
 from persistence.values import Origin
 from protocol.documents import loads_yaml
 from protocol.values import JsonObject
-from seller.app import TEMPLATE
 from seller.offers.issuance import Issuer, issued
 from seller.ports import Principal
+from seller.settings import TEMPLATE_FILE
 from shared.party import OwnParty
 
 
@@ -19,8 +19,8 @@ def load_yaml(path: Path) -> JsonObject:
 
 
 def seed_template() -> JsonObject:
-    """The proposal every buyer is issued, as seller/app.py reads it."""
-    return load_yaml(TEMPLATE)
+    """The proposal every buyer is issued: the template file the seller ships by default."""
+    return load_yaml(TEMPLATE_FILE)
 
 
 def seed_issuer(template: JsonObject | None = None) -> Issuer:
