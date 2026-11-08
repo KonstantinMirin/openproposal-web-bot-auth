@@ -4,7 +4,8 @@ The keyring enforces the rotation order and its waits, and never loses or
 overwrites a key. Each test builds the buyer with `create_app` over tmp_path,
 with a clock the test moves, and rotates through `/operator/keys`, as an
 operator does. The directory answers what the keyring publishes. The e2e
-scenarios read the buyer's keys with `Keyring.key`, as the last test does.
+scenarios read the buyer's keys with the read-only `KeyStore`, as the last tests
+do: it never writes, and never mints a key it doesn't find.
 """
 
 from __future__ import annotations
@@ -20,7 +21,7 @@ from iab_agentic_primitives.web_bot_auth import DIRECTORY_PATH
 from pydantic import SecretStr
 
 from buyer.app import create_app
-from shared.keyring import Keyring, RotationError
+from shared.keyring import KeyStore, NoKeysError, RotationError
 from tests.stack import OPERATOR, buyer_settings
 
 #: The rotation wait and the signature lifetime the tests run with.
@@ -136,13 +137,38 @@ def test_the_scenarios_read_any_key_by_kid_published_or_retired(tmp_path: Path) 
         assert buyer.call("DELETE", f"/{old}") == 200
     assert isinstance(old, str) and isinstance(new, str)
     # As e2e/scenarios/conftest.py reads the buyer's keys volume.
-    keys = Keyring(tmp_path / "keys", rotation_wait=0, signature_lifetime=0)
+    keys = KeyStore.open(tmp_path / "keys")
+    assert keys.active().thumbprint == new
     assert keys.key(new).thumbprint == new
     with pytest.raises(RotationError):
         keys.key(old)  # retired: not published any more
     assert keys.key(old, include_retired=True).thumbprint == old
     with pytest.raises(RotationError):
         keys.key("no-such-kid", include_retired=True)
+    assert not list((tmp_path / "keys").rglob("no-such-kid*"))  # a missing kid is never minted
+
+
+def test_the_key_store_reads_a_directory_without_keys_and_writes_nothing(tmp_path: Path) -> None:
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    empty.chmod(0o555)  # read-only, as the e2e mounts the buyer's keys
+    with pytest.raises(NoKeysError):
+        KeyStore.open(empty)
+    with pytest.raises(NoKeysError):
+        KeyStore.open(tmp_path / "missing")
+    assert list(empty.iterdir()) == []
+    assert not (tmp_path / "missing").exists()
+
+
+def test_a_deleted_active_key_is_refused_never_minted_again(tmp_path: Path) -> None:
+    clock = Clock()
+    with _buyer(tmp_path, clock, wait=0, lifetime=0) as client:
+        active = Buyer(client, clock, tmp_path / "keys").keys()["active"]
+        assert client.post("/operator/keys", headers=OPERATOR).status_code == 200
+    (tmp_path / "keys" / f"{active}.jwk").unlink()
+    with pytest.raises(RotationError):
+        KeyStore.open(tmp_path / "keys").active()
+    assert not (tmp_path / "keys" / f"{active}.jwk").exists()
 
 
 def test_the_operator_key_comes_from_the_settings(tmp_path: Path) -> None:

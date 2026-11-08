@@ -57,7 +57,7 @@ from persistence.observe import BuyerRecords, SellerRecords
 from persistence.values import Origin
 from seller.app import create_app as create_seller
 from seller.settings import SellerSettings
-from shared.keyring import Keyring
+from shared.keyring import KeyStore
 from transport.wba import directory_resolver, http_client, tls_context
 
 SELLER = "https://seller.wba-demo.noetis.dev"
@@ -183,8 +183,6 @@ class Stack:
             buyer_settings(self.buyer_dir, origins=origins, token=token),
             transport=httpx.MockTransport(self.route),
         )
-        # The buyer mints its first key in create_app.
-        self.buyer_keys = Keyring(self.buyer_dir / "keys", rotation_wait=0, signature_lifetime=0)
         to_buyer = http_client(tls_context(None), transport=httpx.MockTransport(self._to_buyer))
         seller = create_seller(
             seller_settings(self.seller_dir, origins=origins, faults=faults),
@@ -211,6 +209,12 @@ class Stack:
     ) -> None:
         self.buyer.__exit__(kind, error, trace)
         self.seller.__exit__(kind, error, trace)
+
+    @property
+    def buyer_keys(self) -> KeyStore:
+        """The buyer's keys as its key directory holds them now, read-only, as the e2e reads
+        them. The buyer mints its first key in create_app."""
+        return KeyStore.open(self.buyer_dir / "keys")
 
     @property
     def received(self) -> list[Received]:

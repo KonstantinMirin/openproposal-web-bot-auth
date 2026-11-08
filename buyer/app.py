@@ -5,7 +5,7 @@ import time. Uvicorn builds the app with `--factory buyer.app:app_from_env`,
 the only caller of `BuyerSettings.from_env()`.
 
 Agents reach `buyer.wba-demo.noetis.dev` only for the directory, which
-`DirectoryMiddleware` serves from the keyring on every fetch. The
+`DirectoryMiddleware` serves from the key store, which holds the keys in memory. The
 `/operator/` routes are the buyer's own controls: no front routes them, so they
 are reachable only inside the network, and each call carries the operator key
 (transport/operator.py).
@@ -27,7 +27,7 @@ from starlette.types import ASGIApp
 
 from persistence.values import Origin
 from protocol.documents import loads_yaml
-from shared.keyring import Keyring
+from shared.keyring import Keyring, SigningIdentity
 from transport.control import (
     CloudflareCheck,
     CommitTrigger,
@@ -85,7 +85,8 @@ async def operator_read(trigger: ReadTrigger, flow: FlowDep, settings: SettingsD
 
 def _keys(keyring: Keyring) -> KeyState:
     return KeyState(
-        published=[k.thumbprint for k in keyring.published()], active=keyring.active().thumbprint
+        published=[k.thumbprint for k in keyring.store.published()],
+        active=keyring.store.active().thumbprint,
     )
 
 
@@ -144,13 +145,15 @@ def create_app(
     The result is the FastAPI app inside the library's `DirectoryMiddleware`.
     """
     plan = Plan.of(loads_yaml(PLAN.read_text(encoding="utf-8")))
-    # The buyer mints its first key on first boot; the directory reads the keyring live.
-    keyring = Keyring(
+    # The buyer mints its first key on first boot only. Its signer and its directory read the
+    # key store, which each rotation step refreshes.
+    keyring = Keyring.create(
         settings.keyring_dir,
         rotation_wait=settings.rotation_wait,
         signature_lifetime=settings.signature_lifetime,
         clock=clock,
     )
+    signing = SigningIdentity(keyring, settings.self_origin)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[_State]:
@@ -162,8 +165,8 @@ def create_app(
                 if resolver is None
                 else resolver
             )
-            flow = Buyer(store, SellerClient(client, keys), keyring, settings, plan)
-            yield {"resources": _resources(settings, store, client, flow)}
+            flow = Buyer(store, SellerClient(client, keys), signing, plan, settings.self_origin)
+            yield {"resources": _resources(settings, store, client, keyring, flow)}
         finally:
             await client.aclose()
             store.close()
@@ -172,17 +175,21 @@ def create_app(
     install_handlers(agent)
     agent.include_router(api)
     agent.include_router(operator, dependencies=[Depends(OperatorKey(settings.operator_key))])
-    # A live key source: the middleware reads the keyring on every directory fetch.
+    # A live key source: each fetch lists the keys the store holds now.
     return DirectoryMiddleware(
         agent,
-        keyring.published,
+        keyring.store.published,
         identity=ServerIdentity.from_config(str(settings.self_origin)),
         publish=PublishPolicy(max_age=settings.directory_max_age),
     )
 
 
 def _resources(
-    settings: BuyerSettings, store: BuyerRepository, client: HTTPClient, flow: Buyer
+    settings: BuyerSettings,
+    store: BuyerRepository,
+    client: HTTPClient,
+    keyring: Keyring,
+    flow: Buyer,
 ) -> BuyerResources:
     # The buyer knows the seller by its origin only, and its domain is that origin's host.
     # Its legal name and the token, the bearer flow's credential, come from the settings.
@@ -195,8 +202,8 @@ def _resources(
             bearer_token=settings.bearer_token,
         )
     )
-    cfbot = Cfbot(client, settings.peer_cfbot_origin, lambda: flow.signer)
-    return BuyerResources(settings, store, flow.keyring, client, flow, cfbot)
+    cfbot = Cfbot(client, settings.peer_cfbot_origin, flow.signing)
+    return BuyerResources(settings, store, keyring, client, flow, cfbot)
 
 
 def app_from_env() -> ASGIApp:

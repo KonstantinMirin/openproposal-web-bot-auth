@@ -1,9 +1,22 @@
 """A party's signing keys: one private JWK file each, `keys/<kid>.jwk`.
 
-Each key is minted here and never shared.
+Three roles over one directory:
 
-The directory publishes every key in `keys/`; one of them, the active key,
-signs. A rotation follows standard practice, and the keyring enforces its waits:
+- `KeyStore.open(directory)` reads every key and `state.json` once and holds
+  them in memory. It is read-only: it never writes and never mints. A directory
+  that holds no keyring raises `NoKeysError`, and a kid it doesn't hold raises
+  `NotPublishedError`. The buyer's published directory and its signer read the
+  store, and so do the e2e scenarios, over a read-only mount.
+- `Keyring` is the one writer. `Keyring.create(directory, ...)` mints the first
+  key on first boot only, and opens the store. `publish`, `activate`, and
+  `retire` rotate, and each refreshes the store's view once it has written.
+- `SigningIdentity(keyring, origin).signer()` signs as the party's origin with
+  the active key, for the keyring's signature lifetime: the one lifetime both
+  the signer and the retirement wait use.
+
+Each key is minted here and never shared. The directory publishes every key in
+`keys/`; one of them, the active key, signs. A rotation follows standard
+practice, and the keyring enforces its waits:
 
 1. `publish()` adds a new key to the directory. The old key keeps signing.
 2. `activate(kid)` switches signing to it, once `rotation_wait` has passed since
@@ -20,19 +33,24 @@ Files are named by kid, so a published key never reuses a retired key's name.
 `state.json` holds a `KeyringState`, written whole to a temporary file and moved
 into place, so a reader never sees half of it. Each step builds the next state
 with a named transition, a constructor call that checks every field, so a step
-can't write a state the keyring can't read back. `key(kid)` is how anyone else
-reads a key, the e2e scenarios included.
+can't write a state the store can't read back.
 """
 
 from __future__ import annotations
 
+import json
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from pathlib import Path
 
-from iab_agentic_primitives.web_bot_auth import Ed25519Key, keyfile
+from iab_agentic_primitives.web_bot_auth import Ed25519Key, RequestSigner, keyfile
 
+from persistence.values import Origin
 from protocol.values import Value
+
+_STATE = "state.json"
+_RETIRED = "retired"
 
 
 class KeyringState(Value):
@@ -64,6 +82,13 @@ class KeyringState(Value):
         )
 
 
+class NoKeysError(LookupError):
+    """A directory that holds no keyring: no key file, or no `state.json`."""
+
+    def __init__(self, directory: Path) -> None:
+        super().__init__(f"{directory} holds no keyring")
+
+
 class RotationError(Exception):
     """A rotation step asked for before its wait has passed, or on the wrong key."""
 
@@ -88,89 +113,173 @@ class RetiredExistsError(RotationError):
         super().__init__(f"{path} exists; refusing to overwrite a retired key")
 
 
+@dataclass(frozen=True)
+class _Keys:
+    """One reading of a keyring directory."""
+
+    state: KeyringState
+    published: Mapping[str, Ed25519Key]
+    retired: Mapping[str, Ed25519Key]
+
+
+def _by_kid(files: list[Path]) -> dict[str, Ed25519Key]:
+    """Each key file, read with the library's JWK reader, by the kid that names it."""
+    return {f.stem: Ed25519Key.from_jwk(json.loads(f.read_text())) for f in sorted(files)}
+
+
+def _read(directory: Path) -> _Keys:
+    published = _by_kid(list(directory.glob("*.jwk")))
+    state = directory / _STATE
+    if not published or not state.is_file():
+        raise NoKeysError(directory)
+    return _Keys(
+        state=KeyringState.model_validate_json(state.read_text()),
+        published=published,
+        retired=_by_kid(list((directory / _RETIRED).glob("*.jwk"))),
+    )
+
+
+class KeyStore:
+    """A party's keys and rotation state, read once and held in memory. Read-only."""
+
+    def __init__(self, directory: Path, keys: _Keys) -> None:
+        """Use `KeyStore.open`."""
+        self.directory, self._keys = directory, keys
+
+    @classmethod
+    def open(cls, directory: Path) -> KeyStore:
+        """The keys in `directory`; raises `NoKeysError` when it holds no keyring."""
+        return cls(directory, _read(directory))
+
+    def refresh(self) -> None:
+        """Reads the directory again, once the keyring has written to it."""
+        self._keys = _read(self.directory)
+
+    @property
+    def state(self) -> KeyringState:
+        return self._keys.state
+
+    def key(self, kid: str, *, include_retired: bool = False) -> Ed25519Key:
+        """The key `kid`, if published; or also if retired, when `include_retired`.
+
+        Raises `NotPublishedError` for any other kid.
+        """
+        key = self._keys.published.get(kid)
+        if key is None and include_retired:
+            key = self._keys.retired.get(kid)
+        if key is None:
+            raise NotPublishedError(kid)
+        return key
+
+    def published(self) -> list[Ed25519Key]:
+        """Every key the directory publishes, held in memory."""
+        return list(self._keys.published.values())
+
+    def active(self) -> Ed25519Key:
+        return self.key(self._keys.state.active)
+
+
+def _mint(directory: Path) -> Ed25519Key:
+    """A new key, written with mode 0600 by the library, then named by its kid."""
+    pending = directory / "minting.jwk.new"
+    key = keyfile.load_or_create(pending)
+    pending.rename(directory / f"{key.thumbprint}.jwk")
+    return key
+
+
+def _save(directory: Path, state: KeyringState) -> None:
+    target = directory / _STATE
+    partial = target.with_suffix(".json.new")
+    partial.write_text(state.model_dump_json())
+    partial.replace(target)
+
+
 class Keyring:
+    """The one writer of a party's keys: first boot, and the three rotation steps."""
+
     def __init__(
         self,
-        directory: Path,
+        store: KeyStore,
         *,
         rotation_wait: float,
-        signature_lifetime: float,
+        signature_lifetime: int,
         clock: Callable[[], float] = time.time,
     ) -> None:
-        """Opens the keyring in `directory`, minting a first key when it holds none."""
-        self.directory = directory
+        self.store = store
         self.rotation_wait = rotation_wait
         self.signature_lifetime = signature_lifetime
         self._clock = clock
-        self._state_file = directory / "state.json"
-        if not self._files():
-            kid = self._mint().thumbprint
-            self._save(KeyringState.first(kid))
 
-    def _files(self) -> list[Path]:
-        return sorted(self.directory.glob("*.jwk"))
-
-    def _mint(self) -> Ed25519Key:
-        """A new key, written with mode 0600 by the library, then named by its kid."""
-        pending = self.directory / "minting.jwk.new"
-        key = keyfile.load_or_create(pending)
-        pending.rename(self.directory / f"{key.thumbprint}.jwk")
-        return key
-
-    def state(self) -> KeyringState:
-        return KeyringState.model_validate_json(self._state_file.read_text())
-
-    def _save(self, state: KeyringState) -> None:
-        partial = self._state_file.with_suffix(".json.new")
-        partial.write_text(state.model_dump_json())
-        partial.replace(self._state_file)
-
-    def _published(self, kid: str) -> Path:
-        path = self.directory / f"{kid}.jwk"
-        if not path.exists():
-            raise NotPublishedError(kid)
-        return path
-
-    def key(self, kid: str, *, include_retired: bool = False) -> Ed25519Key:
-        """The key `kid`, if published; or also if retired, when `include_retired`."""
-        retired = self.directory / "retired" / f"{kid}.jwk"
-        if include_retired and not (self.directory / f"{kid}.jwk").exists() and retired.exists():
-            return keyfile.load_or_create(retired)
-        return keyfile.load_or_create(self._published(kid))
-
-    def published(self) -> list[Ed25519Key]:
-        return [keyfile.load_or_create(f) for f in self._files()]
-
-    def active(self) -> Ed25519Key:
-        return self.key(self.state().active)
+    @classmethod
+    def create(
+        cls,
+        directory: Path,
+        *,
+        rotation_wait: float,
+        signature_lifetime: int,
+        clock: Callable[[], float] = time.time,
+    ) -> Keyring:
+        """Opens the keyring in `directory`, minting a first key on first boot only: when the
+        directory holds no key."""
+        if not any(directory.glob("*.jwk")):
+            _save(directory, KeyringState.first(_mint(directory).thumbprint))
+        return cls(
+            KeyStore.open(directory),
+            rotation_wait=rotation_wait,
+            signature_lifetime=signature_lifetime,
+            clock=clock,
+        )
 
     def publish(self) -> Ed25519Key:
         """Step 1: a new key in the directory. It doesn't sign yet."""
-        key = self._mint()
-        self._save(self.state().published_at(key.thumbprint, self._clock()))
+        key = _mint(self.store.directory)
+        self._save(self.store.state.published_at(key.thumbprint, self._clock()))
         return key
 
     def activate(self, kid: str) -> Ed25519Key:
         """Step 2: sign with `kid`, once every verifier's cached directory lists it."""
-        self._published(kid)
-        state = self.state()
+        self.store.key(kid)
+        state = self.store.state
         ready = state.published.get(kid, 0.0) + self.rotation_wait
         if self._clock() < ready:
             raise TooEarlyError(kid, "verifiers may not list it", ready - self._clock())
         if kid != state.active:
             self._save(state.activated(kid, self._clock()))
-        return self.active()
+        return self.store.active()
 
     def retire(self, kid: str) -> None:
         """Step 3: take `kid` out of the directory, once every signature it made has expired."""
-        path, state = self._published(kid), self.state()
+        self.store.key(kid)
+        state = self.store.state
         if kid == state.active:
             raise StillSigningError(kid)
         expired = state.stopped.get(kid, 0.0) + self.signature_lifetime
         if self._clock() < expired:
             raise TooEarlyError(kid, "its signatures last", expired - self._clock())
-        target = self.directory / "retired" / path.name
+        path = self.store.directory / f"{kid}.jwk"
+        target = self.store.directory / _RETIRED / path.name
         if target.exists():
             raise RetiredExistsError(target)
         target.parent.mkdir(exist_ok=True)
         path.rename(target)
+        self.store.refresh()
+
+    def _save(self, state: KeyringState) -> None:
+        _save(self.store.directory, state)
+        self.store.refresh()
+
+
+@dataclass(frozen=True)
+class SigningIdentity:
+    """A party's signing identity: its origin, and its keyring's active key."""
+
+    keyring: Keyring
+    origin: Origin
+
+    def signer(self) -> RequestSigner:
+        """Signs as the origin with the key active now, for the keyring's signature lifetime."""
+        return RequestSigner(
+            self.keyring.store.active(),
+            str(self.origin),
+            lifetime=self.keyring.signature_lifetime,
+        )

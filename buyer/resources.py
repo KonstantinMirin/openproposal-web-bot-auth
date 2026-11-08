@@ -29,7 +29,7 @@ class BuyerResources:
     keyring: Keyring
     #: The one client every call to a seller, a directory, or cfbot goes through.
     client: HTTPClient
-    #: The offer flow, over the store, the seller client, the keyring, and the plan.
+    #: The offer flow, over the store, the seller client, the signing identity, and the plan.
     flow: Buyer
     #: The one peer the buyer signs for without verifying an answer.
     cfbot: Cfbot

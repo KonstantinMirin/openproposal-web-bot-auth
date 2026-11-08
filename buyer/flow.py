@@ -15,7 +15,6 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from iab_agentic_primitives.web_bot_auth import RequestSigner
 from openproposal import Commit, LineItemWrites, dump
 
 from persistence.values import AuthMethod, Origin
@@ -27,7 +26,7 @@ from protocol.operations import (
     is_stored_result,
     parse_commit,
 )
-from shared.keyring import Keyring
+from shared.keyring import SigningIdentity
 from transport.control import Agreed, Outcome, Read, Refused, Rejected, SellerView
 
 from .credentials import Bearer, BuyerCredential, SignWith
@@ -35,7 +34,6 @@ from .plan import Plan
 from .refusal import Reason, Refusal
 from .repository import BuyerRepository, CommitKey, Counterparty, PendingCommit
 from .seller_client import Accepted, ReadProposal, Rejection, SellerClient
-from .settings import BuyerSettings
 
 
 @dataclass(frozen=True)
@@ -72,25 +70,19 @@ def _refused(seller: SellerView | None, method: AuthMethod, refusal: Refusal) ->
 
 
 class Buyer:
+    """The offer flow, over the buyer's records, its seller client, its signing identity, its
+    plan, and its own origin, which it keeps with each signed answer as the receiver."""
+
     def __init__(
         self,
         repo: BuyerRepository,
         client: SellerClient,
-        keyring: Keyring,
-        settings: BuyerSettings,
+        signing: SigningIdentity,
         plan: Plan,
+        self_origin: Origin,
     ) -> None:
-        self.repo, self.client, self.keyring = repo, client, keyring
-        self.settings, self.plan = settings, plan
-
-    @property
-    def signer(self) -> RequestSigner:
-        """Signs as this buyer's origin with its active key."""
-        return RequestSigner(
-            self.keyring.active(),
-            str(self.settings.self_origin),
-            lifetime=self.settings.signature_lifetime,
-        )
+        self.repo, self.client, self.signing = repo, client, signing
+        self.plan, self.self_origin = plan, self_origin
 
     def _call(self, seller_origin: Origin, method: AuthMethod) -> _Call | Refused:
         """The seller, resolved once from the buyer's own records, and the credential."""
@@ -105,7 +97,7 @@ class Buyer:
 
     def _credential(self, seller: Counterparty, method: AuthMethod) -> BuyerCredential | Refusal:
         if method == "web_bot_auth":
-            return SignWith(self.signer)
+            return SignWith(self.signing.signer())
         if seller.bearer_token is None:
             return Refusal(Reason.NOT_ISSUED, f"{seller.origin} issued this buyer no token")
         return Bearer(seller.bearer_token)
@@ -191,7 +183,7 @@ class Buyer:
         )
         evidence_id = self.repo.keep_agreement(
             pending.id,
-            answer.exchange.evidence(self.settings.self_origin),
+            answer.exchange.evidence(self.self_origin),
             answer.result.entries,
             attributed=attributed,
         )

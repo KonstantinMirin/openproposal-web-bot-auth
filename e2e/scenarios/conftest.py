@@ -23,7 +23,7 @@ from iab_agentic_primitives.web_bot_auth import Ed25519Key, HTTPRequest, Request
 from settings import BUYER, CFBOT, OPERATOR_KEY, SELLER
 
 from persistence.observe import BuyerRecords, SellerRecords
-from shared.keyring import Keyring
+from shared.keyring import KeyStore
 
 __all__ = ["BUYER", "CFBOT", "SELLER"]  # the stack's addresses, re-exported for the scenarios
 # Operator and test controls, reached inside the network, not through the TLS front.
@@ -31,14 +31,15 @@ BUYER_OPERATOR = "http://buyer:8000/operator"
 SELLER_FAULTS = "http://seller:8000/test/fault"
 CFBOT_RUN = "http://cfbot:8000/run"
 
-#: The buyer's keyring, read through its own API from a read-only mount. The waits
-#: only govern rotation steps, which the scenarios ask the buyer for, never this copy.
-BUYER_KEYS = Keyring(Path("/buyer-keys"), rotation_wait=0, signature_lifetime=0)
+#: The buyer's key directory, mounted read-only.
+BUYER_KEYS = Path("/buyer-keys")
 
 
 def buyer_key(kid: str | None = None) -> Ed25519Key:
-    """The buyer's active key, or its key `kid`, published or retired (shared/keyring.py)."""
-    return BUYER_KEYS.active() if kid is None else BUYER_KEYS.key(kid, include_retired=True)
+    """The buyer's active key, or its key `kid`, published or retired, as its key directory
+    holds them now. The read-only store reads them (shared/keyring.py) and never writes."""
+    keys = KeyStore.open(BUYER_KEYS)
+    return keys.active() if kid is None else keys.key(kid, include_retired=True)
 
 
 def signed(
