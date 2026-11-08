@@ -121,7 +121,7 @@ class Ed25519Key:
     """
 
     public_key: Ed25519PublicKey
-    _private_key: Ed25519PrivateKey = field(repr=False)
+    _private_key: Ed25519PrivateKey = field(repr=False)  # gitleaks:allow
     _okp: OKPKey = field(repr=False)
     _public_jwk: PublicJwk = field(repr=False)
 

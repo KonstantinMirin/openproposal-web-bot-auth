@@ -439,19 +439,19 @@ The live deployment differs from the local test only where production needs it:
 ## Where the pieces live
 
 - **The Web Bot Auth library**: the `iab_agentic_primitives.web_bot_auth`
-  module of [`iab-agentic-primitives`](https://github.com/KonstantinMirin/iab-agentic-primitives-wba/blob/feat/web-bot-auth/WEB_BOT_AUTH.md), documented in its
+  module of [`iab-agentic-primitives`](https://github.com/KonstantinMirin/iab-agentic-primitives/blob/feat/web-bot-auth/WEB_BOT_AUTH.md), documented in its
   `WEB_BOT_AUTH.md`. Every signature, verification, directory, and fetch rule
-  comes from it. The demo pins commit
-  `4cabcbe9b4c2e04b116ccdca85b44d4587bcf659` of the `refactor/wba-architecture`
-  branch of
-  [`iab-agentic-primitives-wba`](https://github.com/KonstantinMirin/iab-agentic-primitives-wba),
+  comes from it. The module is offered to IAB Tech Lab in
+  [IABTechLab/iab-agentic-primitives#4](https://github.com/IABTechLab/iab-agentic-primitives/pull/4).
+  The demo pins commit `3bcfb963bfa53a3c2fa598019dc8b052025620de`, the head of that pull request's
+  [`feat/web-bot-auth`](https://github.com/KonstantinMirin/iab-agentic-primitives/tree/feat/web-bot-auth) branch,
   vendored unchanged in
   [`vendor/iab-agentic-primitives/`](vendor/iab-agentic-primitives) and
   installed through a uv path source in [`pyproject.toml`](pyproject.toml).
   Its [`VENDORED.md`](vendor/iab-agentic-primitives/VENDORED.md) has the one
-  command that refreshes the copy. Once that commit is published, pinning it as
-  a git source is a one-line change to `[tool.uv.sources]`:
-  `iab-agentic-primitives = { git = "https://github.com/KonstantinMirin/iab-agentic-primitives-wba", rev = "<sha>" }`.
+  command that refreshes the copy. To install it from git instead, change one
+  line in `[tool.uv.sources]`:
+  `iab-agentic-primitives = { git = "https://github.com/KonstantinMirin/iab-agentic-primitives", rev = "<sha>" }`.
 - **The specification**: [OpenProposal 3.0](https://github.com/IABTechLab/OpenProposal/pull/142). The demo follows § 1.2
   (identity layers), § 2.8 (the Web Bot Auth profile), § 4.1.1 (binding
   record), § 4.1.2 (assent and signed-message evidence), § 4.3 (issued

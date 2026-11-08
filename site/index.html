@@ -121,7 +121,7 @@ signature-agent: sig1="https://buyer.wba-demo.noetis.dev/.well-known/http-messag
 signature-input: sig1=("@method" "@target-uri" "@authority" "content-type" "content-digest" "signature-agent";key="sig1");created=1794068629;keyid="ZKFm7HPxqUK7ECl0ppoCPHjrE2qTrz_bc_rJ58ippbA";alg="ed25519";expires=1794068929;nonce="Qb7KCDWAcaX2…";tag="web-bot-auth"
 signature: sig1=:5kF9XH4bsuauHZoFccx+QIPx31fC1lEEETIkSXE22ZRLN8OIL1otTSDNxFNjTIxgN+hb387+KZBuexTHnt1SAA==:</code></pre>
 <div class="prose">
-<p>OpenProposal § 2.8 profiles these rules for agent traffic: Ed25519 keys, exactly one signature per message, a lifetime of at most 300 seconds, and 60 seconds of clock skew. It adds no header, tag, key field, or error code, so a standard Web Bot Auth implementation configured with these rules interoperates. Read the <a href="https://github.com/IABTechLab/OpenProposal/pull/142">OpenProposal 3.0 specification</a> and the <a href="https://github.com/KonstantinMirin/iab-agentic-primitives-wba/blob/feat/web-bot-auth/WEB_BOT_AUTH.md">Web Bot Auth library</a> both agents use.</p>
+<p>OpenProposal § 2.8 profiles these rules for agent traffic: Ed25519 keys, exactly one signature per message, a lifetime of at most 300 seconds, and 60 seconds of clock skew. It adds no header, tag, key field, or error code, so a standard Web Bot Auth implementation configured with these rules interoperates. Read the <a href="https://github.com/IABTechLab/OpenProposal/pull/142">OpenProposal 3.0 specification</a> and the <a href="https://github.com/KonstantinMirin/iab-agentic-primitives/blob/feat/web-bot-auth/WEB_BOT_AUTH.md">Web Bot Auth library</a> both agents use.</p>
 </div>
 </section>
 
@@ -594,7 +594,7 @@ http-signature-directory https://buyer.wba-demo.noetis.dev/.well-known/http-mess
 </main>
 
 <footer>
-  Source: the <a href="https://github.com/KonstantinMirin/iab-agentic-primitives-wba/blob/feat/web-bot-auth/WEB_BOT_AUTH.md">Web Bot Auth library</a> and the <a href="https://github.com/IABTechLab/OpenProposal/pull/142">OpenProposal 3.0 specification</a>, § 2.8. Diagrams and text describe the demo as deployed.
+  Source: the <a href="https://github.com/KonstantinMirin/iab-agentic-primitives/blob/feat/web-bot-auth/WEB_BOT_AUTH.md">Web Bot Auth library</a> and the <a href="https://github.com/IABTechLab/OpenProposal/pull/142">OpenProposal 3.0 specification</a>, § 2.8. Diagrams and text describe the demo as deployed.
 </footer>
 
 <script src="run.js" defer></script>

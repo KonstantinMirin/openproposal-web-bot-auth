@@ -37,8 +37,8 @@ dev = [
 
 [tool.uv.sources]
 # The library, vendored at one commit (vendor/iab-agentic-primitives/VENDORED.md
-# names it). Once that commit is published, a git source pins it instead:
-# { git = "https://github.com/KonstantinMirin/iab-agentic-primitives-wba", rev = "<sha>" }.
+# names it). A git source can pin the same commit instead:
+# { git = "https://github.com/KonstantinMirin/iab-agentic-primitives", rev = "<sha>" }.
 iab-agentic-primitives = { path = "vendor/iab-agentic-primitives", editable = true }
 openproposal-sdk = { path = "vendor/openproposal-sdk", editable = true }
 

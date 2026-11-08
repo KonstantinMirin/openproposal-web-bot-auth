@@ -6,9 +6,9 @@ commit and copied unchanged: the library's `pyproject.toml`, `README.md`,
 
 | | |
 | :--- | :--- |
-| Source repository | [`KonstantinMirin/iab-agentic-primitives-wba`](https://github.com/KonstantinMirin/iab-agentic-primitives-wba) |
-| Branch | `refactor/wba-architecture` |
-| Commit | `4cabcbe9b4c2e04b116ccdca85b44d4587bcf659` |
+| Source repository | [`KonstantinMirin/iab-agentic-primitives`](https://github.com/KonstantinMirin/iab-agentic-primitives), the head of [IABTechLab/iab-agentic-primitives#4](https://github.com/IABTechLab/iab-agentic-primitives/pull/4) |
+| Branch | `feat/web-bot-auth` |
+| Commit | `3bcfb963bfa53a3c2fa598019dc8b052025620de` |
 | Vendored on | 2026-11-08 |
 
 `pyproject.toml` at the repository root installs it with a uv path source
