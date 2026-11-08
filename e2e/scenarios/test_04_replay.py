@@ -4,7 +4,7 @@ import httpx
 from openproposal import Proposal
 
 from e2e.scenarios.stack import SELLER, signed
-from transport.control import ErrorBody
+from transport.control import RefusalBody
 
 
 def test_replayed_request_is_refused(web: httpx.Client) -> None:
@@ -17,4 +17,4 @@ def test_replayed_request_is_refused(web: httpx.Client) -> None:
 
     again = web.get(url, headers=headers)
     assert again.status_code == 429
-    assert ErrorBody.model_validate_json(again.content).code == "nonce-replayed"
+    assert RefusalBody.model_validate_json(again.content).code == "nonce-replayed"

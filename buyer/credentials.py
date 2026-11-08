@@ -3,6 +3,7 @@
 A request carries exactly one credential. `SignWith` holds the signer of the
 buyer's active key; `Bearer` holds the token the seller issued. Neither builds
 an auth: `seller_call` does, and it is the only builder of one for a seller.
+The library builds the client of the call from that auth.
 It requires the response verifier and the seller's origin, so every call to a
 seller verifies the signed answer against that origin and, for a signed
 request, its binding to the request. The credential adds only what it carries:
@@ -14,7 +15,6 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 
-import httpx
 from iab_agentic_primitives.web_bot_auth import RequestSigner, ResponseVerifier
 from iab_agentic_primitives.web_bot_auth.httpx import WebBotAuth
 from pydantic import SecretStr
@@ -56,8 +56,9 @@ class SellerCall:
     """How one request to a seller goes out: the auth, and the header lines the credential
     adds."""
 
-    #: Signs the request with a signature credential; always verifies the signed answer.
-    auth: httpx.Auth
+    #: Signs the request with a signature credential; always verifies the signed answer. The
+    #: library builds the call's client from it.
+    auth: WebBotAuth
     headers: Mapping[str, str]
 
 

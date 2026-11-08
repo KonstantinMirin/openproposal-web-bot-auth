@@ -56,7 +56,7 @@ from tests.stack import (
     seller_settings,
     signed_headers,
 )
-from transport.control import ErrorBody
+from transport.control import RefusalBody
 
 #: The seller alone, and the buyer it deals with, under origins other than the demo's. The
 #: buyer's is under a public suffix, so a signature can attribute an entry to it (§ 4.1.2).
@@ -214,7 +214,7 @@ def test_a_failing_credential_is_refused_never_downgraded(
     response = seller.get("/whoami", headers=row.headers(parties))
     assert response.status_code == row.status
     # The library's refusal body, whose error is its reason or the boundary's own.
-    assert ErrorBody.model_validate_json(response.content).code == row.reason
+    assert RefusalBody.model_validate_json(response.content).code == row.reason
     assert {name: response.headers.get(name) for name in row.hint} == row.hint
 
 
@@ -225,7 +225,7 @@ def test_a_replayed_signature_is_refused_with_429_and_asked_to_sign_again(
     assert WHOAMI.validate_json(seller.get("/whoami", headers=headers).content).kind == "resolved"
     again = seller.get("/whoami", headers=headers)
     assert again.status_code == 429
-    assert ErrorBody.model_validate_json(again.content).code == "nonce-replayed"
+    assert RefusalBody.model_validate_json(again.content).code == "nonce-replayed"
     assert again.headers["accept-signature"] == accept_signature(has_body=False)
 
 
@@ -235,7 +235,7 @@ def test_a_nonce_store_that_is_down_is_refused_with_503_and_retry_after(
     with TestClient(_app(tmp_path, parties, DownNonceStore()), base_url=SELLER) as client:
         response = client.get("/whoami", headers=signed("GET", "/whoami", parties.buyer))
     assert response.status_code == 503
-    assert ErrorBody.model_validate_json(response.content).code == "nonce-store-unavailable"
+    assert RefusalBody.model_validate_json(response.content).code == "nonce-store-unavailable"
     assert response.headers["retry-after"] == "1"
     assert "accept-signature" not in response.headers
 

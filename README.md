@@ -128,7 +128,8 @@ The code path, in order:
 A credential that fails is refused at the boundary, before anything parses the
 body (the boundary reads it, because the signature covers it through
 `Content-Digest`). It's never downgraded to "no credential", and the refusal is
-a transport status with no `errors[]` object:
+a transport status with no `errors[]` object. Its body is the library's form,
+`{"error": <reason>, "status": <status>}`; the detail goes to the seller's log:
 
 | Status | When | The answer also carries |
 | :--- | :--- | :--- |
@@ -152,9 +153,11 @@ identity.
 The same flow runs with either credential. The buyer picks one per call
 ([`buyer/credentials.py`](buyer/credentials.py)): `SignWith` signs the request
 with `WebBotAuth(signer, verifier, expect=seller)`, and `Bearer` sends the
-token with `WebBotAuth.verify_only(verifier, expect=seller)`. Either way the
-buyer verifies the seller's signed answer against the origin it knows the
-seller by. On the seller, both reach the same principal, the same
+token with `WebBotAuth.verify_only(verifier, expect=seller)`. The library
+builds each call's client from that configuration, over the one transport the
+buyer's lifespan owns, so every request goes through its signing transport.
+Either way the buyer verifies the seller's signed answer against the origin it
+knows the seller by. On the seller, both reach the same principal, the same
 `ResolvedCaller` type, and the same offer code; only the method differs, and
 the offer logic never sees it.
 
@@ -439,7 +442,7 @@ The live deployment differs from the local test only where production needs it:
   module of [`iab-agentic-primitives`](https://github.com/KonstantinMirin/iab-agentic-primitives-wba/blob/feat/web-bot-auth/WEB_BOT_AUTH.md), documented in its
   `WEB_BOT_AUTH.md`. Every signature, verification, directory, and fetch rule
   comes from it. The demo pins commit
-  `a7fb27c0141962cf0decc7d458921f5afbe1256e` of the `refactor/wba-architecture`
+  `664ecf76ac4eb07926ba61637df6b2dbe9cb6403` of the `refactor/wba-architecture`
   branch of
   [`iab-agentic-primitives-wba`](https://github.com/KonstantinMirin/iab-agentic-primitives-wba),
   vendored unchanged in

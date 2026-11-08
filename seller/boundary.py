@@ -47,7 +47,7 @@ from iab_agentic_primitives.web_bot_auth.asgi import ServerEdge
 from starlette.requests import Request
 
 from persistence.values import HeaderLine, KeptRequest, Origin, Provenance, SignedRequest, Signer
-from transport.control import BoundaryReason, ErrorBody
+from transport.control import BoundaryReason, RefusalBody
 from transport.wba import fetch_of, is_signed, origin_of, request_of, to_library
 
 from .caller import (
@@ -68,7 +68,8 @@ class Refused(Exception):
 
     `body` is what the refusal answers with: for a signature, the body the
     library's `refusal_response` renders; for the boundary's own reasons, the
-    same `ErrorBody` form (transport/control.py).
+    same form, a `RefusalBody` (transport/control.py). `detail` stays in the
+    seller's log.
     """
 
     def __init__(
@@ -84,7 +85,7 @@ class Refused(Exception):
         self.status, self.reason, self.detail = status, reason, detail
         self.headers: Mapping[str, str] = headers or {}
         self.body = (
-            ErrorBody(error=reason, detail=detail).model_dump_json().encode()
+            RefusalBody(error=reason, status=status).model_dump_json().encode()
             if body is None
             else body
         )

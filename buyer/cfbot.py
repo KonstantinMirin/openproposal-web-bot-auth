@@ -18,23 +18,23 @@ from persistence.values import Origin
 from shared.keyring import SigningIdentity
 from transport.control import CFBOT_VERDICT, CloudflareCheck
 from transport.operator import ControlError
+from transport.wba import Network
 
 
 class Cfbot:
-    def __init__(self, http: httpx.AsyncClient, origin: Origin, signing: SigningIdentity) -> None:
-        self._http, self._url, self._signing = http, f"{origin}/verify", signing
+    def __init__(self, network: Network, origin: Origin, signing: SigningIdentity) -> None:
+        self._network, self._url, self._signing = network, f"{origin}/verify", signing
 
     async def verify(self, body: bytes) -> CloudflareCheck:
         """Signs `body` to cfbot's `/verify` and returns its status and verdict. A cfbot that
         doesn't answer is a 502 `cfbot-unreachable`; an answer that is no verdict, a 502
         `cfbot-malformed`."""
+        auth = WebBotAuth(self._signing.signer())
         try:
-            response = await self._http.post(
-                self._url,
-                content=body,
-                headers={"Content-Type": "application/json"},
-                auth=WebBotAuth(self._signing.signer()),
-            )
+            async with self._network.signed(auth) as http:
+                response = await http.post(
+                    self._url, content=body, headers={"Content-Type": "application/json"}
+                )
         except httpx.HTTPError as e:
             detail = f"cfbot didn't answer: {e}"
             raise ControlError(HTTPStatus.BAD_GATEWAY, "cfbot-unreachable", detail) from e

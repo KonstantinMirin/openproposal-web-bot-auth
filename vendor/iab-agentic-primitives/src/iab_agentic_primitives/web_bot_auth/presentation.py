@@ -2,9 +2,11 @@
 
 :func:`refusal_response` turns a :class:`~.errors.WebBotAuthError` into the
 response a verifier sends: the refusal's status, a JSON body
-``{"error": <reason>, "detail": <detail>}``, ``Accept-Signature`` on ``403``
+``{"error": <reason>, "status": <status>}``, ``Accept-Signature`` on ``403``
 and ``429``, and ``Retry-After`` on ``503``. The ASGI middlewares send it, and
-a framework route returns it.
+a framework route returns it. No body carries an error's detail, such as a
+directory fetch error or a store's message: the detail is for logs, and the
+verifiers log it.
 
 The ASGI helpers' other answers come from here too: ``405`` on the directory
 path, ``503`` when a key source publishes no keys, ``413`` for a body over the
@@ -24,8 +26,9 @@ from .rules import accept_signature
 NO_KEYS_RETRY_AFTER = 5
 
 
-def _json(status: int, error: str, detail: str, *extra: tuple[str, str]) -> Answer:
-    body = json.dumps({"error": error, "detail": detail}).encode()
+def _json(status: int, error: str, *extra: tuple[str, str]) -> Answer:
+    """A JSON answer of ``status`` that names ``error`` and nothing else."""
+    body = json.dumps({"error": error, "status": status}).encode()
     return Answer(status, HeaderLines([("content-type", "application/json"), *extra]), body)
 
 
@@ -33,7 +36,8 @@ def refusal_response(error: WebBotAuthError, *, has_body: bool) -> Answer:
     """The response that refuses a message with ``error``.
 
     ``has_body`` says whether the refused request had a body, which sets the
-    components ``Accept-Signature`` asks for.
+    components ``Accept-Signature`` asks for. The body names the reason and
+    the status only; ``str(error)`` stays in the logs.
     """
     refusal = error.refusal
     extra: list[tuple[str, str]] = []
@@ -41,18 +45,19 @@ def refusal_response(error: WebBotAuthError, *, has_body: bool) -> Answer:
         extra.append(("accept-signature", accept_signature(has_body=has_body)))
     if refusal.retry_after is not None:
         extra.append(("retry-after", str(refusal.retry_after)))
-    return _json(error.status, error.reason, str(error), *extra)
+    return _json(error.status, error.reason, *extra)
 
 
 def unsignable_response(error: SigningError) -> Answer:
     """``500`` ``response-unsignable``: the application answered with a response the
-    profile can't sign, which is sent in place of the unsigned answer."""
-    return _json(500, "response-unsignable", str(error))
+    profile can't sign, which is sent in place of the unsigned answer. The
+    middleware logs ``error``; the body doesn't carry it."""
+    return _json(500, "response-unsignable")
 
 
-def body_too_large_response(limit: int) -> Answer:
-    """``413`` ``body-too-large``: a request body over ``limit`` bytes."""
-    return _json(413, "body-too-large", f"the request body exceeds {limit} bytes")
+def body_too_large_response() -> Answer:
+    """``413`` ``body-too-large``: a request body over the edge's limit."""
+    return _json(413, "body-too-large")
 
 
 def method_not_allowed_response() -> Answer:

@@ -35,7 +35,7 @@ from e2e.scenarios.stack import (
 from persistence.observe import SellerRecords
 from seller.caller import WHOAMI, ResolvedView, SignatureCredential
 from transport.client import ControlClient, ControlFailed
-from transport.control import ACTIVATE, PUBLISH, READ, RETIRE, ErrorBody, Read, ReadTrigger
+from transport.control import ACTIVATE, PUBLISH, READ, RETIRE, Read, ReadTrigger, RefusalBody
 
 URL = f"{SELLER}/whoami"
 
@@ -112,6 +112,6 @@ def test_key_rotation(
     assert retired.thumbprint == old
     refused = web.get(URL, headers=signed("GET", URL, key=retired))
     assert refused.status_code == 403
-    assert ErrorBody.model_validate_json(refused.content).code == "key-not-found"
+    assert RefusalBody.model_validate_json(refused.content).code == "key-not-found"
 
     assert _resolved(web, new).principal.id == buyer_principal(seller_records).id

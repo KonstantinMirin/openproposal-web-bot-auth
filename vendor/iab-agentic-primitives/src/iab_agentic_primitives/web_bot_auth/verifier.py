@@ -24,7 +24,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Awaitable, Callable, Collection
 from dataclasses import InitVar, dataclass, field
-from typing import Final, Literal, TypeVar
+from typing import Final, Literal
 
 from . import _sig
 from ._wire import (
@@ -73,8 +73,6 @@ SAME_ORIGIN: Final = "same-origin"
 #: the identity of the host the request went to, :meth:`Origin.of_url` of its URL;
 #: or ``None``, any identity.
 ExpectedOrigin = Origin | Literal["same-origin"] | None
-
-M = TypeVar("M", HTTPRequest, HTTPResponse)
 
 
 class _Token:
@@ -394,20 +392,17 @@ class _Verifier:
     def _now(self, now: UnixSeconds | None) -> UnixSeconds:
         return self.clock() if now is None else now
 
-    async def _authenticate(
-        self,
-        message: M,
-        selected: _Selected,
-        keyid: KeyId,
-        required: tuple[ComponentId, ...],
-        now: UnixSeconds,
+    async def _authenticate[M: (HTTPRequest, HTTPResponse), N: (str, str | None)](
+        self, message: M, selected: _Selected, keyid: KeyId, rules: Rules[M, N], now: UnixSeconds
     ) -> _Authenticated:
-        """Resolve the key and verify the signature, with the library checking ``required``."""
+        """Resolve the key and verify the signature, with the library checking the
+        components ``rules`` require and the content they cover."""
         member = selected.member
+        required = rules.components_for(message, member.label)
         if keyid in self.keys.refused:
             raise refuse(Refusal.REJECTED_KEY, f"key {keyid} is refused")
         resolved = await self.resolver.resolve(selected.origin, keyid, now=now)
-        body = _covered_body(member, message.headers, message.body)
+        body = _covered_body(member, message.headers, rules.content(message))
         result = _sig.verify(
             message, member, resolved.public_key, require_components=required, body=body
         )
@@ -457,7 +452,7 @@ class RequestVerifier(_Verifier):
             keyid, nonce = _check_parameters(selected.member, REQUEST, at)
             required = REQUEST.components_for(request, selected.member.label)
             _check_components(selected.member, required, REQUEST)
-            authenticated = await self._authenticate(request, selected, keyid, required, at)
+            authenticated = await self._authenticate(request, selected, keyid, REQUEST, at)
             await self._record(authenticated, nonce, at)
             return authenticated.request(nonce)
 
@@ -516,7 +511,7 @@ class ResponseVerifier(_Verifier):
             required = RESPONSE.components_for(response, selected.member.label)
             _check_components(selected.member, required, RESPONSE)
             _check_signer(selected.origin, _expected_signer(response, expected_origin))
-            authenticated = await self._authenticate(response, selected, keyid, required, at)
+            authenticated = await self._authenticate(response, selected, keyid, RESPONSE, at)
             bound = web_bot_auth_label(response.request.headers) is not None
             return authenticated.response(bound=bound)
 

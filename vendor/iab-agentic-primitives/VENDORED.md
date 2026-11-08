@@ -8,7 +8,7 @@ commit and copied unchanged: the library's `pyproject.toml`, `README.md`,
 | :--- | :--- |
 | Source repository | [`KonstantinMirin/iab-agentic-primitives-wba`](https://github.com/KonstantinMirin/iab-agentic-primitives-wba) |
 | Branch | `refactor/wba-architecture` |
-| Commit | `a7fb27c0141962cf0decc7d458921f5afbe1256e` |
+| Commit | `664ecf76ac4eb07926ba61637df6b2dbe9cb6403` |
 | Vendored on | 2026-11-08 |
 
 `pyproject.toml` at the repository root installs it with a uv path source

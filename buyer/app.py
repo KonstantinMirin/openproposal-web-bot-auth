@@ -55,7 +55,7 @@ from transport.control import (
 )
 from transport.lifespan import lifespan, resolver_or_default
 from transport.operator import ControlError, OperatorKey, control_route
-from transport.wba import Transport, library_origin
+from transport.wba import Network, Transport, library_origin
 
 from .cfbot import Cfbot
 from .flow import Buyer
@@ -63,7 +63,7 @@ from .http import install_handlers
 from .plan import Plan
 from .repository import BuyerRepository, NotPendingError
 from .resources import BuyerResources, CfbotDep, FlowDep, KeyringDep, SettingsDep
-from .seller_client import HTTPClient, SellerClient
+from .seller_client import SellerClient
 from .settings import BuyerSettings
 
 #: The routes any caller reaches. Agents reach only the directory, which the middleware serves.
@@ -155,7 +155,7 @@ def create_app(
     transport: Transport | None = None,
     clock: Callable[[], float] = time.time,
 ) -> ASGIApp:
-    """The buyer, from its settings. Its lifespan owns the store and the one client.
+    """The buyer, from its settings. Its lifespan owns the store and the one network.
 
     `resolver` replaces the directory resolver the buyer verifies sellers' answers
     with. `transport` answers in place of the network, and `clock` tells the keyring
@@ -204,7 +204,7 @@ def _check_lifetime(lifetime: int) -> None:
 
 @dataclass(frozen=True)
 class _Parts:
-    """What `create_app` builds before the lifespan opens the store and the client."""
+    """What `create_app` builds before the lifespan opens the store and the network."""
 
     settings: BuyerSettings
     #: The buyer's one signing identity, over its keyring; the flow and cfbot both sign with it.
@@ -212,17 +212,17 @@ class _Parts:
     plan: Plan
     resolver: KeyResolver | None
 
-    def resources(self, store: BuyerRepository, client: HTTPClient) -> BuyerResources:
-        """The buyer's resources over its open store and client: the offer flow, with the
+    def resources(self, store: BuyerRepository, network: Network) -> BuyerResources:
+        """The buyer's resources over its open store and network: the offer flow, with the
         sellers its settings name on this boot, and cfbot, both signing with the one signing
         identity."""
         settings = self.settings
         signing = self.signing
-        keys = resolver_or_default(client, settings.max_cache_age, self.resolver)
-        sellers = SellerClient(client, keys, settings.own)
+        keys = resolver_or_default(network.client, settings.max_cache_age, self.resolver)
+        sellers = SellerClient(network, keys, settings.own)
         flow = Buyer(store, settings.counterparties, sellers, signing, self.plan)
-        cfbot = Cfbot(client, settings.peer_cfbot_origin, signing)
-        return BuyerResources(settings, store, signing.keyring, client, flow, cfbot)
+        cfbot = Cfbot(network, settings.peer_cfbot_origin, signing)
+        return BuyerResources(settings, store, signing.keyring, network.client, flow, cfbot)
 
 
 def app_from_env() -> ASGIApp:

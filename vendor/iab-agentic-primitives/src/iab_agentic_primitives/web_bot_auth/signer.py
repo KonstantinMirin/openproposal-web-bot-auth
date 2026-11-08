@@ -101,15 +101,18 @@ def _digest_lines(lines: HeaderLines, body: bytes) -> HeaderLines:
     return lines
 
 
-def _prepared[M: (HTTPRequest, HTTPResponse)](message: M, config: SignerConfig) -> M:
-    """``message`` with the lines its signature adds: ``Content-Digest`` and ``Signature-Agent``."""
+def _prepared[M: (HTTPRequest, HTTPResponse)](
+    message: M, config: SignerConfig, content: bytes
+) -> M:
+    """``message`` with the lines its signature adds: ``Content-Digest`` for ``content``,
+    the body the rules cover, and ``Signature-Agent``."""
     lines = message.headers
     if lines.carries_signature_field() or "signature-agent" in lines:
         raise SigningError(
             "the message already carries a signature field; the profile signs once per message"
         )
-    if message.body:
-        lines = _digest_lines(lines, message.body)
+    if content:
+        lines = _digest_lines(lines, content)
     agent = f'{config.label}="{config.origin.directory_url}"'
     return replace(message, headers=lines.with_added("Signature-Agent", agent))
 
@@ -119,7 +122,7 @@ def _sign[M: (HTTPRequest, HTTPResponse), N: (str, str | None)](
 ) -> M:
     """``message`` signed under ``rules`` as ``config`` says: the one signing core."""
     created = config.clock() if now is None else now
-    prepared = _prepared(message, config)
+    prepared = _prepared(message, config, rules.content(message))
     expires = UnixSeconds(created + config.lifetime)
     stamp = Stamp(config.label, config.key.thumbprint, created, expires)
     params = rules.params_for(prepared, stamp, nonce)
@@ -168,8 +171,9 @@ class RequestSigner(_Signer):
 
         ``nonce`` is a fresh 64-byte nonce by default; one given must be in a
         form the profile accepts. The URL is signed, and returned, as
-        :func:`~.message.target_uri` gives it, without an empty query, as a
-        server's edge rebuilds it; send the request to the returned URL.
+        :func:`~.message.target_uri` gives it, without a fragment or an empty
+        query, as a server's edge rebuilds it; send the request to the
+        returned URL.
         Raises :class:`SigningError` for a request the profile can't sign.
         """
         chosen = generate_nonce() if nonce is None else nonce

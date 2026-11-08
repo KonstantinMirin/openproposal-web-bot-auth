@@ -22,12 +22,18 @@ resolver. Closing the runtime cancels the calls still running, which raise
 A sync call made inside a running event loop raises ``RuntimeError``, as
 ``asyncio.run`` does, instead of blocking that loop: await the verifier there,
 or :meth:`SyncRuntime.run_async` for a resolver the runtime owns.
+
+A runtime belongs to the process that made it. A forked child inherits the
+runtime but not its thread, so a call there raises :class:`ConfigurationError`
+instead of waiting on a loop nothing runs: a pre-fork server (gunicorn
+``--preload``) creates the runtime, and the resolver, in each worker.
 """
 
 from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import os
 import threading
 from collections.abc import Coroutine
 from dataclasses import dataclass
@@ -50,11 +56,16 @@ class SyncRuntime:
     ``resolver``, when given, is the resolver the runtime owns: it is closed
     on the runtime's loop when the runtime closes. Use it as a context
     manager, or call :meth:`close`.
+
+    The runtime belongs to the process that made it: in a forked child, a
+    call raises :class:`ConfigurationError`, and :meth:`close` only marks it
+    closed, leaving the parent's loop, thread, and connections alone.
     """
 
-    __slots__ = ("_closed", "_loop", "_ready", "_resolver", "_stopping", "_thread")
+    __slots__ = ("_closed", "_loop", "_pid", "_ready", "_resolver", "_stopping", "_thread")
 
     def __init__(self, resolver: DirectoryResolver | None = None) -> None:
+        self._pid: Final = os.getpid()
         self._resolver: Final = resolver
         self._ready: Final = threading.Event()
         self._loop: asyncio.AbstractEventLoop | None = None
@@ -84,7 +95,16 @@ class SyncRuntime:
         if self._resolver is not None:
             await self._resolver.aclose()
 
+    def _forked(self) -> bool:
+        return os.getpid() != self._pid
+
     def _submit(self, coroutine: Coroutine[object, object, T]) -> concurrent.futures.Future[T]:
+        if self._forked():
+            coroutine.close()
+            raise ConfigurationError(
+                f"the sync runtime was created in process {self._pid}, before a fork; "
+                "create the runtime and its resolver in the worker"
+            )
         if self._closed or self._loop is None:
             coroutine.close()
             raise ConfigurationError("the sync runtime is closed")
@@ -94,8 +114,8 @@ class SyncRuntime:
         """Runs ``coroutine`` on the runtime's loop and returns its result.
 
         Raises ``RuntimeError`` inside a running event loop, and
-        :class:`ConfigurationError` when the runtime is closed, or closes
-        while the call runs.
+        :class:`ConfigurationError` when the runtime is closed, closes while
+        the call runs, or was created before a fork.
         """
         try:
             asyncio.get_running_loop()
@@ -127,11 +147,15 @@ class SyncRuntime:
     def close(self) -> None:
         """Cancels the calls still running, closes the resolver it owns, and stops the thread.
 
-        Closing twice does nothing.
+        Closing twice does nothing. In a forked child it only marks the
+        runtime closed: the loop and the resolver's connections are the
+        parent's.
         """
         if self._closed:
             return
         self._closed = True
+        if self._forked():
+            return
         if self._loop is not None and self._stopping is not None:
             self._loop.call_soon_threadsafe(self._stopping.set)
         self._thread.join()

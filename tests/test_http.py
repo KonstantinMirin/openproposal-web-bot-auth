@@ -1,12 +1,13 @@
-"""Both agents' HTTP seams: a status for every error code, and two error body forms only.
+"""Both agents' HTTP seams: a status for every error code, and three error body forms only.
 
 - `status_for` is total over `ErrorObjectCode`. Each core code gets § 2.4's informative status, an
   extension code acts on `retry`, and a code that is neither can't be built.
 - Through both apps (tests/stack.py): every route answers a request that
   fails, for a missing operator key, a method or path it doesn't serve, a body
   it refuses, a domain error, a refused credential, or a failure nothing
-  handles, with a body that is either a § 2.4 `{"errors": [...]}` or an
-  `ErrorBody` (`{"error", "detail"}`), and a 500 holds no traceback.
+  handles, with a body that is a § 2.4 `{"errors": [...]}`, an `ErrorBody`
+  (`{"error", "detail"}`), or, for a refused credential, a `RefusalBody`
+  (`{"error", "status"}`, the library's form), and a 500 holds no traceback.
 """
 
 from __future__ import annotations
@@ -37,6 +38,7 @@ from transport.control import (
     READ,
     RETIRE,
     ErrorBody,
+    RefusalBody,
 )
 
 #: § 2.4, informative: the status each core code fits over HTTP.
@@ -428,16 +430,18 @@ FAILING = [
 
 
 def _code(response: httpx.Response) -> str:
-    """The code of a failing answer, read as one of the two forms; neither fails the test."""
-    try:
-        return ErrorBody.model_validate_json(response.content).code
-    except ValidationError:
-        (error,) = parse_errors(response.content)
-        return error.code
+    """The code of a failing answer, read as one of the three forms; none fails the test."""
+    for form in (ErrorBody, RefusalBody):
+        try:
+            return form.model_validate_json(response.content).code
+        except ValidationError:
+            pass
+    (error,) = parse_errors(response.content)
+    return error.code
 
 
 @pytest.mark.parametrize("row", FAILING, ids=lambda row: row.name)
-def test_every_failing_answer_is_an_error_body_or_the_errors_envelope(
+def test_every_failing_answer_is_an_error_body_a_refusal_or_the_errors_envelope(
     stack: Stack, row: Failing
 ) -> None:
     if row.before is not None:

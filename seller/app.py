@@ -20,7 +20,6 @@ from datetime import UTC, datetime
 from functools import partial
 from http import HTTPStatus
 
-import httpx
 from fastapi import APIRouter, Depends, FastAPI
 from fastapi.responses import JSONResponse
 from iab_agentic_primitives.web_bot_auth import (
@@ -41,6 +40,7 @@ from protocol.documents import loads_yaml
 from transport.control import HEALTH, ISSUE, Health, Issued, IssueRequest
 from transport.lifespan import lifespan, resolver_or_default
 from transport.operator import ControlError, OperatorKey, control_route
+from transport.wba import Network
 
 from .boundary import IdentityBoundary
 from .caller import WhoAmI
@@ -113,7 +113,7 @@ def create_app(
     nonces: NonceStore | None = None,
     resolver: KeyResolver | None = None,
 ) -> ASGIApp:
-    """The seller, from its settings. Its lifespan owns the store, the client, and the boundary.
+    """The seller, from its settings. Its lifespan owns the store, the network, and the boundary.
 
     `nonces` and `resolver` replace the in-memory nonce store and the directory
     resolver, as a deployment with several workers or a test does. The result is
@@ -148,7 +148,7 @@ def create_app(
 
 @dataclass(frozen=True)
 class _Parts:
-    """What `create_app` builds before the lifespan opens the store and the client."""
+    """What `create_app` builds before the lifespan opens the store and the network."""
 
     settings: SellerSettings
     issuer: Issuer
@@ -157,8 +157,8 @@ class _Parts:
     nonces: NonceStore | None
     resolver: KeyResolver | None
 
-    def resources(self, store: SqliteSellerStore, client: httpx.AsyncClient) -> SellerResources:
-        """The seller's resources over its open store and client: its buyer, as its
+    def resources(self, store: SqliteSellerStore, network: Network) -> SellerResources:
+        """The seller's resources over its open store and network: its buyer, as its
         settings name it on this boot, and the identity boundary over the store's
         principals and the request verifier. Settings that would rewrite the buyer's
         recorded identity raise `IdentityChanged`, and the seller doesn't start."""
@@ -170,11 +170,11 @@ class _Parts:
             buyer_legal_name=settings.peer_buyer_legal_name,
             bearer_token=settings.bearer_token,
         )
-        keys = resolver_or_default(client, settings.max_cache_age, self.resolver)
+        keys = resolver_or_default(network.client, settings.max_cache_age, self.resolver)
         nonces = MemoryNonceStore() if self.nonces is None else self.nonces
         verifier = RequestVerifier(keys, identity=self.edge.identity, nonces=nonces)
         boundary = IdentityBoundary(store, verifier, self.edge)
-        return SellerResources(store, client, boundary, self.issuer)
+        return SellerResources(store, network.client, boundary, self.issuer)
 
 
 def _with_faults(agent: FastAPI, signed: ASGIApp, edge: ServerEdge) -> FaultInjection:

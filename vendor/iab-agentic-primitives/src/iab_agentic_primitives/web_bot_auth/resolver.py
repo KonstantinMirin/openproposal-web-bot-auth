@@ -7,9 +7,13 @@ directory is good for (OpenProposal § 2.8.3):
 - It fetches exactly ``https://<host>/.well-known/http-message-signatures-directory``
   and verifies the response with :func:`~.directory.verify_directory` under
   one :class:`~.directory.FetchLimits`, at the time it was fetched.
-- The store keeps the response as plain data. The resolver verifies what the
-  store returns again, as fetched, for the origin it asked for and under its
-  own limits; a stored response that doesn't verify is a cache miss.
+- A directory is verified once, when it enters the process: from the fetcher,
+  or as bytes the store returns that the resolver hasn't verified. The
+  resolver holds each :class:`~.directory.VerifiedDirectory` in memory by
+  origin, and answers from it while the store returns the response it was
+  verified from. Stored bytes it doesn't hold are verified, as fetched, for
+  the origin it asked for and under its own limits; a stored response that
+  doesn't verify is a cache miss.
 - The resolver's own clock stamps each fetch and judges the cache: a
   directory younger than :attr:`CachePolicy.max_cache_age` answers every
   keyid without a fetch. A directory that resolves without the key replaces
@@ -53,6 +57,9 @@ if TYPE_CHECKING:
     from .fetcher import HttpxDirectoryFetcher
 
 logger = logging.getLogger(__name__)
+
+#: The most verified directories a resolver holds in memory; past it, the oldest goes.
+_MAX_HELD: Final = 10_000
 
 
 @dataclass(frozen=True, slots=True)
@@ -138,8 +145,13 @@ class DirectoryResolver:
     and judges its cache and failures by. Each is fixed when the resolver is
     made.
 
-    What the store returns is verified again, at the time it was fetched and
-    under ``limits``; a response that doesn't verify is a cache miss. A fresh
+    A directory is verified once, when it enters the process. The resolver
+    holds each verified directory in memory by origin, for a bounded number
+    of origins, and answers from it while the store returns the
+    response it was verified from, so a cache hit or an unknown keyid costs
+    no verification. A stored response it doesn't hold, such as one another
+    worker wrote, is verified at the time it was fetched and under
+    ``limits``; a response that doesn't verify is a cache miss. A fresh
     directory answers every keyid without a fetch, so an unknown keyid never
     causes one. A stale but valid directory is fetched again; when that fetch
     fails, the stored keys still answer. Only a refusal is a failed fetch; any
@@ -159,6 +171,7 @@ class DirectoryResolver:
         "_closed",
         "_fetcher",
         "_flights",
+        "_held",
         "_limits",
         "_loop",
         "_owned",
@@ -188,6 +201,7 @@ class DirectoryResolver:
         self._cache: Final = cache
         self._clock: Final = clock
         self._flights: Final[dict[Origin, asyncio.Future[VerifiedDirectory]]] = {}
+        self._held: Final[dict[Origin, VerifiedDirectory]] = {}
         self._loop: asyncio.AbstractEventLoop | None = None
         self._closed = False
 
@@ -238,20 +252,37 @@ class DirectoryResolver:
                 "this resolver is bound to another event loop; share it through one SyncRuntime"
             )
 
-    def _verified(self, response: DirectoryResponse, origin: Origin) -> VerifiedDirectory:
-        """``response`` verified for ``origin`` under the resolver's limits, as fetched."""
-        return verify_directory(response, origin, response.fetched_at, self._limits)
+    def _hold(self, directory: VerifiedDirectory) -> VerifiedDirectory:
+        """Holds ``directory`` as its origin's, the newest; the oldest goes past the bound."""
+        self._held.pop(directory.origin, None)
+        self._held[directory.origin] = directory
+        while len(self._held) > _MAX_HELD:
+            del self._held[next(iter(self._held))]
+        return directory
+
+    def _known(self, response: DirectoryResponse, origin: Origin) -> VerifiedDirectory:
+        """``response`` verified for ``origin``: the held directory when it was verified from it.
+
+        Bytes the resolver doesn't hold came from outside the process, so they
+        are verified, as fetched and under the resolver's limits, and held.
+        """
+        held = self._held.get(origin)
+        if held is not None and held.evidence == response:
+            return held
+        verified = verify_directory(response, origin, response.fetched_at, self._limits)
+        return self._hold(verified)
 
     async def _stored(self, origin: Origin, at: UnixSeconds) -> VerifiedDirectory | None:
-        """The stored directory of ``origin``, verified again and unexpired at ``at``.
+        """The stored directory of ``origin``, verified once and unexpired at ``at``.
 
         A stored response that doesn't verify, such as another origin's, is a miss.
         """
         response = await self._store.get(origin)
         if response is None:
+            self._held.pop(origin, None)
             return None
         try:
-            directory = self._verified(response, origin)
+            directory = self._known(response, origin)
         except WebBotAuthError as e:
             logger.warning(
                 "the stored directory of %s doesn't verify, so it is fetched again: %s %s",
@@ -303,7 +334,7 @@ class DirectoryResolver:
             )
         try:
             response = await self._fetcher.fetch(origin, limits=self._limits, now=now)
-            directory = self._verified(response, origin)
+            directory = verify_directory(response, origin, response.fetched_at, self._limits)
         except WebBotAuthError as e:
             until = UnixSeconds(now + self._cache.negative_ttl)
             await self._store.record_failure(origin, until)
@@ -320,7 +351,7 @@ class DirectoryResolver:
             raise
         # A directory that resolves is evidence: it replaces the entry, with or without the key.
         await self._store.put(origin, response)
-        return directory
+        return self._hold(directory)
 
     async def aclose(self) -> None:
         """Closes the resolver, and the fetcher it built; an injected fetcher stays open."""

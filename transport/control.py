@@ -10,10 +10,12 @@ anywhere else. The module imports pydantic, the SDK, the pure values, and the
 Web Bot Auth library's refusal vocabulary, so the runner reads the answers
 without loading an HTTP framework.
 
-Every error body either agent sends outside § 2.4 is an `ErrorBody`: a closed
-`error` code and a `detail`. The codes are the control plane's (`ControlCode`),
-the seller's identity boundary's own (`BoundaryReason`), and the library's
-refusal reasons.
+Every error body either agent sends outside § 2.4 has one of two forms. The
+control plane answers an `ErrorBody`: a closed `error` code (`ControlCode`) and
+a `detail`. The seller's identity boundary answers a `RefusalBody`, the
+library's form: the reason, the library's or the boundary's own
+(`BoundaryReason`), and the status, with no detail, which stays in the
+seller's log.
 
 The buyer's `Outcome` is a discriminated union on `state`. Each variant carries
 only its own fields, and every one names the authentication method it used.
@@ -119,10 +121,23 @@ def code_of(reason: str | Refusal) -> str:
 
 
 class ErrorBody(Value):
-    """Every error body outside § 2.4: `{"error": <code>, "detail": <text>}`."""
+    """A control-plane error: `{"error": <code>, "detail": <text>}`."""
 
-    error: ControlCode | BoundaryReason | UnsignableCode | RefusalCode
+    error: ControlCode
     detail: str
+
+    @property
+    def code(self) -> str:
+        return self.error
+
+
+class RefusalBody(Value):
+    """A refusal in the library's form (`refusal_response`): `{"error": <reason>, "status":
+    <status>}`. The seller's identity boundary answers every refusal in it, and its signing
+    middleware an answer it can't sign. It carries no detail."""
+
+    error: BoundaryReason | UnsignableCode | RefusalCode
+    status: int
 
     @property
     def code(self) -> str:

@@ -17,10 +17,10 @@ refusal boundary, so whatever the seller sends comes back as a value
 (`ReadProposal`, `Accepted`, `Rejection`) or as a `Refusal`, never as an
 exception. No HTTP status leaves this module.
 
-Every call goes through the client the buyer's lifespan owns (buyer/app.py),
-with the auth `seller_call` builds (buyer/credentials.py), which always
-verifies the answer against the seller's origin. It is the only way the buyer
-sends to a seller.
+Every call goes through the client the library builds from the auth
+`seller_call` builds (buyer/credentials.py), which always verifies the answer
+against the seller's origin, over the network the buyer's lifespan owns
+(buyer/app.py). It is the only way the buyer sends to a seller.
 """
 
 from __future__ import annotations
@@ -49,15 +49,15 @@ from persistence.values import KeptResponse, Origin, SignedResponse, Signer
 from protocol.operations import RECEIVE, parse_errors, parse_result
 from protocol.values import JsonObject, read_json
 from shared.party import OwnParty
-from transport.control import ErrorBody
-from transport.wba import fetch_of, lines_of, origin_of, sent_request
+from transport.control import RefusalBody
+from transport.wba import Network, fetch_of, lines_of, origin_of, sent_request
 
 from .credentials import BuyerCredential, seller_call
 from .refusal import Reason, Refusal
 from .settings import Counterparty
 
-#: The client every call goes through. The rest of the buyer holds one and passes it
-#: here; only this module, buyer/credentials.py, and buyer/cfbot.py touch httpx.
+#: The buyer's plain client, for directory fetches. Only this module,
+#: buyer/credentials.py, and buyer/cfbot.py touch httpx.
 HTTPClient = httpx.AsyncClient
 
 
@@ -171,11 +171,10 @@ def _rejection(exchange: Exchange) -> Rejection | Refusal:
     try:
         return Rejection(parse_errors(body), exchange)
     except ValidationError:
-        refused = ErrorBody.model_validate_json(body)  # neither form: malformed
+        refused = RefusalBody.model_validate_json(body)  # neither form: malformed
     return Refusal(
         Reason.CREDENTIAL_REFUSED,
-        f"the seller refused the credential: {exchange.response.status} {refused.code}: "
-        f"{refused.detail}",
+        f"the seller refused the credential: {exchange.response.status} {refused.code}",
     )
 
 
@@ -217,8 +216,8 @@ class SellerClient:
     """Sends the buyer's requests to a seller, and verifies and parses each answer, as the
     buyer's own party (`own`), which every proposal it takes must name as its buyer."""
 
-    def __init__(self, http: HTTPClient, resolver: KeyResolver, own: OwnParty) -> None:
-        self._http, self._resolver, self._own = http, resolver, own
+    def __init__(self, network: Network, resolver: KeyResolver, own: OwnParty) -> None:
+        self._network, self._resolver, self._own = network, resolver, own
 
     async def read(
         self, seller: Counterparty, credential: BuyerCredential, proposal_id: str
@@ -265,13 +264,13 @@ class SellerClient:
         call = seller_call(credential, verifier, seller.origin)
         headers = {"Content-Type": "application/json"} if body else {}
         try:
-            response = await self._http.request(
-                method,
-                f"{seller.origin}{path}",
-                content=body,
-                headers=headers | dict(call.headers),
-                auth=call.auth,
-            )
+            async with self._network.signed(call.auth) as http:
+                response = await http.request(
+                    method,
+                    f"{seller.origin}{path}",
+                    content=body,
+                    headers=headers | dict(call.headers),
+                )
         except ResponseNotVerified as e:
             raise _NotVerified(e.response.status_code, e.verification) from e
         found = verification(response)
@@ -282,7 +281,7 @@ class SellerClient:
                 status=response.status_code,
                 lines=lines_of(response.headers.raw),
                 body=response.content,
-                request=sent_request(response.request),
+                request=sent_request(response),
             ),
             verified=found,
             keyid=credential.keyid,

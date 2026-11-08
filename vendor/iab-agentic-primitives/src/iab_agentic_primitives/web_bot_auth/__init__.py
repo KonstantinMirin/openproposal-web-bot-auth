@@ -33,7 +33,8 @@ Modules:
 - :mod:`.verifier`: :class:`RequestVerifier` and :class:`ResponseVerifier`.
 - :mod:`.roles`: the role ports the edges take, :class:`RequestConfirmer`,
   :class:`ResponseConfirmer`, :class:`RequestSigning`, and :class:`ResponseSigning`.
-- :mod:`.httpx`: :class:`WebBotAuth`, an ``httpx.Auth``.
+- :mod:`.httpx`: :class:`WebBotAuth`, which builds httpx clients that sign
+  each wire hop and verify each signed response.
 - :mod:`.sync`: :class:`~.sync.SyncRuntime`, the one event loop synchronous code
   verifies on, and the sync façades.
 - :mod:`.asgi`: response signing, the directory route, and an opt-in verifier.

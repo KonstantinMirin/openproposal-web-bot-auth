@@ -335,7 +335,7 @@ def _replace(stack: Stack, method: str, status: int, body: bytes) -> None:
 
 
 NO_RETRY = json.dumps({"errors": [{"code": "not_committable", "detail": "no"}]}).encode()
-BOUNDARY = json.dumps({"error": "invalid-token", "detail": "no principal"}).encode()
+BOUNDARY = json.dumps({"error": "invalid-token", "status": 401}).encode()
 
 
 @pytest.mark.parametrize(

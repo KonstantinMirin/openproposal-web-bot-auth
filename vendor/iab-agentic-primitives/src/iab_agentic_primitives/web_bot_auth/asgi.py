@@ -583,7 +583,7 @@ class RequireSignatureMiddleware:
         try:
             body, messages = await _read_body(receive, self.policy.max_body_bytes, headers)
         except _BodyTooLarge:
-            await _send(send, body_too_large_response(self.policy.max_body_bytes))
+            await _send(send, body_too_large_response())
             return
         verified = await self._verify(
             send, HTTPRequest(_method(scope), url, headers, body), bool(body)

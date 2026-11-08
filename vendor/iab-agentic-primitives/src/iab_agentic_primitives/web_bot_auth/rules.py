@@ -179,6 +179,14 @@ class Rules[M: (HTTPRequest, HTTPResponse), N: (str, str | None)](ABC):
         """The refusal for a signature that doesn't cover ``component``."""
         return Refusal.COMPONENTS
 
+    def content(self, message: M) -> bytes:
+        """The content a signature on ``message`` covers: its body.
+
+        The signer signs this and the verifier checks this, so they agree on
+        whether a message has a body to cover.
+        """
+        return message.body
+
     def params_for(self, message: M, stamp: Stamp, nonce: N) -> SignatureParams:
         """What the profile signs as the signature ``stamp.label`` on ``message``."""
         return SignatureParams(
@@ -216,14 +224,14 @@ class _RequestRules(Rules[HTTPRequest, str]):
         return (*derived, *_body_components(has_body), signature_agent_component(label))
 
     def components_for(self, message: HTTPRequest, label: str) -> tuple[ComponentId, ...]:
-        return self.components(label, has_body=bool(message.body))
+        return self.components(label, has_body=bool(self.content(message)))
 
 
 class _ResponseRules(Rules[HTTPResponse, str | None]):
     """A response signature: ``@status``, the request's ``@method`` and
     ``@target-uri``, the body fields when there is a body, its
     ``Signature-Agent`` member, and the binding to a signed request. No nonce:
-    the binding gives freshness."""
+    the binding gives freshness. A response to ``HEAD`` has no body to cover."""
 
     nonce_required: ClassVar[bool] = False
 
@@ -254,7 +262,17 @@ class _ResponseRules(Rules[HTTPResponse, str | None]):
     def components_for(self, message: HTTPResponse, label: str) -> tuple[ComponentId, ...]:
         """The components, bound to ``message.request``'s signature when it has one."""
         request_label = web_bot_auth_label(message.request.headers)
-        return self.components(label, has_body=bool(message.body), request_label=request_label)
+        has_body = bool(self.content(message))
+        return self.components(label, has_body=has_body, request_label=request_label)
+
+    def content(self, message: HTTPResponse) -> bytes:
+        """The body, except for a response to ``HEAD``, which carries no content.
+
+        A server sends a ``HEAD`` response without the body the application
+        produced (RFC 9110 section 9.3.2), so its signature covers no body
+        fields, and a verifier checks none.
+        """
+        return b"" if message.request.method.upper() == "HEAD" else message.body
 
     def missing(self, component: ComponentId) -> Refusal:
         """``response-not-bound`` for the binding, ``components`` for anything else."""

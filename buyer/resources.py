@@ -29,7 +29,8 @@ class BuyerResources:
     settings: BuyerSettings
     store: BuyerRepository
     keyring: Keyring
-    #: The one client every call to a seller, a directory, or cfbot goes through.
+    #: The plain client over the one transport every call goes through, for directory
+    #: fetches. The calls to a seller and to cfbot go through the library's clients over it.
     client: HTTPClient
     #: The offer flow, over the store, the seller client, the signing identity, and the plan.
     flow: Buyer

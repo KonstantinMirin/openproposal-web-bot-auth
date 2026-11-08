@@ -4,8 +4,9 @@
   ``now`` to a :class:`ResolvedKey`.
 - :class:`DirectoryFetcher` fetches a directory response from the network.
 - :class:`DirectoryStore` keeps directory responses and failure deadlines as
-  plain data, and only keeps them: the resolver verifies what it returns
-  again, and decides what a stored directory is still good for.
+  plain data, and only keeps them: the resolver verifies bytes it returns
+  that it hasn't verified, and decides what a stored directory is still good
+  for.
 
 :class:`~.resolver.DirectoryResolver` composes a fetcher and a store;
 :class:`~.fetcher.HttpxDirectoryFetcher` and
@@ -77,11 +78,11 @@ class DirectoryStore(Protocol):
     its URL, status, field lines, body bytes, and ``fetched_at``, so a store
     outside the process can serialize it, for example from
     :meth:`~.directory.DirectoryResponse.document`. The resolver verifies
-    what :meth:`get` returns again, as fetched and under its own limits,
-    then judges its expiry and age; a response that doesn't verify is a
-    cache miss. :meth:`record_failure` keeps the time until which a failed
-    fetch of ``origin`` holds, and :meth:`failure_until` returns it, or
-    ``None``.
+    what :meth:`get` returns, as fetched and under its own limits, unless it
+    is the response the resolver already verified, then judges its expiry
+    and age; a response that doesn't verify is a cache miss.
+    :meth:`record_failure` keeps the time until which a failed fetch of
+    ``origin`` holds, and :meth:`failure_until` returns it, or ``None``.
     """
 
     async def get(self, origin: Origin) -> DirectoryResponse | None: ...

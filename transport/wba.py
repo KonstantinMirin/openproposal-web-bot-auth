@@ -2,8 +2,10 @@
 values (persistence/values.py), and the library's own types. Every rule comes from the
 library module.
 
-Each agent's lifespan builds one TLS context and one client from these, uses
-them for every call it makes, and closes the client on shutdown.
+Each agent's lifespan opens one `Network` from these: one transport, which
+trusts the agent's TLS context, a plain client over it for directory fetches,
+and the Web Bot Auth clients the library builds over the same transport, one
+per call. Shutdown closes the plain client, and with it the transport.
 
 The codec is the only code that turns field lines from bytes into text and
 back: `lines_of` decodes, `asgi_lines` encodes, and both use latin-1, which
@@ -18,6 +20,8 @@ from __future__ import annotations
 import ssl
 from collections.abc import Iterable
 from pathlib import Path
+from types import TracebackType
+from typing import Self
 
 import httpx
 from iab_agentic_primitives.web_bot_auth import (
@@ -33,6 +37,8 @@ from iab_agentic_primitives.web_bot_auth import Origin as LibraryOrigin
 from iab_agentic_primitives.web_bot_auth import is_signed as library_is_signed
 from iab_agentic_primitives.web_bot_auth.asgi import Scope, ServerEdge
 from iab_agentic_primitives.web_bot_auth.fetcher import HttpxDirectoryFetcher
+from iab_agentic_primitives.web_bot_auth.httpx import WebBotAuth
+from iab_agentic_primitives.web_bot_auth.httpx import sent_request as library_sent_request
 
 from persistence.values import DirectoryFetch, HeaderLine, KeptRequest, KeptResponse, Origin
 
@@ -68,6 +74,58 @@ def http_client(
         timeout=timeout,
         transport=transport,
     )
+
+
+class _Borrowed(httpx.AsyncBaseTransport):
+    """The network's transport, lent to one Web Bot Auth client: closing the client leaves
+    it open for the next."""
+
+    def __init__(self, transport: Transport) -> None:
+        self._transport = transport
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        return await self._transport.handle_async_request(request)
+
+
+class Network:
+    """An agent's one way to the network: one transport that trusts `context` and never
+    follows redirects, the plain `client` over it, and a Web Bot Auth client per call
+    (`signed`). `transport` is for tests, which answer in place of the network.
+
+    A production deployment injects an SSRF-guarded transport here. The demo
+    doesn't: address policy is outside what it demonstrates.
+    """
+
+    def __init__(
+        self, context: ssl.SSLContext, *, timeout: float = 5.0, transport: Transport | None = None
+    ) -> None:
+        self._transport = (
+            httpx.AsyncHTTPTransport(verify=context) if transport is None else transport
+        )
+        self._timeout = timeout
+        #: The plain client, for directory fetches; it owns the transport and closes it.
+        self.client = httpx.AsyncClient(
+            transport=self._transport, follow_redirects=False, trust_env=False, timeout=timeout
+        )
+
+    def signed(self, auth: WebBotAuth) -> httpx.AsyncClient:
+        """The library's client for `auth`, which signs and verifies each request, over the
+        network's transport."""
+        return auth.async_client(
+            transport=_Borrowed(self._transport), follow_redirects=False, timeout=self._timeout
+        )
+
+    async def __aenter__(self) -> Self:
+        await self.client.__aenter__()
+        return self
+
+    async def __aexit__(
+        self,
+        kind: type[BaseException] | None,
+        error: BaseException | None,
+        trace: TracebackType | None,
+    ) -> None:
+        await self.client.__aexit__(kind, error, trace)
 
 
 def directory_resolver(
@@ -119,14 +177,19 @@ def request_of(scope: Scope, edge: ServerEdge, body: bytes) -> KeptRequest:
     return KeptRequest(method=method, url=edge.request_url(scope), lines=lines_of(raw), body=body)
 
 
-def sent_request(request: httpx.Request) -> KeptRequest:
-    """The request a client sent, as the wire carried it: the URL as httpx encoded it, which
-    is the URL the signature covers, and every field line as sent but `Authorization`, so a
-    bearer token is never kept."""
-    lines = tuple((k, v) for k, v in lines_of(request.headers.raw) if k.lower() != "authorization")
-    return KeptRequest(
-        method=request.method, url=str(request.url), lines=lines, body=request.content
-    )
+class NotSentByWebBotAuthError(ValueError):
+    """A response no Web Bot Auth client received, so there is no request as sent."""
+
+
+def sent_request(response: httpx.Response) -> KeptRequest:
+    """The request the library's client sent for `response`, exactly as on the wire: the URL
+    the signature covers, and every field line as sent but `Authorization`, so a bearer
+    token is never kept."""
+    sent = library_sent_request(response)
+    if sent is None:
+        raise NotSentByWebBotAuthError(str(response.url))
+    lines = tuple((k, v) for k, v in sent.headers.items() if k.lower() != "authorization")
+    return KeptRequest(method=sent.method, url=sent.url, lines=lines, body=sent.body)
 
 
 def to_library(request: KeptRequest) -> HTTPRequest:

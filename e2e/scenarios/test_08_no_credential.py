@@ -11,7 +11,7 @@ from e2e.scenarios.stack import SELLER, commit_body, signed
 from persistence.observe import SellerRecords
 from protocol.operations import parse_errors
 from seller.caller import WHOAMI
-from transport.control import ErrorBody
+from transport.control import RefusalBody
 
 
 def _codes(response: httpx.Response) -> list[str]:
@@ -19,7 +19,7 @@ def _codes(response: httpx.Response) -> list[str]:
 
 
 def _refusal(response: httpx.Response) -> str:
-    return ErrorBody.model_validate_json(response.content).code
+    return RefusalBody.model_validate_json(response.content).code
 
 
 def test_commit_without_a_credential_is_refused(

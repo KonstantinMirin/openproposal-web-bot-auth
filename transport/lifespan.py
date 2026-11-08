@@ -2,8 +2,8 @@
 
 Both agents compose the same way: `create_app` reads its settings, builds what
 needs no I/O, and passes `lifespan(...)` the store to open and a function that
-builds its resources from the open store and client. The lifespan only opens,
-yields, and closes. It opens the store first and the one HTTP client next, on
+builds its resources from the open store and network. The lifespan only opens,
+yields, and closes. It opens the store first and the one `Network` next, on
 one `AsyncExitStack`, so any later failure, a bad `ca_bundle` included, closes
 what was already open, and shutdown closes both.
 
@@ -23,7 +23,7 @@ import httpx
 from fastapi import Request
 from iab_agentic_primitives.web_bot_auth import KeyResolver
 
-from .wba import Transport, directory_resolver, http_client, tls_context
+from .wba import Network, Transport, directory_resolver, tls_context
 
 
 class Store(Protocol):
@@ -39,21 +39,21 @@ Lifespan = Callable[[object], AbstractAsyncContextManager[Mapping[str, object]]]
 def lifespan[S: Store](
     open_store: Callable[[], S],
     ca_bundle: Path | None,
-    resources: Callable[[S, httpx.AsyncClient], object],
+    resources: Callable[[S, Network], object],
     *,
     transport: Transport | None = None,
 ) -> Lifespan:
-    """The lifespan that opens the store, then the client that trusts `ca_bundle`, yields
-    `resources(store, client)`, and closes both. `transport` is for tests."""
+    """The lifespan that opens the store, then the network that trusts `ca_bundle`, yields
+    `resources(store, network)`, and closes both. `transport` is for tests."""
 
     @asynccontextmanager
     async def run(_app: object) -> AsyncIterator[Mapping[str, object]]:
         async with AsyncExitStack() as opened:
             store = opened.enter_context(closing(open_store()))
-            client = await opened.enter_async_context(
-                http_client(tls_context(ca_bundle), transport=transport)
+            network = await opened.enter_async_context(
+                Network(tls_context(ca_bundle), transport=transport)
             )
-            yield {"resources": resources(store, client)}
+            yield {"resources": resources(store, network)}
 
     return run
 

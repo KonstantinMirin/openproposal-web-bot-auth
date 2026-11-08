@@ -110,15 +110,17 @@ class HeaderLines:
 
 
 def target_uri(url: str) -> str:
-    """``url`` as the profile signs and rebuilds it: without an empty query.
+    """``url`` as the profile signs and rebuilds it: no fragment, then no empty query.
 
-    A server can't tell ``https://seller.example.com/p?`` from
-    ``https://seller.example.com/p`` (ASGI gives both the query string
-    ``b""``), so the signer and the server's edge both drop the ``?``. Any
-    other URL is returned as given.
+    A fragment never goes on the wire, and a server can't tell
+    ``https://seller.example.com/p?`` from ``https://seller.example.com/p``
+    (ASGI gives both the query string ``b""``). So every signature base, the
+    signer's and the verifiers' alike, takes the URL this returns, and the
+    server's edge rebuilds it the same way. Any other URL is returned as given.
     """
-    head, mark, query = url.partition("?")
-    return head if mark and not query else url
+    head = url.partition("#")[0]
+    path, mark, query = head.partition("?")
+    return path if mark and not query else head
 
 
 def _header_lines(headers: Headers | None) -> HeaderLines:

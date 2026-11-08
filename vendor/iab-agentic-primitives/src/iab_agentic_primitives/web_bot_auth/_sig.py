@@ -28,7 +28,7 @@ from http_message_signatures.exceptions import HTTPMessageSignaturesException
 from ._wire import ComponentId, SignatureMember, only_member, signature_values
 from .errors import Refusal, SigningError, refuse
 from .keys import Ed25519Key
-from .message import HeaderLines, HTTPRequest, HTTPResponse
+from .message import HeaderLines, HTTPRequest, HTTPResponse, target_uri
 from .values import OMIT, KeyId, Omit, UnixSeconds
 
 #: Whether a signature replaces the message's signatures or joins them.
@@ -117,7 +117,9 @@ class _ResponseView:
 
 
 def _request_view(request: HTTPRequest) -> _RequestView:
-    return _RequestView(request.method.upper(), request.url, _FieldLines(request.headers))
+    """The library's view of ``request``; its URL is the one place a URL enters a signature base."""
+    url = target_uri(request.url)
+    return _RequestView(request.method.upper(), url, _FieldLines(request.headers))
 
 
 def _view(message: HTTPRequest | HTTPResponse) -> _RequestView | _ResponseView:

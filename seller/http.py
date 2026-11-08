@@ -21,17 +21,20 @@ seller error body has one of two forms:
 - `{"errors": [ErrorObject, ...]}` (§ 2.4), for the offer logic's `Rejected`,
   with the status `status_for` gives;
 - an `ErrorBody` (`{"error": ..., "detail": ...}`, transport/control.py) for
-  everything else: the control plane's errors, which
-  `install_control_handlers` renders for both agents, and the identity
-  boundary's `Refused`, which this module adds.
+  the control plane's errors, which `install_control_handlers` renders for
+  both agents;
+- a `RefusalBody` (`{"error": ..., "status": ...}`, the library's form) for
+  the identity boundary's `Refused`, which this module adds.
 
 A refusal answers the body the boundary built: for a signature, the library's
 `refusal_response` body, whose `error` is the library's reason; for the
-boundary's own reasons (`BoundaryReason`), an `ErrorBody`.
+boundary's own reasons (`BoundaryReason`), the same form. The refusal's detail
+goes to the seller's log, never into the body.
 """
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping
 from typing import Annotated
 
@@ -51,6 +54,8 @@ from .caller import Caller, ResolvedCaller
 from .errors import Rejected
 from .ports import EntryWriter, KeptEvidence
 from .resources import BoundaryDep, KeptEvidenceDep
+
+_log = logging.getLogger(__name__)
 
 
 async def raw_body(request: Request) -> bytes:
@@ -153,7 +158,9 @@ def answer(outcome: CommitResult | JsonObject | Rejected) -> JSONResponse:
 
 
 def refused(error: Refused) -> Response:
-    """The identity boundary's refusal: the body it built, with its status and hint."""
+    """The identity boundary's refusal: the body it built, with its status and hint. Its
+    detail goes to the log."""
+    _log.info("refused %s %s: %s", error.status, error.reason, error.detail)
     return Response(
         error.body,
         status_code=error.status,

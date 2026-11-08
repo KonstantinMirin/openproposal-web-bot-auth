@@ -9,7 +9,7 @@ import httpx
 
 from e2e.scenarios.stack import SELLER, commit_body, signed
 from persistence.observe import SellerRecords
-from transport.control import ErrorBody
+from transport.control import RefusalBody
 
 
 def test_tampered_body_is_refused_before_the_handler(
@@ -22,7 +22,7 @@ def test_tampered_body_is_refused_before_the_handler(
 
     response = web.post(url, content=tampered, headers=headers)
     assert response.status_code == 403
-    assert ErrorBody.model_validate_json(response.content).code == "content-digest"
+    assert RefusalBody.model_validate_json(response.content).code == "content-digest"
     assert "signature" in response.headers  # refusals are signed too
     assert "accept-signature" in response.headers
 
