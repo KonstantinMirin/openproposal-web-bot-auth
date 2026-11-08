@@ -1,0 +1,18 @@
+# The buyer verifies every seller answer and its binding: each WebBotAuth it
+# builds names the origin it expects (expect=). The one sign-only peer is cfbot
+# (buyer/cfbot.py), whose origin the buyer binds when it builds it.
+id: buyer-verifies-every-answer
+language: Python
+severity: error
+message: Every WebBotAuth the buyer builds verifies the answer against the origin it expects (expect=); only buyer/cfbot.py signs without verifying.
+files: ["buyer/**/*.py"]
+ignores: ["buyer/cfbot.py"]
+rule:
+  all:
+    - pattern: WebBotAuth($$$A)
+    - not:
+        has:
+          kind: argument_list
+          has:
+            kind: keyword_argument
+            regex: '^expect='

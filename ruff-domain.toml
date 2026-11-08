@@ -1,0 +1,19 @@
+# Layer ban: the protocol rules and the offer logic import no HTTP framework,
+# HTTP client, storage engine, or environment read.
+#
+# Run as its own stage: `uv run ruff check --config ruff-domain.toml` (make lint).
+# A separate config, so that no exemption here leaks into another ban.
+#
+# Scope: the protocol rules both parties share, and the seller's offer logic.
+include = ["protocol/**/*.py", "seller/offers/**/*.py"]
+
+[lint]
+select = ["TID251"]
+
+[lint.flake8-tidy-imports.banned-api]
+"fastapi".msg = "The protocol rules know no HTTP framework; the HTTP seam renders them."
+"starlette".msg = "The protocol rules know no HTTP framework; the HTTP seam renders them."
+"httpx".msg = "The protocol rules send nothing; the party's client does."
+"sqlite3".msg = "The protocol rules store nothing; storage sits behind a repository."
+"os.environ".msg = "The protocol rules read no configuration; settings are passed in."
+"os.getenv".msg = "The protocol rules read no configuration; settings are passed in."

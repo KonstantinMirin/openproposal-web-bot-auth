@@ -1,0 +1,54 @@
+# Import-layer contracts, checked by `uv run lint-imports` (make guards).
+[importlinter]
+root_packages =
+    seller
+    buyer
+    transport
+    shared
+    persistence
+    protocol
+    runner
+include_external_packages = True
+
+[importlinter:contract:parties-independent]
+name = The seller, the buyer, and the runner import nothing from each other
+type = independence
+modules =
+    seller
+    buyer
+    runner
+
+[importlinter:contract:layers]
+name = Parties, then transport, shared code, storage, and protocol rules
+type = layers
+layers =
+    seller | buyer | runner
+    transport
+    shared
+    persistence
+    protocol
+
+# The live runner reads the control plane's models and the parties' records; it
+# serves nothing, so it loads no HTTP framework.
+[importlinter:contract:runner-framework-free]
+name = The runner imports no HTTP framework
+type = forbidden
+source_modules =
+    runner
+forbidden_modules =
+    fastapi
+    starlette
+
+# The offer logic is credential-blind and framework-free: importing it loads no
+# HTTP framework, HTTP client, Web Bot Auth library, or storage engine.
+[importlinter:contract:offers-framework-free]
+name = The offer logic imports no HTTP stack, signing library, or database
+type = forbidden
+source_modules =
+    seller.offers
+forbidden_modules =
+    fastapi
+    starlette
+    httpx
+    iab_agentic_primitives
+    sqlite3

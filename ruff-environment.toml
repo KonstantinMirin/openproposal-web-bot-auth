@@ -1,0 +1,20 @@
+# Layer ban: the environment is read in one place per agent, its settings module.
+#
+# Run as its own stage: `uv run ruff check --config ruff-environment.toml` (make lint).
+# A separate config, so that no exemption here leaks into another ban.
+#
+# Scope: every Python file this repository runs, except the vendored SDK.
+extend-exclude = ["vendor"]
+
+[lint]
+select = ["TID251"]
+
+[lint.per-file-ignores]
+# Where Settings.from_env() lives: the one sanctioned reader per agent (seller,
+# buyer, runner, and the e2e scenarios). Nothing else reads the environment.
+"*/settings.py" = ["TID251"]
+[lint.flake8-tidy-imports.banned-api]
+"os.environ".msg = "Read the environment once, in the agent's Settings.from_env()."
+"os.getenv".msg = "Read the environment once, in the agent's Settings.from_env()."
+"os.environb".msg = "Read the environment once, in the agent's Settings.from_env()."
+"os.getenvb".msg = "Read the environment once, in the agent's Settings.from_env()."

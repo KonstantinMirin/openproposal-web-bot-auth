@@ -24,6 +24,8 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "ast-grep-cli>=0.39",
+    "import-linter>=2.1",
     "jsonschema>=4.23",
     "mypy==2.4.1",
     "pytest>=8",
@@ -62,6 +64,9 @@ select = [
     "E", "W", "F", "I", "B", "BLE", "C4", "UP", "C90", "PLR", "SIM", "RET", "PTH", "TRY",
     "ARG", "ANN", "S", "TID", "RUF100",
 ]
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"openproposal._runtime".msg = "Import the SDK's public names from openproposal."
 
 [tool.ruff.lint.mccabe]
 max-complexity = 10

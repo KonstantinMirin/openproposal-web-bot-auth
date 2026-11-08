@@ -1,0 +1,23 @@
+# A route receives `caller` and its parsed inputs, never a Request, which would
+# hand it the credential headers. A route that needs the body takes RawBodyDep
+# (seller/http.py). No route is allowlisted.
+id: routes-take-no-request
+language: Python
+severity: error
+message: A route takes `caller` and its parsed inputs, never a Request, which carries the credential headers.
+files: ["seller/**/*.py"]
+rule:
+  kind: decorated_definition
+  all:
+    - has:
+        kind: decorator
+        regex: '^@(api|operator)\.(get|post|put|patch|delete)\('
+    - has:
+        kind: function_definition
+        has:
+          field: parameters
+          has:
+            kind: typed_parameter
+            has:
+              field: type
+              regex: '^Request$'

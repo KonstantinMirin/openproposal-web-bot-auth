@@ -1,0 +1,34 @@
+# The identity values (seller/caller.py) are built in one place: the boundary
+# that confirmed the credential. One test module, tests/factories.py, builds them
+# for the tests. A Principal, a credential, a ResolvedCaller, or a PublicCaller
+# built anywhere else is an identity nobody confirmed.
+id: identity-built-only-by-the-boundary
+language: Python
+severity: error
+message: The identity types are built only by the identity boundary (seller/boundary.py) and the test factory (tests/factories.py).
+files: ["seller/**/*.py", "buyer/**/*.py", "shared/**/*.py", "runner/**/*.py", "tests/**/*.py", "e2e/**/*.py"]
+ignores: ["seller/boundary.py", "tests/factories.py"]
+rule:
+  any:
+    - pattern: Principal($$$A)
+    - pattern: SignatureCredential($$$A)
+    - pattern: BearerCredential($$$A)
+    - pattern: SignedMessage($$$A)
+    - pattern: DirectoryEvidence($$$A)
+    - pattern: ResolvedCaller($$$A)
+    - pattern: PublicCaller($$$A)
+    - pattern: $M.Principal($$$A)
+    - pattern: $M.SignatureCredential($$$A)
+    - pattern: $M.BearerCredential($$$A)
+    - pattern: $M.SignedMessage($$$A)
+    - pattern: $M.DirectoryEvidence($$$A)
+    - pattern: $M.ResolvedCaller($$$A)
+    - pattern: $M.PublicCaller($$$A)
+    - pattern: Principal.model_validate($$$A)
+    - pattern: SignatureCredential.model_validate($$$A)
+    - pattern: BearerCredential.model_validate($$$A)
+    - pattern: SignedMessage.model_validate($$$A)
+    - pattern: DirectoryEvidence.model_validate($$$A)
+    - pattern: ResolvedCaller.model_validate($$$A)
+    - pattern: PublicCaller.model_validate($$$A)
+    - pattern: $T.model_construct($$$A)
