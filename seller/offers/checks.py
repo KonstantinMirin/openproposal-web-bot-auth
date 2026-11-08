@@ -94,10 +94,9 @@ class Composed:
 
 @dataclass(frozen=True)
 class Accepted:
-    """The commit passed every check."""
+    """The commit passed every check, over this composed record."""
 
-    composed: JsonObject
-    digest_input: bytes
+    composed: Composed
 
 
 Check = Callable[[CheckContext], Rejected | None]
@@ -239,4 +238,4 @@ def decide(ctx: CheckContext) -> Accepted | Rejected:
     for composed_check in AFTER:
         if (rejected := composed_check(ctx, record)) is not None:
             return rejected
-    return Accepted(record.document, record.digest_input)
+    return Accepted(record)

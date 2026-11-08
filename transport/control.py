@@ -13,17 +13,17 @@ from __future__ import annotations
 
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
+from pydantic import Field, TypeAdapter
 
 from persistence.values import AuthMethod, Origin
-from protocol.values import JsonObject, JsonValue
+from protocol.values import JsonObject, JsonValue, Value
 
 #: The header every control call carries the operator key in (transport/operator.py).
 OPERATOR_HEADER = "X-Operator-Key"
 
 
-class _Answer(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
+class _Answer(Value):
+    """A control-plane body: a `Value`, so a route and the runner read it strictly."""
 
 
 class Health(_Answer):

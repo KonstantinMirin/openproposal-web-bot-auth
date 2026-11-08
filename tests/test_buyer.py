@@ -6,7 +6,8 @@ verified, then parsed, inside one refusal boundary. Each test drives
 party kept.
 
 - A signed or bearer commit is agreed, and both parties keep the agreement,
-  with the header lines exactly as the transport carried them.
+  with the header lines exactly as the transport carried them. The seller
+  decides on the proposal as issued and saves the agreed proposal beside it.
 - A verified answer that is malformed, an error without `retry`, or a boundary
   refusal is refused, never a 500, and settles nothing.
 - An unknown line item or seller is refused before anything is sent.
@@ -29,12 +30,17 @@ from pathlib import Path
 
 import httpx
 import pytest
+from openproposal import LineItemWrites
 
 from persistence.observe import BuyerRecords, SellerRecords
+from protocol.record import compose, digest_input, items_by_id
+from protocol.values import JsonObject
+from tests._tools import load_yaml
 from tests.stack import BUYER, CFBOT, OPERATOR, RESELLER, SELLER, Lines, Stack, lines
 
 DISPLAY = "business-daily-display"
 CTV = "weather-app-ctv"
+PLAN = load_yaml(Path(__file__).resolve().parent.parent / "buyer" / "plan.yaml")
 
 
 @pytest.fixture
@@ -115,6 +121,43 @@ def test_a_bearer_commit_is_agreed_with_no_signing_key(stack: Stack) -> None:
     with BuyerRecords.open(stack.buyer_dir / "buyer.db") as records:
         kept = records.response(outcome["evidence_id"])
     assert list(kept.response.request.lines) == _sent_lines(commit)
+
+
+def _outside_line_items(proposal: JsonObject) -> JsonObject:
+    """The members of a proposal that a commit doesn't change."""
+    return {k: v for k, v in proposal.items() if k not in {"line_items", "status", "assent"}}
+
+
+def test_a_commit_saves_the_agreed_proposal_and_leaves_what_it_was_decided_on(
+    stack: Stack,
+) -> None:
+    issued = stack.read("demo-wba-2").json()["proposal"]
+    assert stack.commit("demo-wba-2", [DISPLAY]).json()["state"] == "agreed"
+    agreed = stack.read("demo-wba-2").json()["proposal"]
+
+    # The named line item is the composed one, agreed; the rest of the proposal is as issued,
+    # and its status follows § 4.3.3: the other line item is still published.
+    writes = {DISPLAY: LineItemWrites.model_validate(PLAN[DISPLAY])}
+    composed = compose(issued, writes)
+    assert items_by_id(agreed)[DISPLAY] == {**items_by_id(composed)[DISPLAY], "status": "agreed"}
+    assert items_by_id(agreed)[CTV] == items_by_id(issued)[CTV]
+    assert agreed["status"] == "published"
+    assert _outside_line_items(agreed) == _outside_line_items(issued)
+
+    # The seller decided on the proposal as issued: the digest input it stored is the one
+    # composed on what the buyer read before the commit.
+    with stack.seller_db() as db:
+        (stored,) = db.execute(
+            "SELECT digest_input FROM agreed_records WHERE proposal_id = 'demo-wba-2'"
+        ).fetchone()
+    assert bytes(stored) == digest_input(composed, [DISPLAY])
+
+    # The next commit is decided on the agreed proposal, and agrees the last line item.
+    assert stack.commit("demo-wba-2", [CTV]).json()["state"] == "agreed"
+    final = stack.read("demo-wba-2").json()["proposal"]
+    assert items_by_id(final)[DISPLAY] == items_by_id(agreed)[DISPLAY]
+    assert items_by_id(final)[CTV]["status"] == "agreed"
+    assert final["status"] == "agreed"
 
 
 def _sent_lines(request: httpx.Request) -> Lines:

@@ -4,11 +4,9 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from openproposal import Commit, CommitResult, LineItemStatuses, Proposal, dump
+from openproposal import Commit, CommitResult, dump
 
-from protocol.operations import acceptance_for, result_for
-from protocol.record import items_by_id, line_items_of, proposal_items
-from protocol.status import proposal_status
+from protocol.operations import acceptance_for, agreed_document, result_for
 from protocol.values import canonical, commitment_key
 from seller.caller import Caller, ResolvedCaller
 from seller.errors import Rejected
@@ -58,7 +56,8 @@ def _agree(
     ctx: CheckContext,
     accepted: Accepted,
 ) -> None:
-    """Writes the buyer's entry, the seller's matching `acceptance`, and the agreed record."""
+    """Writes the buyer's entry, the seller's matching `acceptance`, the agreed record, and
+    the agreed proposal: a new document, so `issued`, which the checks read, stays as it was."""
     entry, proposal_id = ctx.request.entry, issued.proposal_id
     # The caller goes to storage with the entry, which keeps how it authenticated; its
     # credential is unread here.
@@ -66,17 +65,7 @@ def _agree(
     acceptance = acceptance_for(entry, ctx.now)
     store.append_assent(proposal_id, acceptance, None)
     store.save_agreed(
-        proposal_id, acceptance.record_digest, accepted.digest_input, [entry, acceptance]
+        proposal_id, acceptance.record_digest, accepted.composed.digest_input, [entry, acceptance]
     )
-
-    # The stored line items now hold the commit's writes, and they are agreed. The
-    # document is this transaction's own copy, read from storage, so it is updated in place.
-    document, composed_items = issued.document, items_by_id(accepted.composed)
-    for item in line_items_of(document):
-        name = str(item["line_item_id"])
-        if name in entry.line_item_ids:
-            item.clear()
-            item.update(composed_items[name], status=LineItemStatuses.AGREED)
-    agreed = proposal_items(Proposal.model_validate(document))
-    document["status"] = proposal_status([i.status for i in agreed.values()])
-    store.save_proposal(issued)
+    agreed = agreed_document(issued.document, accepted.composed.items, entry.line_item_ids)
+    store.save_proposal(StoredProposal(issued.buyer_principal_id, agreed))

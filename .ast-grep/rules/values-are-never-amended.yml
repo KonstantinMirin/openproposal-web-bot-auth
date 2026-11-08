@@ -1,0 +1,21 @@
+# A value is frozen, and its next state is a constructor call or a named
+# transition, which checks every field. model_copy(update=...) builds an amended
+# copy without validation, and object.__setattr__ writes past the frozen check,
+# so production code calls neither. The value bases (protocol/values.py and the
+# identity base in seller/caller.py) also refuse model_copy at run time.
+id: values-are-never-amended
+language: Python
+severity: error
+message: A value is never amended; build the next state with its constructor or a named transition.
+files:
+  - "protocol/**/*.py"
+  - "persistence/**/*.py"
+  - "shared/**/*.py"
+  - "transport/**/*.py"
+  - "seller/**/*.py"
+  - "buyer/**/*.py"
+  - "runner/**/*.py"
+rule:
+  any:
+    - pattern: $X.model_copy($$$A)
+    - pattern: object.__setattr__($$$A)

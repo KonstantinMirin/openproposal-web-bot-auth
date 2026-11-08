@@ -20,10 +20,10 @@ import sys
 from collections.abc import Iterable, Sequence
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import Field
 
 from persistence.values import Origin
-from protocol.values import JsonObject, JsonValue
+from protocol.values import JsonObject, JsonValue, Value
 from transport.control import OPERATOR_HEADER, Agreed, CloudflareCheck
 
 FORMAT: Literal[2] = 2
@@ -50,8 +50,8 @@ WITHHELD = frozenset(
 _PUBLIC_JWK = ("kid", "kty", "crv", "x", "use", "alg")
 
 
-class _Part(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
+class _Part(Value):
+    """A part of the report: a `Value`, built once its inputs are known."""
 
 
 class Headers(_Part):
@@ -179,10 +179,14 @@ class History(_Part):
 # What a report may hold
 
 
-def public_headers(lines: Iterable[tuple[str, str]]) -> Headers:
-    """Field lines in order, without the withheld fields, and the names of those withheld."""
+def public_headers(lines: Iterable[tuple[str, str]], *, unkept: Iterable[str] = ()) -> Headers:
+    """Field lines in order, without the withheld fields, and the names of those withheld.
+
+    `unkept` names fields the message carried but its kept lines leave out, such as
+    the bearer token a party never stores; they are listed as withheld too.
+    """
     shown: list[tuple[str, str]] = []
-    withheld: set[str] = set()
+    withheld = {name.lower() for name in unkept}
     for name, value in lines:
         if name.lower() in WITHHELD:
             withheld.add(name.lower())

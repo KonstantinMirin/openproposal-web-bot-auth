@@ -31,6 +31,7 @@ from persistence.values import Origin
 from runner.main import main, publish, run_once
 from runner.report import (
     HISTORY,
+    Directory,
     NotPublic,
     Report,
     StepResult,
@@ -459,9 +460,14 @@ def test_public_headers_withhold_credentials_and_proxy_fields() -> None:
     assert shown.withheld == ["authorization", "x-forwarded-for", "x-operator-key"]
 
 
-def _report(detail: str) -> Report:
+def _report(
+    detail: str,
+    *,
+    started_at: str = "2026-11-07T00:00:00Z",
+    directories: dict[str, Directory | None] | None = None,
+) -> Report:
     step = StepResult(id="x", title="X", ok=True, ms=1, detail=detail)
-    return Report(started_at="2026-11-07T00:00:00Z", ok=True, steps=[step])
+    return Report(started_at=started_at, ok=True, directories=directories or {}, steps=[step])
 
 
 def test_a_report_with_a_secret_is_refused() -> None:
@@ -469,16 +475,15 @@ def test_a_report_with_a_secret_is_refused() -> None:
         assert_public(_report("token is secret-token-value"), ["secret-token-value"])
 
 
-def test_a_report_with_a_private_jwk_is_refused(stack: Stack, tmp_path: Path) -> None:
-    report = _run(stack, tmp_path / "out")
-    assert report.signature is not None and report.signature.seller is not None
-    directory = report.signature.seller.directory
-    assert directory is not None
-    leaked = directory.model_copy(update={"keys": [{"kty": "OKP", "x": "pub", "d": "private"}]})
-    seller = report.signature.seller.model_copy(update={"directory": leaked})
-    signature = report.signature.model_copy(update={"seller": seller})
+def test_a_report_with_a_private_jwk_is_refused() -> None:
+    leaked = Directory(
+        url=f"{BUYER}/.well-known/http-message-signatures-directory",
+        status=200,
+        headers=public_headers([]),
+        keys=[{"kty": "OKP", "x": "pub", "d": "private"}],
+    )
     with pytest.raises(NotPublic):
-        assert_public(report.model_copy(update={"signature": signature}), [])
+        assert_public(_report("a run", directories={"buyer": leaked}), [])
 
 
 def test_publish_writes_a_bare_failure_when_the_report_isnt_public(
@@ -497,7 +502,7 @@ def test_publish_writes_a_bare_failure_when_the_report_isnt_public(
 def test_history_keeps_the_newest_runs_first(stack: Stack, tmp_path: Path) -> None:
     settings = _settings(stack, tmp_path / "out")
     for n in range(HISTORY + 2):
-        publish(settings, _report(f"run {n}").model_copy(update={"started_at": f"t{n}"}))
+        publish(settings, _report(f"run {n}", started_at=f"t{n}"))
     runs = json.loads((tmp_path / "out" / "history.json").read_text())["runs"]
     assert len(runs) == HISTORY
     assert runs[0]["started_at"] == f"t{HISTORY + 1}"

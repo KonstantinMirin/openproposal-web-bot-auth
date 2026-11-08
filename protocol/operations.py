@@ -4,8 +4,8 @@ The generated `Commit`, `CommitResult`, and `AssentEntry` check each member, but
 not the rules that tie members together. `check_commit` and `parse_result` add
 those, so the seller and the buyer refuse the same documents. The buyer composes
 with `compose_commit` and checks the answer with `check_result`; the seller
-answers with `acceptance_for` and `result_for`. Each pair rule has one
-implementation, here.
+answers with `acceptance_for` and `result_for`, and builds the proposal it saves
+with `agreed_document`. Each pair rule has one implementation, here.
 
 The SDK's values are mutable. Nothing here assigns to one: each step builds
 fresh values, and the raw JSON a caller passes is left as it was.
@@ -13,6 +13,7 @@ fresh values, and the raw JSON a caller passes is left as it was.
 
 from __future__ import annotations
 
+import copy
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
@@ -25,13 +26,15 @@ from openproposal import (
     Commit,
     CommitResult,
     ErrorObject,
+    LineItemStatuses,
     LineItemWrites,
     Proposal,
     dump,
 )
 from pydantic import BaseModel, ConfigDict, Field
 
-from .record import compose, digest_input, digest_of
+from .record import compose, digest_input, digest_of, line_items_of, proposal_items
+from .status import proposal_status
 from .values import JsonObject, commitment_key, instant, matches, read_json
 
 #: The validation context of the SDK's receive mode, in the form its `MODE_KEY`
@@ -232,3 +235,25 @@ def result_for(assent: Sequence[AssentEntry], key: str) -> CommitResult:
         if e.role != AssentEntryRoles.COMMITMENT and matches(e, first)
     ]
     return CommitResult(entries=[first, *later])
+
+
+def agreed_document(
+    document: JsonObject, composed_items: Mapping[str, JsonObject], line_item_ids: Sequence[str]
+) -> JsonObject:
+    """The proposal once a commit to `line_item_ids` is agreed, as a new document.
+
+    Each named line item is its composed form from `composed_items`, the buyer's
+    writes applied (§ 4.1.1), with `status: agreed`. The proposal's `status`
+    follows from its line items' statuses (§ 4.3.3). `document` and
+    `composed_items` are left as they were.
+    """
+    agreed = copy.deepcopy(document)
+    for item in line_items_of(agreed):
+        name = str(item["line_item_id"])
+        if name in line_item_ids:
+            composed = copy.deepcopy(composed_items[name])
+            item.clear()
+            item.update(composed, status=LineItemStatuses.AGREED)
+    items = proposal_items(Proposal.model_validate(agreed))
+    agreed["status"] = proposal_status([item.status for item in items.values()])
+    return agreed

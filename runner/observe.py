@@ -56,7 +56,7 @@ def instant_of(seconds: float) -> str:
     return instant(datetime.fromtimestamp(seconds, UTC))
 
 
-def _keys(body: bytes) -> list[JsonObject]:
+def _public_keys(body: bytes) -> list[JsonObject]:
     """The public members of the keys a directory body lists."""
     document = body_of(body)
     keys = document.get("keys", []) if isinstance(document, dict) else []
@@ -69,17 +69,17 @@ def _kept_directory(kept: DirectoryFetch) -> Directory:
         status=kept.status,
         fetched_at=instant_of(kept.fetched_at),
         headers=public_headers(kept.lines),
-        keys=_keys(kept.body),
+        keys=_public_keys(kept.body),
         sha256=sha256_hex(kept.body),
     )
 
 
-def _message(kept: KeptRequest, keyid: str | None) -> Message:
+def _message(kept: KeptRequest, keyid: str | None, *, unkept: tuple[str, ...] = ()) -> Message:
     return Message(
         method=kept.method,
         url=kept.url,
         keyid=keyid,
-        headers=public_headers(kept.lines),
+        headers=public_headers(kept.lines, unkept=unkept),
         body=body_of(kept.body),
     )
 
@@ -116,7 +116,7 @@ class Observer:
             status=response.status_code,
             expires=instant_of(verified.expires),
             headers=public_headers(lines),
-            keys=_keys(response.content),
+            keys=_public_keys(response.content),
         )
         kids = list(verified.keys)
         return Done(directory, f"{len(kids)} key(s), signed by each: {', '.join(kids)}")
@@ -157,23 +157,23 @@ class Observer:
         proposal_id = checks.given(outcome, "agreement").proposal_id
         with SellerRecords.open(self.settings.seller_db) as seller:
             entry = checks.commitment(seller.entries(proposal_id), principal_id, method)
+            kept = None if entry.evidence_id is None else seller.request(entry.evidence_id)
+        if kept is None:
             side = SellerSide(
                 principal_id=principal_id,
                 authentication_method=method,
                 attributed=entry.attributed,
-                evidence_id=entry.evidence_id,
             )
-            if entry.evidence_id is None:
-                return Done(side, f"resolved {principal_id} by token hash; no signature evidence")
-            kept = seller.request(entry.evidence_id)
-        signer = kept.signer
+            return Done(side, f"resolved {principal_id} by token hash; no signature evidence")
+        signer, directory = kept.signer, kept.signer.directory
         expect(signer.origin == self.settings.buyer, f"evidence from {signer.origin}")
-        directory = signer.directory
-        side = side.model_copy(
-            update={
-                "request": _message(kept.request, signer.keyid),
-                "directory": None if directory is None else _kept_directory(directory),
-            }
+        side = SellerSide(
+            principal_id=principal_id,
+            authentication_method=method,
+            attributed=entry.attributed,
+            evidence_id=entry.evidence_id,
+            request=_message(kept.request, signer.keyid),
+            directory=None if directory is None else _kept_directory(directory),
         )
         return Done(
             side, f"resolved {principal_id} from origin {signer.origin}, keyid {signer.keyid}"
@@ -184,18 +184,13 @@ class Observer:
         outcome = checks.given(agreed, "agreement")
         with BuyerRecords.open(self.settings.buyer_db) as buyer:
             kept = buyer.response(outcome.evidence_id)
-        signer = kept.signer
+        signer, directory = kept.signer, kept.signer.directory
         expect(signer.origin == self.settings.seller, f"answer from {signer.origin}")
-        directory = signer.directory
-        request = _message(kept.response.request, outcome.keyid)
-        if outcome.authentication_method == "bearer":
-            # The request carried the token; the buyer's evidence never stores it.
-            withheld = sorted({*request.headers.withheld, "authorization"})
-            headers = request.headers.model_copy(update={"withheld": withheld})
-            request = request.model_copy(update={"headers": headers})
+        # A bearer request carried the token; the buyer's evidence never stores it.
+        token = ("authorization",) if outcome.authentication_method == "bearer" else ()
         side = BuyerSide(
             evidence_id=outcome.evidence_id,
-            request=request,
+            request=_message(kept.response.request, outcome.keyid, unkept=token),
             response=_answer(kept),
             directory=None if directory is None else _kept_directory(directory),
         )

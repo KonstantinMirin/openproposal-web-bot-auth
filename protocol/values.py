@@ -38,8 +38,8 @@ __all__ = [
 class AmendedValueError(TypeError):
     """A value was asked for an amended copy. Its next state is a new value, built and checked."""
 
-    def __init__(self, kind: str) -> None:
-        super().__init__(f"{kind} is never amended; build a new one")
+    def __init__(self, kind: str, instead: str = "build a new one") -> None:
+        super().__init__(f"{kind} is never amended; {instead}")
 
 
 class Value(BaseModel):

@@ -1,7 +1,8 @@
 # The identity values (seller/caller.py) are built in one place: the boundary
 # that confirmed the credential. One test module, tests/factories.py, builds them
 # for the tests. A Principal, a credential, a ResolvedCaller, or a PublicCaller
-# built anywhere else is an identity nobody confirmed.
+# built anywhere else is an identity nobody confirmed, and so is one rebuilt from
+# another's fields with one of them changed.
 id: identity-built-only-by-the-boundary
 language: Python
 severity: error
@@ -25,4 +26,18 @@ rule:
     - pattern: BearerCredential.model_validate($$$A)
     - pattern: ResolvedCaller.model_validate($$$A)
     - pattern: PublicCaller.model_validate($$$A)
+    - pattern: Principal.model_validate_json($$$A)
+    - pattern: SignatureCredential.model_validate_json($$$A)
+    - pattern: BearerCredential.model_validate_json($$$A)
+    - pattern: ResolvedCaller.model_validate_json($$$A)
+    - pattern: PublicCaller.model_validate_json($$$A)
+    - pattern: Principal.model_validate_strings($$$A)
+    - pattern: SignatureCredential.model_validate_strings($$$A)
+    - pattern: BearerCredential.model_validate_strings($$$A)
+    - pattern: ResolvedCaller.model_validate_strings($$$A)
+    - pattern: PublicCaller.model_validate_strings($$$A)
+    - pattern: type($V).model_validate($$$A)
+    - pattern: type($V).model_validate_json($$$A)
+    - pattern: $V.__class__.model_validate($$$A)
+    - pattern: $V.__class__.model_validate_json($$$A)
     - pattern: $T.model_construct($$$A)

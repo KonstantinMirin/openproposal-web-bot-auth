@@ -1,11 +1,11 @@
 """Who is calling: the frozen values the identity boundary (seller/boundary.py) returns.
 
-A leaf module. It imports pydantic and the pure values of persistence/values.py,
-nothing that reaches HTTP, storage, or the Web Bot Auth library, so the offer
-logic can take a `Caller` without loading any of them.
+A leaf module. It imports pydantic and the pure values of protocol/values.py and
+persistence/values.py, nothing that reaches HTTP, storage, or the Web Bot Auth
+library, so the offer logic can take a `Caller` without loading any of them.
 
-The types allow no illegal state. Each is strict, so nothing is coerced
-(`body_covered="yes"` fails); frozen, with unknown members refused; and
+The types allow no illegal state. Each is a `Value`: strict, so nothing is
+coerced (`body_covered="yes"` fails); frozen, with unknown members refused; and
 `model_copy` raises, so nothing amends an identity the boundary confirmed. A
 credential is either a `SignatureCredential` or a `BearerCredential`, told
 apart by `method`: a bearer credential can't carry an origin, and a
@@ -18,7 +18,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Annotated, Literal, NoReturn
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import Field
 
 from persistence.values import (
     BearerMethod,
@@ -27,18 +27,17 @@ from persistence.values import (
     Origin,
     SignatureMethod,
 )
+from protocol.values import AmendedValueError, Value
 
 
-class AmendedIdentityError(TypeError):
+class AmendedIdentityError(AmendedValueError):
     """An identity value was asked for an amended copy. The boundary builds a new one instead."""
 
     def __init__(self, kind: str) -> None:
-        super().__init__(f"{kind} is never amended; only the identity boundary builds one")
+        super().__init__(kind, "only the identity boundary builds one")
 
 
-class _Frozen(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
-
+class _Frozen(Value):
     def model_copy(
         self, *, update: Mapping[str, object] | None = None, deep: bool = False
     ) -> NoReturn:

@@ -18,7 +18,9 @@ signs. A rotation follows standard practice, and the keyring enforces its waits:
 
 Files are named by kid, so a published key never reuses a retired key's name.
 `state.json` holds a `KeyringState`, written whole to a temporary file and moved
-into place, so a reader never sees half of it. `key(kid)` is how anyone else
+into place, so a reader never sees half of it. Each step builds the next state
+with a named transition, a constructor call that checks every field, so a step
+can't write a state the keyring can't read back. `key(kid)` is how anyone else
 reads a key, the e2e scenarios included.
 """
 
@@ -29,19 +31,37 @@ from collections.abc import Callable
 from pathlib import Path
 
 from iab_agentic_primitives.web_bot_auth import Ed25519Key, keyfile
-from pydantic import BaseModel, ConfigDict
+
+from protocol.values import Value
 
 
-class KeyringState(BaseModel):
+class KeyringState(Value):
     """`state.json`: the active kid, and when each key was published and stopped signing."""
-
-    model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
 
     active: str
     #: Unix time each key was published. The first key counts as published at 0.0.
     published: dict[str, float]
     #: Unix time each key stopped signing.
     stopped: dict[str, float]
+
+    @classmethod
+    def first(cls, kid: str) -> KeyringState:
+        """A keyring's first state: `kid` signs, and counts as published at 0.0."""
+        return cls(active=kid, published={kid: 0.0}, stopped={})
+
+    def published_at(self, kid: str, at: float) -> KeyringState:
+        """The next state once `kid` is published at `at`. The active key keeps signing."""
+        return KeyringState(
+            active=self.active, published={**self.published, kid: at}, stopped=self.stopped
+        )
+
+    def activated(self, kid: str, at: float) -> KeyringState:
+        """The next state once `kid` signs from `at`: the key it replaces stopped signing then."""
+        return KeyringState(
+            active=kid,
+            published=self.published,
+            stopped={**self.stopped, self.active: at},
+        )
 
 
 class RotationError(Exception):
@@ -85,7 +105,7 @@ class Keyring:
         self._state_file = directory / "state.json"
         if not self._files():
             kid = self._mint().thumbprint
-            self._save(KeyringState(active=kid, published={kid: 0.0}, stopped={}))
+            self._save(KeyringState.first(kid))
 
     def _files(self) -> list[Path]:
         return sorted(self.directory.glob("*.jwk"))
@@ -127,12 +147,7 @@ class Keyring:
     def publish(self) -> Ed25519Key:
         """Step 1: a new key in the directory. It doesn't sign yet."""
         key = self._mint()
-        state = self.state()
-        self._save(
-            state.model_copy(
-                update={"published": {**state.published, key.thumbprint: self._clock()}}
-            )
-        )
+        self._save(self.state().published_at(key.thumbprint, self._clock()))
         return key
 
     def activate(self, kid: str) -> Ed25519Key:
@@ -143,8 +158,7 @@ class Keyring:
         if self._clock() < ready:
             raise TooEarlyError(kid, "verifiers may not list it", ready - self._clock())
         if kid != state.active:
-            stopped = {**state.stopped, state.active: self._clock()}
-            self._save(state.model_copy(update={"active": kid, "stopped": stopped}))
+            self._save(state.activated(kid, self._clock()))
         return self.active()
 
     def retire(self, kid: str) -> None:
