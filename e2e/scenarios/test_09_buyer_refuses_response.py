@@ -18,6 +18,7 @@ from collections.abc import Callable, Iterator
 import httpx
 import pytest
 from conftest import BUYER_OPERATOR, SELLER_FAULTS
+from openproposal import AssentEntryRole
 
 from persistence.observe import BuyerRecords, SellerRecords
 from transport.control import CommitTrigger, ReadTrigger
@@ -53,7 +54,7 @@ def fault(web: httpx.Client) -> Iterator[Callable[[str, str], None]]:
 
 def _seller_state(
     seller_records: SellerRecords, proposal_id: str
-) -> tuple[list[tuple[str, str | None]], list[str]]:
+) -> tuple[list[tuple[AssentEntryRole, str | None]], list[str]]:
     entries = [(e.role, e.idempotency_key) for e in seller_records.entries(proposal_id)]
     return entries, seller_records.processed(proposal_id)
 

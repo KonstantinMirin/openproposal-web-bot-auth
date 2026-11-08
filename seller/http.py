@@ -31,7 +31,7 @@ from typing import Annotated
 from fastapi import Depends, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from openproposal import CommitResult, ErrorObject, dump
+from openproposal import CommitResult, ErrorObject, ErrorObjectCode, dump
 from starlette.exceptions import HTTPException
 
 from persistence.values import Provenance
@@ -75,7 +75,7 @@ ProvenanceDep = Annotated[Provenance | None, Depends(provenance_of)]
 # § 2.4 errors
 
 #: The informative status of each core code (§ 2.4).
-CORE_STATUS: Mapping[str, int] = {
+CORE_STATUS: Mapping[ErrorObjectCode, int] = {
     "validation": 400,
     "not_offered": 400,
     "unresolved_reference": 400,

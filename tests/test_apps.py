@@ -149,21 +149,12 @@ def test_a_seller_without_an_operator_key_refuses_every_operator_call(tmp_path: 
         assert response.status_code == 403
 
 
-def _closed(db: sqlite3.Connection) -> bool:
-    """Whether `db` is closed. Readable from any thread, unlike a query on the connection."""
-    try:
-        _ = db.total_changes
-    except sqlite3.ProgrammingError:
-        return True
-    return False
-
-
 def test_the_seller_lifespan_closes_the_client_and_the_store(tmp_path: Path) -> None:
     with TestClient(seller_app(tmp_path), base_url=SELLER) as client:
         resources = client.app_state["resources"]
         assert isinstance(resources, SellerResources)
-        assert not resources.client.is_closed and not _closed(resources.store.db)
-    assert resources.client.is_closed and _closed(resources.store.db)
+        assert not resources.client.is_closed and not resources.store.is_closed
+    assert resources.client.is_closed and resources.store.is_closed
 
 
 def test_the_store_refuses_a_thread_other_than_the_one_that_opened_it(tmp_path: Path) -> None:
@@ -282,6 +273,6 @@ def test_the_buyer_lifespan_closes_the_client_and_the_store(tmp_path: Path) -> N
         assert client.get("/health").json() == {"ok": True}
         resources = client.app_state["resources"]
         assert isinstance(resources, BuyerResources)
-        assert not resources.client.is_closed and not _closed(resources.store.db)
-    assert resources.client.is_closed and _closed(resources.store.db)
+        assert not resources.client.is_closed and not resources.store.is_closed
+    assert resources.client.is_closed and resources.store.is_closed
     assert {p.name for p in tmp_path.iterdir()} == {"keys", "buyer.db"}

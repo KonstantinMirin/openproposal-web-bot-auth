@@ -1,11 +1,14 @@
-# Observers outside a party (the live runner, the e2e scenarios) read its records
-# through the read models in persistence/observe.py and persistence/evidence.py,
-# never with their own SQL against the party's private schema.
+# Observers outside a party (the live runner, the e2e scenarios, and the tests)
+# read its records through the read models in persistence/observe.py and
+# persistence/evidence.py, never with their own SQL against the party's private
+# schema. A test writes SQL only to tamper with a row on purpose, and never
+# reads that way. The unit-of-work test runs over a schema of its own.
 id: observers-read-through-the-read-models
 language: Python
 severity: error
 message: Read a party's records through persistence/observe.py (SellerRecords, BuyerRecords), not with SQL.
-files: ["runner/**/*.py", "e2e/**/*.py"]
+files: ["runner/**/*.py", "e2e/**/*.py", "tests/**/*.py"]
+ignores: ["tests/test_sqlite.py"]
 rule:
   kind: string
   regex: '^[a-zA-Z]*("|''|"""|'''''')\s*(?i:select)\b'

@@ -5,15 +5,15 @@ needs it (an ended window, a sold-out line item, an earlier live commitment),
 starts the app with `create_app`, and commits over its ASGI interface as
 buyer-wba with a bearer token. The commit is composed with the protocol
 operations from the document the seller serves, so it is correct unless the
-row breaks it on purpose. What comes out is the answer and the rows the
-seller kept.
+row breaks it on purpose. What comes out is the answer and the records the
+seller kept, read through its read model.
 """
 
 from __future__ import annotations
 
 import json
-import sqlite3
 from collections.abc import Callable, Iterator
+from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -26,6 +26,7 @@ from iab_agentic_primitives.web_bot_auth import MemoryNonceStore, StaticKeyResol
 from openproposal import AssentEntry, LineItemWrites, Proposal, dump_json
 from pydantic import SecretStr
 
+from persistence.observe import KeptEntry, SellerRecords
 from persistence.values import Origin
 from protocol.operations import compose_commit
 from protocol.record import items_by_id
@@ -94,15 +95,18 @@ class Seller:
         body: JsonObject = json.loads(dump_json(made.commit))
         return body
 
-    def rows(self, query: str, *args: object) -> list[tuple[object, ...]]:
-        db = sqlite3.connect(f"file:{self.data_dir / 'seller.db'}?mode=ro", uri=True)
-        try:
-            return [tuple(r) for r in db.execute(query, args).fetchall()]
-        finally:
-            db.close()
+    def records(self) -> AbstractContextManager[SellerRecords]:
+        return SellerRecords.open(self.data_dir / "seller.db")
 
-    def ledger(self, key: str) -> list[tuple[object, ...]]:
-        return self.rows("SELECT error FROM commits WHERE idempotency_key = ?", key)
+    def entries(self) -> list[KeptEntry]:
+        """The assent log of demo-wba-1."""
+        with self.records() as records:
+            return records.entries("demo-wba-1")
+
+    def ledger(self, proposal_id: str = "demo-wba-1") -> list[str]:
+        """The idempotency keys of the commits the seller processed on `proposal_id`."""
+        with self.records() as records:
+            return records.processed(proposal_id)
 
 
 #: A change to the template before it is issued, or to a commit before it is sent.
@@ -337,9 +341,9 @@ def test_each_check_rejects_with_its_code(seller_with: StartSeller, row: Row) ->
     (error,) = answer.json()["errors"]
     assert error["code"] == row.code and error["version"] == 1
     assert error["retry"] == row.retry
-    assert len(seller.ledger("k-1")) == int(row.stored)
+    assert seller.ledger() == (["k-1"] if row.stored else [])
     # Nothing was written to the record.
-    assert seller.rows("SELECT role FROM assent WHERE idempotency_key = 'k-1'") == []
+    assert [e.role for e in seller.entries() if e.idempotency_key == "k-1"] == []
 
 
 def test_a_caller_with_no_principal_is_not_eligible(seller_with: StartSeller) -> None:
@@ -347,7 +351,7 @@ def test_a_caller_with_no_principal_is_not_eligible(seller_with: StartSeller) ->
     answer = seller.commit(seller.composed(), headers={})
     assert answer.status_code == 403
     assert answer.json()["errors"][0]["code"] == "not_eligible"
-    assert seller.ledger("k-1") == []
+    assert seller.ledger() == []
 
 
 @pytest.mark.parametrize(
@@ -380,7 +384,7 @@ def test_a_proposal_issued_to_another_buyer_is_not_found(seller_with: StartSelle
     answer = seller.commit(seller.composed(), path="/proposals/demo-bearer-1/commit")
     assert answer.status_code == 404
     assert answer.json()["errors"][0]["code"] == "not_found"
-    assert seller.ledger("k-1") == []
+    assert seller.ledger("demo-bearer-1") == seller.ledger() == []
 
 
 # ── Acceptance ────────────────────────────────────────────────────────────
@@ -398,10 +402,11 @@ def test_an_accepted_commit_writes_the_pair_and_the_agreed_record(
     assert acceptance["role"] == "acceptance"
     assert acceptance["record_digest"] == commitment["record_digest"]
 
-    assert seller.rows("SELECT role FROM assent ORDER BY id") == [("commitment",), ("acceptance",)]
-    ((digest,),) = seller.rows("SELECT record_digest FROM agreed_records")
-    assert digest == commitment["record_digest"]
-    assert seller.ledger("k-1") == [(None,)]
+    assert [e.role for e in seller.entries()] == ["commitment", "acceptance"]
+    with seller.records() as records:
+        (agreed,) = records.agreed("demo-wba-1")
+    assert agreed.record_digest == commitment["record_digest"]
+    assert seller.ledger() == ["k-1"]
     agreed = seller.client.get("/proposals/demo-wba-1", headers=TOKEN).json()
     assert items_by_id(agreed)[ITEM]["status"] == "agreed"
     assert [e["role"] for e in agreed["assent"]] == ["commitment", "acceptance"]
@@ -409,7 +414,7 @@ def test_an_accepted_commit_writes_the_pair_and_the_agreed_record(
     # The same commit again is a replay: the same result, and nothing written.
     again = seller.commit(commit)
     assert again.json() == answer.json()
-    assert len(seller.rows("SELECT id FROM assent")) == 2
+    assert len(seller.entries()) == 2
 
 
 # ── The ledger ────────────────────────────────────────────────────────────
@@ -423,7 +428,7 @@ def test_a_stored_rejection_is_replayed_as_stored(seller_with: StartSeller) -> N
     assert first.status_code == 409
     again = seller.commit(commit)
     assert (again.status_code, again.json()) == (409, first.json())
-    assert len(seller.ledger("k-1")) == 1
+    assert seller.ledger() == ["k-1"]
 
 
 def test_a_key_reused_with_another_commit_is_an_idempotency_conflict(
@@ -458,7 +463,7 @@ def test_a_retry_same_rejection_is_not_stored_and_the_same_key_then_succeeds(
     commit = seller.composed()
     refused = seller.commit(commit)
     assert refused.status_code == 503 and refused.json()["errors"][0]["retry"] == "same"
-    assert seller.ledger("k-1") == []
+    assert seller.ledger() == []
 
     # The earlier commitment is withdrawn, so the same request can now succeed.
     store = SqliteSellerStore(seller.data_dir / "seller.db")
@@ -469,4 +474,4 @@ def test_a_retry_same_rejection_is_not_stored_and_the_same_key_then_succeeds(
         store.close()
     accepted = seller.commit(commit)
     assert accepted.status_code == 200, accepted.text
-    assert seller.ledger("k-1") == [(None,)]
+    assert seller.ledger() == ["k-1"]

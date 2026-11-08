@@ -109,6 +109,12 @@ files = [
     "e2e/scenarios",
 ]
 
+# Storage reads rows by name into typed records (persistence/sqlite.py), so no
+# expression there is Any: a row's values reach a record only through validation.
+[[tool.mypy.overrides]]
+module = ["persistence.*", "seller.sqlite_store", "buyer.repository"]
+disallow_any_expr = true
+
 [tool.coverage.run]
 source = ["protocol", "persistence", "seller", "buyer", "shared", "transport", "runner"]
 branch = true
@@ -119,8 +125,8 @@ branch = true
 # Step 5: 88.07; the refusal body and the library at f1f4092: 88.40; Step 6: 91.58;
 # Step 7: 96.96; Step 8: 97.32, on the behavior suite; the foreign-origin, exact-line,
 # digest, and runner corruption rows: 97.52; the pure values and the number domain: 97.58;
-# next states built by constructor: 97.61; provenance and the one evidence store: 97.62).
-# It is never lowered.
-fail_under = 97.62
+# next states built by constructor: 97.61; provenance and the one evidence store: 97.62;
+# one schema owner per party, with rows read by name: 97.72). It is never lowered.
+fail_under = 97.72
 precision = 2
 show_missing = false

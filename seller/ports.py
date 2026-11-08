@@ -15,12 +15,14 @@ from typing import Protocol
 from openproposal import AssentEntry, ErrorObject
 
 from persistence.values import Origin, Provenance
-from protocol.values import JsonObject
+from protocol.values import JsonObject, Value
 
 
-@dataclass(frozen=True)
-class PrincipalRecord:
-    """A party this seller knows, as its records hold it. The boundary makes it a `Principal`."""
+class PrincipalRecord(Value):
+    """A party this seller knows, as its records hold it. The boundary makes it a `Principal`.
+
+    The store reads a principal row straight into it, by its fields' names.
+    """
 
     id: str
     legal_name: str
@@ -39,7 +41,7 @@ class StoredProposal:
         return str(self.document["proposal_id"])
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class ProcessedCommit:
     """A commit this seller processed (§ 5.6.1), and the rejection it stored, if any."""
 

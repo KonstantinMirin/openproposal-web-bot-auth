@@ -22,7 +22,7 @@ from typing import Literal
 
 from pydantic import Field
 
-from persistence.values import Origin
+from persistence.values import AuthMethod, Origin
 from protocol.values import JsonObject, JsonValue, Value
 from transport.control import OPERATOR_HEADER, Agreed, CloudflareCheck
 
@@ -98,7 +98,7 @@ class SellerSide(_Part):
     """What the seller's boundary resolved for the commit, and the signed request it kept."""
 
     principal_id: str
-    authentication_method: str
+    authentication_method: AuthMethod
     attributed: bool
     #: The kept request that carried the entry; None for a bearer commit.
     evidence_id: int | None = None

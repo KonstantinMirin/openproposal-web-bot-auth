@@ -21,7 +21,6 @@ import httpx
 import pytest
 from iab_agentic_primitives.web_bot_auth import HTTPRequest, RequestSigner
 
-from persistence.observe import SellerRecords
 from tests.stack import BUYER, SELLER, TOKEN, Stack
 
 DISPLAY = "business-daily-display"
@@ -85,7 +84,7 @@ def test_the_seller_rejects_a_commit_that_holds_one_as_validation(
     (error,) = answer.json()["errors"]
     assert (error["code"], error["retry"]) == ("validation", "none")
     assert "RFC 8785" in error["detail"]
-    with SellerRecords.open(stack.seller_dir / "seller.db") as records:
+    with stack.seller_records() as records:
         assert records.entries(proposal_id) == []
         assert records.processed(proposal_id) == []
 
@@ -128,7 +127,6 @@ def test_the_buyer_refuses_a_commit_answer_that_holds_one_and_settles_nothing(
     assert response.status_code == 200
     outcome = response.json()
     assert (outcome["state"], outcome["reason"]) == ("refused", "malformed-answer"), outcome
-    with stack.buyer_db() as db:
-        states = db.execute("SELECT state FROM commits WHERE proposal_id = ?", (proposal_id,))
-        assert [r["state"] for r in states] == ["pending"]
-        assert db.execute("SELECT COUNT(*) FROM signed_responses").fetchone()[0] == 0
+    assert stack.commit_states(proposal_id, [DISPLAY]) == ["pending"]
+    with stack.buyer_records() as records:
+        assert records.messages() == 0

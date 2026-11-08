@@ -144,9 +144,10 @@ class Buyer:
         read = await self.client.read(call.seller, call.credential, proposal_id)
         if not isinstance(read, ReadProposal):
             return call.refused(_unreadable(proposal_id, read))
-        pending = self._pending(
-            CommitKey(call.seller.origin, proposal_id, tuple(writes)), read, writes
+        key = CommitKey(
+            seller_origin=call.seller.origin, proposal_id=proposal_id, line_item_ids=tuple(writes)
         )
+        pending = self._pending(key, read, writes)
         answer = await self.client.commit(call.seller, call.credential, proposal_id, pending.body)
         if isinstance(answer, Refusal):
             return call.refused(answer)

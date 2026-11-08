@@ -18,7 +18,6 @@ kept.
 from __future__ import annotations
 
 import json
-import sqlite3
 import time
 import uuid
 from collections.abc import Callable, Iterator
@@ -46,7 +45,7 @@ from openproposal import LineItemWrites, Proposal, dump_json
 from pydantic import SecretStr
 from starlette.types import ASGIApp
 
-from persistence.observe import SellerRecords
+from persistence.observe import KeptEntry, SellerRecords
 from persistence.values import Origin
 from protocol.operations import compose_commit
 from protocol.values import JsonObject
@@ -315,16 +314,10 @@ def _commit_body(document: JsonObject, *, key: str, at: datetime) -> bytes:
     return dump_json(composed.commit).encode()
 
 
-def _assent(data_dir: Path) -> list[sqlite3.Row]:
-    db = sqlite3.connect(f"file:{data_dir / 'seller.db'}?mode=ro", uri=True)
-    db.row_factory = sqlite3.Row
-    try:
-        return db.execute(
-            "SELECT role, entry, principal_id, authentication_method, evidence_id, attributed"
-            " FROM assent WHERE proposal_id = 'demo-wba-1' ORDER BY id"
-        ).fetchall()
-    finally:
-        db.close()
+def _assent(data_dir: Path) -> list[KeptEntry]:
+    """The seller's assent log of demo-wba-1, as its read model reads it."""
+    with SellerRecords.open(data_dir / "seller.db") as records:
+        return records.entries("demo-wba-1")
 
 
 def test_a_signed_commit_keeps_its_request_with_the_entry(parties: Parties, tmp_path: Path) -> None:
@@ -340,14 +333,15 @@ def test_a_signed_commit_keeps_its_request_with_the_entry(parties: Parties, tmp_
     assert answer.status_code == 200, answer.text
 
     commitment, acceptance = _assent(tmp_path)
-    assert (commitment["principal_id"], commitment["authentication_method"]) == (
+    assert (commitment.principal_id, commitment.authentication_method) == (
         "buyer-wba",
         "web_bot_auth",
     )
-    assert commitment["attributed"] == 1  # the body is covered, and the host is the domain
-    assert acceptance["evidence_id"] is None and acceptance["authentication_method"] is None
+    assert commitment.attributed is True  # the body is covered, and the host is the domain
+    assert acceptance.evidence_id is None and acceptance.authentication_method is None
+    assert commitment.evidence_id is not None
     with SellerRecords.open(tmp_path / "seller.db") as records:
-        kept_request = records.request(commitment["evidence_id"])
+        kept_request = records.request(commitment.evidence_id)
     kept, directory = kept_request.request, kept_request.signer.directory
     assert (kept.method, kept.url, kept.body) == ("POST", f"{SELLER}{path}", body)
     # The header lines exactly as the app received them: in order, in case, and every line.
@@ -426,9 +420,9 @@ def test_a_signature_and_a_token_get_the_same_result_for_the_same_commit(
             answer = client.post(path, content=body, headers=headers)
             assert answer.status_code == 200, answer.text
             results.append(_without_acceptance_time(answer.json()))
-        rows.append([(r["role"], r["principal_id"]) for r in _assent(data_dir)])
+        rows.append([(e.role, e.principal_id) for e in _assent(data_dir)])
     assert results[0] == results[1]
     assert rows[0] == rows[1] == [("commitment", "buyer-wba"), ("acceptance", None)]
     # Only the stored provenance differs.
-    methods = [_assent(tmp_path / c)[0]["authentication_method"] for c in ("signature", "token")]
+    methods = [_assent(tmp_path / c)[0].authentication_method for c in ("signature", "token")]
     assert methods == ["web_bot_auth", "bearer"]

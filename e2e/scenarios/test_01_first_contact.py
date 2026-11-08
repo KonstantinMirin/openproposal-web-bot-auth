@@ -15,7 +15,8 @@ import httpx
 from conftest import BUYER, BUYER_OPERATOR, SELLER
 from iab_agentic_primitives.web_bot_auth import ServerIdentity
 
-from persistence.observe import BuyerRecords, SellerRecords
+from persistence.observe import BuyerRecords, KeptOriginCredential, SellerRecords
+from persistence.values import Origin
 from transport.reverify import reverify_request, reverify_response
 
 
@@ -25,12 +26,9 @@ def test_first_contact_by_signature(
     # Neither side holds a key or a directory of the other yet.
     assert seller_records.directories() == 0
     assert buyer_records.directories() == 0
-    (credential,) = seller_records.credentials("buyer-wba")
-    assert (credential.type, credential.origin, credential.token_hash) == (
-        "web_bot_auth",
-        BUYER,
-        None,
-    )
+    assert seller_records.credentials("buyer-wba") == [
+        KeptOriginCredential(origin=Origin.parse(BUYER))
+    ]
 
     outcome = web.post(
         f"{BUYER_OPERATOR}/commit",

@@ -11,6 +11,7 @@ lint: cfbot/node_modules placeholders
 	uv run ruff check --ignore-noqa --config ruff-environment.toml
 	uv run ruff check --ignore-noqa --config ruff-buyer.toml
 	uv run ruff check --ignore-noqa --config ruff-digest.toml
+	uv run ruff check --ignore-noqa --config ruff-observers.toml
 	cd cfbot && npx --no-install eslint server.mjs
 
 # A placeholder for a link or a value left in the tree. The seed template's own

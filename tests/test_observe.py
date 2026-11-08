@@ -21,7 +21,7 @@ from iab_agentic_primitives.web_bot_auth import (
 )
 
 from persistence.evidence import NoEvidenceError
-from persistence.observe import BuyerRecords, SellerRecords
+from persistence.observe import BuyerRecords, KeptOriginCredential, SellerRecords
 from persistence.values import Origin
 from tests.stack import BUYER, SELLER, Stack
 from transport.reverify import reverify_request, reverify_response
@@ -52,14 +52,13 @@ def test_the_seller_records_read_the_commit_as_the_boundary_resolved_it(
     agreed: tuple[Stack, dict[str, object]],
 ) -> None:
     stack, _ = agreed
-    with SellerRecords.open(stack.seller_dir / "seller.db") as seller:
+    with stack.seller_records() as seller:
         commitment, acceptance = seller.entries("demo-wba-1")
         assert (commitment.role, acceptance.role) == ("commitment", "acceptance")
         assert commitment.principal_id == "buyer-wba"
         assert commitment.authentication_method == "web_bot_auth"
         assert seller.processed("demo-wba-1") == [commitment.idempotency_key]
-        (credential,) = seller.credentials("buyer-wba")
-        assert (credential.type, credential.origin) == ("web_bot_auth", BUYER)
+        assert seller.credentials("buyer-wba") == [KeptOriginCredential(origin=Origin.parse(BUYER))]
         assert seller.directories_of(Origin.parse(BUYER)) == 1
         assert seller.requests_from(Origin.parse(BUYER)) == 1
 
@@ -69,7 +68,7 @@ def test_one_directory_fetch_verified_twice_is_kept_once(tmp_path: Path) -> None
         for proposal_id in ("demo-wba-1", "demo-wba-2"):
             assert stack.commit(proposal_id, [DISPLAY]).json()["state"] == "agreed"
         served = stack.buyer.get(DIRECTORY_PATH).content
-    with SellerRecords.open(stack.seller_dir / "seller.db") as seller:
+    with stack.seller_records() as seller:
         # Two signatures, one cached fetch: one row, with the exact body bytes verified.
         assert seller.requests_from(Origin.parse(BUYER)) == 2
         assert seller.directories() == 1
@@ -85,7 +84,7 @@ def test_both_parties_kept_evidence_verifies_again_offline(
     agreed: tuple[Stack, dict[str, object]],
 ) -> None:
     stack, outcome = agreed
-    with SellerRecords.open(stack.seller_dir / "seller.db") as seller:
+    with stack.seller_records() as seller:
         (commitment, _) = seller.entries("demo-wba-1")
         assert commitment.evidence_id is not None
         kept = seller.request(commitment.evidence_id)
@@ -94,7 +93,7 @@ def test_both_parties_kept_evidence_verifies_again_offline(
     assert str(again.origin) == BUYER and again.body_covered
     assert again.keyid == stack.buyer_keys.active().thumbprint
 
-    with BuyerRecords.open(stack.buyer_dir / "buyer.db") as buyer:
+    with stack.buyer_records() as buyer:
         evidence_id = outcome["evidence_id"]
         assert isinstance(evidence_id, int)
         answered = asyncio.run(reverify_response(buyer.response(evidence_id)))
@@ -145,12 +144,12 @@ def test_a_tampered_kept_answer_fails_to_verify_again(
 
 def test_an_unknown_id_is_no_evidence(agreed: tuple[Stack, dict[str, object]]) -> None:
     stack, _ = agreed
-    with BuyerRecords.open(stack.buyer_dir / "buyer.db") as buyer:
+    with stack.buyer_records() as buyer:
         with pytest.raises(NoEvidenceError):
             buyer.response(999)
         assert buyer.commit(999) is None
     with (
-        SellerRecords.open(stack.seller_dir / "seller.db") as seller,
+        stack.seller_records() as seller,
         pytest.raises(NoEvidenceError),
     ):
         seller.request(999)

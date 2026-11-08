@@ -26,10 +26,12 @@ from __future__ import annotations
 import json
 import sqlite3
 
-from protocol.record import sha256_hex
-from protocol.values import JsonObject, JsonValue, canonical
+from pydantic import Json
 
-from .sqlite import inserted
+from protocol.record import sha256_hex
+from protocol.values import JsonObject, JsonValue, Value, canonical
+
+from .sqlite import Fetched, count, fetch_one, inserted, select
 from .values import (
     DirectoryFetch,
     HeaderLine,
@@ -87,12 +89,41 @@ CREATE TABLE IF NOT EXISTS signed_responses (
 SCHEMA = DIRECTORIES_SCHEMA + MESSAGES_SCHEMA
 
 
+#: Header lines as a `headers` column holds them, read back.
+_Lines = Json[tuple[HeaderLine, ...]]
+
+
 def _lines(lines: tuple[HeaderLine, ...]) -> str:
-    return json.dumps([[name, value] for name, value in lines])
+    pairs: list[list[str]] = [[name, value] for name, value in lines]
+    return json.dumps(pairs)
 
 
-def _decoded(text: str) -> tuple[HeaderLine, ...]:
-    return tuple((str(name), str(value)) for name, value in json.loads(text))
+class _RequestRow(Value):
+    origin: Origin
+    keyid: str | None
+    method: str
+    url: str
+    headers: _Lines
+    body: bytes
+    directory_digest: str | None
+
+
+class _ResponseRow(Value):
+    request_id: int
+    origin: Origin
+    keyid: str
+    status: int
+    headers: _Lines
+    body: bytes
+    directory_digest: str | None
+
+
+class _DirectoryRow(Value):
+    url: str
+    status: int
+    headers: _Lines
+    body: bytes
+    fetched_at: int
 
 
 class NoEvidenceError(LookupError):
@@ -181,35 +212,21 @@ class EvidenceStore:
     # Reading
 
     def request(self, request_id: int) -> SignedRequest:
-        row = self._db.execute(
-            "SELECT origin, keyid, method, url, headers, body, directory_digest"
-            " FROM signed_requests WHERE id = ?",
-            (request_id,),
-        ).fetchone()
-        if row is None:
-            raise NoEvidenceError(request_id)
+        query = select("signed_requests", _RequestRow, where="id = ?")
+        row = _RequestRow.model_validate(self._found(query, request_id))
         request = KeptRequest(
-            method=row["method"],
-            url=row["url"],
-            lines=_decoded(row["headers"]),
-            body=bytes(row["body"]),
-            id=request_id,
+            method=row.method, url=row.url, lines=row.headers, body=row.body, id=request_id
         )
         return SignedRequest(request=request, signer=self._signer(row))
 
     def response(self, response_id: int) -> SignedResponse:
-        row = self._db.execute(
-            "SELECT request_id, origin, keyid, status, headers, body, directory_digest"
-            " FROM signed_responses WHERE id = ?",
-            (response_id,),
-        ).fetchone()
-        if row is None:
-            raise NoEvidenceError(response_id)
-        request = self.request(row["request_id"])
+        query = select("signed_responses", _ResponseRow, where="id = ?")
+        row = _ResponseRow.model_validate(self._found(query, response_id))
+        request = self.request(row.request_id)
         response = KeptResponse(
-            status=row["status"],
-            lines=_decoded(row["headers"]),
-            body=bytes(row["body"]),
+            status=row.status,
+            lines=row.headers,
+            body=row.body,
             request=request.request,
             id=response_id,
         )
@@ -218,25 +235,27 @@ class EvidenceStore:
         )
 
     def directory(self, digest: str) -> DirectoryFetch:
-        row = self._db.execute(
-            "SELECT url, status, headers, body, fetched_at FROM directories WHERE digest = ?",
-            (digest,),
-        ).fetchone()
-        if row is None:
-            raise NoEvidenceError(digest)
+        query = select("directories", _DirectoryRow, where="digest = ?")
+        row = _DirectoryRow.model_validate(self._found(query, digest))
         return DirectoryFetch(
-            url=row["url"],
-            status=row["status"],
-            lines=_decoded(row["headers"]),
-            body=bytes(row["body"]),
-            fetched_at=row["fetched_at"],
+            url=row.url,
+            status=row.status,
+            lines=row.headers,
+            body=row.body,
+            fetched_at=row.fetched_at,
         )
 
-    def _signer(self, row: sqlite3.Row) -> Signer:
-        digest = row["directory_digest"]
+    def _found(self, query: str, key: int | str) -> Fetched:
+        row = fetch_one(self._db, query, (key,))
+        if row is None:
+            raise NoEvidenceError(key)
+        return row
+
+    def _signer(self, row: _RequestRow | _ResponseRow) -> Signer:
+        digest = row.directory_digest
         return Signer(
-            origin=Origin.parse(row["origin"]),
-            keyid=row["keyid"],
+            origin=row.origin,
+            keyid=row.keyid,
             directory=None if digest is None else self.directory(digest),
         )
 
@@ -244,19 +263,27 @@ class EvidenceStore:
 
     def directories(self) -> int:
         """How many directory fetches the party kept."""
-        return self._count("SELECT COUNT(*) FROM directories")
+        return count(self._db, "SELECT COUNT(*) AS n FROM directories")
 
     def directories_of(self, origin: Origin) -> int:
         """How many kept directory fetches came from `origin`."""
-        return self._count("SELECT COUNT(*) FROM directories WHERE url = ?", origin.directory_url)
+        query = "SELECT COUNT(*) AS n FROM directories WHERE url = ?"
+        return count(self._db, query, (origin.directory_url,))
+
+    def messages(self) -> int:
+        """How many signed messages the party kept, requests and responses together."""
+        query = (
+            "SELECT (SELECT COUNT(*) FROM signed_requests)"
+            " + (SELECT COUNT(*) FROM signed_responses) AS n"
+        )
+        return count(self._db, query)
 
     def requests_from(self, origin: Origin) -> int:
         """How many kept requests `origin` signed."""
-        return self._count("SELECT COUNT(*) FROM signed_requests WHERE origin = ?", str(origin))
+        query = "SELECT COUNT(*) AS n FROM signed_requests WHERE origin = ?"
+        return count(self._db, query, (str(origin),))
 
     def requests_with_body(self, body: bytes) -> int:
         """How many kept requests carried exactly `body`."""
-        return self._count("SELECT COUNT(*) FROM signed_requests WHERE body = ?", body)
-
-    def _count(self, query: str, *args: object) -> int:
-        return int(self._db.execute(query, args).fetchone()[0])
+        query = "SELECT COUNT(*) AS n FROM signed_requests WHERE body = ?"
+        return count(self._db, query, (body,))

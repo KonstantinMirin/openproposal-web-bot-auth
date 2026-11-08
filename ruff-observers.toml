@@ -1,0 +1,13 @@
+# Layer ban: observers outside a party (the live runner and the e2e scenarios)
+# open no database themselves; they read a party's records through the read
+# models in persistence/observe.py, which open it read-only.
+#
+# Run as its own stage: `uv run ruff check --config ruff-observers.toml` (make lint).
+# A separate config, so that no exemption here leaks into another ban.
+include = ["runner/**/*.py", "e2e/**/*.py"]
+
+[lint]
+select = ["TID251"]
+
+[lint.flake8-tidy-imports.banned-api]
+"sqlite3".msg = "Read a party's records through persistence/observe.py (SellerRecords, BuyerRecords)."

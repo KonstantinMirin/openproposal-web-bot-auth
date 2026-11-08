@@ -101,7 +101,7 @@ class Origin(Value):
             raise NotAnOriginError(f"{_SCHEME}{self.host}")
         return self
 
-    @model_serializer
+    @model_serializer(mode="plain")
     def _text(self) -> str:
         return str(self)
 

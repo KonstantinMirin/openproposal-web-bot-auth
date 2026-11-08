@@ -203,33 +203,37 @@ def _request_signed_without_its_body(stack: Stack) -> None:
         )
 
 
-def _answer_bound_to_nothing(stack: Stack) -> None:
-    """Tamper: the buyer's kept answer to the signed commit becomes one the seller signed, with
-    its own key, for the request with its signature taken off, so it is bound to nothing."""
+def _answer_bound_to_nothing(stack: Stack) -> After:
+    """Tamper: once the signed commit is agreed, the buyer's kept answer to it becomes one the
+    seller signed, with its own key, for the request with its signature taken off, so it is
+    bound to nothing."""
+
+    def after(request: httpx.Request, response: httpx.Response) -> httpx.Response:
+        if request.url.path == "/operator/commit":
+            outcome = json.loads(response.read())
+            if outcome.get("authentication_method") == "web_bot_auth":
+                _unbind(stack, outcome["evidence_id"])
+        return response
+
+    return after
+
+
+def _unbind(stack: Stack, evidence_id: int) -> None:
+    with stack.buyer_records() as records:
+        kept = records.response(evidence_id).response
+    sent = kept.request
+    unsigned = [line for line in sent.lines if not line[0].lower().startswith("signature")]
+    request = HTTPRequest(sent.method, sent.url, unsigned, sent.body)
+    answer = HTTPResponse(kept.status, [("content-type", "application/json")], kept.body, request)
+    signed = ResponseSigner(stack.seller_key, SELLER).sign(answer)
     with _writable(_db(stack, "buyer")) as db:
-        db.row_factory = sqlite3.Row
-        kept = db.execute(
-            "SELECT r.id, r.status, r.body, q.id AS request_id, q.method, q.url, q.headers,"
-            " q.body AS request_body FROM signed_responses r"
-            " JOIN signed_requests q ON q.id = r.request_id WHERE q.keyid IS NOT NULL"
-        ).fetchone()
-        unsigned = [
-            (name, value)
-            for name, value in json.loads(kept["headers"])
-            if not name.lower().startswith("signature")
-        ]
-        request = HTTPRequest(kept["method"], kept["url"], unsigned, kept["request_body"])
-        answer = HTTPResponse(
-            kept["status"], [("content-type", "application/json")], kept["body"], request
-        )
-        signed = ResponseSigner(stack.seller_key, SELLER).sign(answer)
         db.execute(
             "UPDATE signed_requests SET headers = ? WHERE id = ?",
-            (json.dumps([list(line) for line in unsigned]), kept["request_id"]),
+            (json.dumps([list(line) for line in unsigned]), sent.id),
         )
         db.execute(
             "UPDATE signed_responses SET headers = ? WHERE id = ?",
-            (json.dumps([list(line) for line in signed.headers]), kept["id"]),
+            (json.dumps([list(line) for line in signed.headers]), evidence_id),
         )
 
 
@@ -396,7 +400,7 @@ CORRUPTED = [
     ),
     Corrupted(
         "the buyer's evidence is bound to nothing",
-        _after_commit(_answer_bound_to_nothing),
+        _answer_bound_to_nothing,
         "signature-reverify",
         "the buyer's evidence doesn't verify again",
     ),

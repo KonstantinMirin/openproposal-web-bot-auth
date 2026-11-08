@@ -3,9 +3,11 @@
 Each app is built by its own `create_app`, with the library's real signer and
 verifiers. The buyer's one client reaches the seller app through `Stack.route`,
 an in-process transport, so a test drives the buyer's operator routes and
-reads what each party kept. A test can stand in for the seller (`answer`), for
-example to send a correctly signed answer that is malformed, or one signed by
-the reseller, a third party with its own key and origin.
+reads what each party kept through its read model (`seller_records`,
+`buyer_records`), as an observer outside the party reads it. A test can stand
+in for the seller (`answer`), for example to send a correctly signed answer
+that is malformed, or one signed by the reseller, a third party with its own
+key and origin.
 
 The transport records the exact header lines on both sides: every request the
 buyer sent and every answer it got (`requests`, `responses`), and each
@@ -26,10 +28,9 @@ cfbot's directory.
 
 from __future__ import annotations
 
-import sqlite3
 import time
-from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from collections.abc import Callable
+from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from pathlib import Path
 from types import TracebackType
@@ -52,6 +53,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 from buyer.app import create_app as create_buyer
 from buyer.settings import BuyerSettings
+from persistence.observe import BuyerRecords, SellerRecords
 from persistence.values import Origin
 from seller.app import create_app as create_seller
 from seller.settings import SellerSettings
@@ -90,13 +92,6 @@ def buyer_settings(data_dir: Path, *, token: bool = True) -> BuyerSettings:
         operator_key=SecretStr(OPERATOR["X-Operator-Key"]),
         bearer_token=SecretStr(TOKEN) if token else None,
     )
-
-
-def read_only(path: Path) -> sqlite3.Connection:
-    """A party's database, opened read-only from the test's own thread."""
-    db = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
-    db.row_factory = sqlite3.Row
-    return db
 
 
 Lines = list[tuple[str, str]]
@@ -301,18 +296,16 @@ class Stack:
 
     # What each party kept
 
-    @contextmanager
-    def seller_db(self) -> Iterator[sqlite3.Connection]:
-        db = read_only(self.seller_dir / "seller.db")
-        try:
-            yield db
-        finally:
-            db.close()
+    def seller_records(self) -> AbstractContextManager[SellerRecords]:
+        """The seller's records, read-only, as an observer outside the seller reads them."""
+        return SellerRecords.open(self.seller_dir / "seller.db")
 
-    @contextmanager
-    def buyer_db(self) -> Iterator[sqlite3.Connection]:
-        db = read_only(self.buyer_dir / "buyer.db")
-        try:
-            yield db
-        finally:
-            db.close()
+    def buyer_records(self) -> AbstractContextManager[BuyerRecords]:
+        """The buyer's records, read-only, as an observer outside the buyer reads them."""
+        return BuyerRecords.open(self.buyer_dir / "buyer.db")
+
+    def commit_states(self, proposal_id: str, line_item_ids: list[str]) -> list[str]:
+        """Where each of the buyer's commits on these line items of `proposal_id` stands,
+        oldest first."""
+        with self.buyer_records() as records:
+            return [c.state for c in records.commits(proposal_id, line_item_ids)]

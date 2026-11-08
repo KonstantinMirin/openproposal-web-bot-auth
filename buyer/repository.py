@@ -1,63 +1,42 @@
 """The buyer's own records, in SQLite: its sellers, its commits, and the evidence of each agreement.
 
 `BuyerRepository` takes and returns domain values, never rows, and it is the
-only buyer code that serializes for storage. `keep_agreement` writes the
-seller's signed answer and settles the commit in one transaction.
+only buyer code that serializes for storage. It writes the tables that
+persistence/buyer_schema.py defines and reads commits through that module, the
+buyer's read model's too; a seller row is read straight into a `Counterparty`,
+by its fields' names. `keep_agreement` writes the seller's signed answer and
+settles the commit in one transaction.
 """
 
 from __future__ import annotations
 
-import json
-import sqlite3
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
 
-from openproposal import AssentEntry, Commit, ErrorObject, dump, dump_json
+from openproposal import AssentEntry, Commit, ErrorObject, dump_json
 from pydantic import SecretStr
 
-from persistence import evidence
-from persistence.sqlite import inserted, one_of, open_db, transaction
+from persistence import buyer_schema, evidence
+from persistence.buyer_schema import CommitState, KeptCommit, items_column
+from persistence.sqlite import (
+    fetch_one,
+    inserted,
+    is_closed,
+    json_array,
+    open_db,
+    select,
+    transaction,
+)
 from persistence.values import Origin, SignedResponse
-
-#: Where a commit stands: sent and waiting for a verified answer, or settled.
-CommitState = Literal["pending", "agreed", "rejected"]
-
-SCHEMA = f"""
--- A seller this buyer deals with, by origin. The buyer stores no seller key:
--- keys come from the origin's directory. bearer_token is the credential the
--- seller issued this buyer, for the bearer flow.
-CREATE TABLE IF NOT EXISTS sellers (
-    origin        TEXT PRIMARY KEY,
-    domain        TEXT NOT NULL,
-    legal_name    TEXT NOT NULL,
-    bearer_token  TEXT
-);
--- Each Commit the buyer composed. A pending commit is re-sent whole, with the
--- same idempotency_key, until the seller's answer verifies (§ 4.1.2, § 5.6.1).
--- An agreed commit names the seller's signed answer, the evidence it kept
--- (persistence/evidence.py); one answer settles one commit.
-CREATE TABLE IF NOT EXISTS commits (
-    id               INTEGER PRIMARY KEY,
-    seller_origin    TEXT NOT NULL REFERENCES sellers (origin),
-    proposal_id      TEXT NOT NULL,
-    line_item_ids    TEXT NOT NULL,
-    idempotency_key  TEXT NOT NULL UNIQUE,
-    body             BLOB NOT NULL,
-    digest_input     BLOB NOT NULL,
-    state            TEXT NOT NULL {one_of("state", CommitState)},
-    entries          TEXT,
-    errors           TEXT,
-    response_id      INTEGER UNIQUE REFERENCES signed_responses (id),
-    attributed       INTEGER
-);
-"""
+from protocol.values import Value, commitment_key
 
 
-@dataclass(frozen=True)
-class Counterparty:
-    """A seller this buyer deals with: known by its origin, never by a key."""
+class Counterparty(Value):
+    """A seller this buyer deals with: known by its origin, never by a key.
+
+    The repository reads a seller row straight into it, by its fields' names.
+    """
 
     origin: Origin
     domain: str
@@ -66,7 +45,10 @@ class Counterparty:
     bearer_token: SecretStr | None = None
 
 
-@dataclass(frozen=True)
+_COUNTERPARTY = select("sellers", Counterparty, where="origin = ?")
+
+
+@dataclass(frozen=True, kw_only=True)
 class CommitKey:
     """Which commit: to this seller, on this proposal, for these line items."""
 
@@ -74,11 +56,8 @@ class CommitKey:
     proposal_id: str
     line_item_ids: tuple[str, ...]
 
-    def items_column(self) -> str:
-        return json.dumps(sorted(self.line_item_ids))
 
-
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class PendingCommit:
     """A composed Commit that waits for a verified answer, and its digest input."""
 
@@ -94,65 +73,54 @@ class NotPendingError(LookupError):
 
 class BuyerRepository:
     def __init__(self, path: Path) -> None:
-        self.db = open_db(path, evidence.SCHEMA, SCHEMA)
-        self._evidence = evidence.EvidenceStore(self.db)
+        self._db = open_db(path, evidence.SCHEMA, buyer_schema.SCHEMA)
+        self._evidence = evidence.EvidenceStore(self._db)
 
     def close(self) -> None:
         """Closes the connection. The app's lifespan calls it on shutdown."""
-        self.db.close()
+        self._db.close()
+
+    @property
+    def is_closed(self) -> bool:
+        return is_closed(self._db)
 
     # Sellers
 
     def add_counterparty(self, seller: Counterparty) -> None:
         """Records a seller once; a restart keeps the first record."""
         token = seller.bearer_token.get_secret_value() if seller.bearer_token else None
-        self.db.execute(
+        self._db.execute(
             "INSERT OR IGNORE INTO sellers (origin, domain, legal_name, bearer_token)"
             " VALUES (?, ?, ?, ?)",
             (str(seller.origin), seller.domain, seller.legal_name, token),
         )
 
     def counterparty(self, origin: Origin) -> Counterparty | None:
-        row = self.db.execute(
-            "SELECT origin, domain, legal_name, bearer_token FROM sellers WHERE origin = ?",
-            (str(origin),),
-        ).fetchone()
-        if row is None:
-            return None
-        token = row["bearer_token"]
-        return Counterparty(
-            Origin.parse(row["origin"]),
-            row["domain"],
-            row["legal_name"],
-            SecretStr(token) if token else None,
-        )
+        row = fetch_one(self._db, _COUNTERPARTY, (str(origin),))
+        return None if row is None else Counterparty.model_validate(row)
 
     # Commits
 
     def pending(self, key: CommitKey) -> PendingCommit | None:
-        row = self.db.execute(
-            "SELECT id, body, digest_input FROM commits WHERE seller_origin = ?"
-            " AND proposal_id = ? AND line_item_ids = ? AND state = 'pending'",
-            (str(key.seller_origin), key.proposal_id, key.items_column()),
-        ).fetchone()
-        return None if row is None else _pending(row, key)
+        kept = buyer_schema.pending(self._db, key.seller_origin, key.proposal_id, key.line_item_ids)
+        return None if kept is None else _pending(kept, key)
 
     def add_pending(self, key: CommitKey, commit: Commit, digest_input: bytes) -> PendingCommit:
         """Keeps a composed Commit, to be sent and, until it is answered, re-sent whole."""
         body = dump_json(commit).encode()
-        cursor = self.db.execute(
+        cursor = self._db.execute(
             "INSERT INTO commits (seller_origin, proposal_id, line_item_ids, idempotency_key, body,"
             " digest_input, state) VALUES (?, ?, ?, ?, ?, ?, 'pending')",
             (
                 str(key.seller_origin),
                 key.proposal_id,
-                key.items_column(),
-                commit.entry.idempotency_key,
+                items_column(key.line_item_ids),
+                commitment_key(commit.entry),
                 body,
                 digest_input,
             ),
         )
-        return PendingCommit(inserted(cursor), key, body, digest_input)
+        return PendingCommit(id=inserted(cursor), key=key, body=body, digest_input=digest_input)
 
     def keep_agreement(
         self,
@@ -167,15 +135,13 @@ class BuyerRepository:
         Returns the kept answer's id. A commit already agreed keeps its first
         answer: a repeat writes nothing and returns that answer's id.
         """
-        with transaction(self.db):
-            row = self.db.execute(
-                "SELECT state, response_id FROM commits WHERE id = ?", (commit_id,)
-            ).fetchone()
-            if row is not None and row["state"] == "agreed":
-                return int(row["response_id"])
+        with transaction(self._db):
+            kept = buyer_schema.commit(self._db, commit_id)
+            if kept is not None and kept.state == "agreed" and kept.response_id is not None:
+                return kept.response_id
             response_id = self._evidence.keep_response(response)
-            self._settle(commit_id, "agreed", entries=json.dumps([dump(e) for e in entries]))
-            self.db.execute(
+            self._settle(commit_id, "agreed", entries=json_array(dump_json(e) for e in entries))
+            self._db.execute(
                 "UPDATE commits SET response_id = ?, attributed = ? WHERE id = ?",
                 (response_id, int(attributed), commit_id),
             )
@@ -183,7 +149,7 @@ class BuyerRepository:
 
     def settle_rejected(self, commit_id: int, errors: Sequence[ErrorObject]) -> None:
         """Settles a pending commit as rejected, with the seller's stored errors (§ 5.6.1)."""
-        self._settle(commit_id, "rejected", errors=json.dumps([dump(e) for e in errors]))
+        self._settle(commit_id, "rejected", errors=json_array(dump_json(e) for e in errors))
 
     def _settle(
         self,
@@ -193,7 +159,7 @@ class BuyerRepository:
         entries: str | None = None,
         errors: str | None = None,
     ) -> None:
-        cursor = self.db.execute(
+        cursor = self._db.execute(
             "UPDATE commits SET state = ?, entries = ?, errors = ?"
             " WHERE id = ? AND state = 'pending'",
             (state, entries, errors, commit_id),
@@ -202,5 +168,5 @@ class BuyerRepository:
             raise NotPendingError(commit_id)
 
 
-def _pending(row: sqlite3.Row, key: CommitKey) -> PendingCommit:
-    return PendingCommit(row["id"], key, bytes(row["body"]), bytes(row["digest_input"]))
+def _pending(kept: KeptCommit, key: CommitKey) -> PendingCommit:
+    return PendingCommit(id=kept.id, key=key, body=kept.body, digest_input=kept.digest_input)

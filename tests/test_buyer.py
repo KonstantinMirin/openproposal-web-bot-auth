@@ -32,7 +32,6 @@ import httpx
 import pytest
 from openproposal import LineItemWrites
 
-from persistence.observe import BuyerRecords, SellerRecords
 from protocol.record import compose, digest_input, items_by_id
 from protocol.values import JsonObject
 from tests._tools import load_yaml
@@ -50,17 +49,14 @@ def stack(tmp_path: Path) -> Iterator[Stack]:
 
 
 def _commits(stack: Stack, proposal_id: str) -> list[str]:
-    """The states of the buyer's commits on `proposal_id`, oldest first."""
-    with stack.buyer_db() as db:
-        rows = db.execute(
-            "SELECT state FROM commits WHERE proposal_id = ? ORDER BY id", (proposal_id,)
-        ).fetchall()
-    return [r["state"] for r in rows]
+    """The states of the buyer's commits on DISPLAY in `proposal_id`, oldest first."""
+    return stack.commit_states(proposal_id, [DISPLAY])
 
 
-def _kept_answers(stack: Stack) -> int:
-    with stack.buyer_db() as db:
-        return int(db.execute("SELECT COUNT(*) FROM signed_responses").fetchone()[0])
+def _kept_nothing(stack: Stack) -> bool:
+    """The buyer kept no signed message: no answer, and no request bound to one."""
+    with stack.buyer_records() as records:
+        return records.messages() == 0
 
 
 def _sent(stack: Stack) -> list[tuple[str, str]]:
@@ -89,19 +85,14 @@ def test_a_signed_commit_is_agreed_and_both_parties_keep_it(stack: Stack) -> Non
         ("GET", f"{SELLER}/proposals/demo-wba-1"),
         ("POST", f"{SELLER}/proposals/demo-wba-1/commit"),
     ]
-    with stack.seller_db() as db:
-        agreed = db.execute(
-            "SELECT record_digest FROM agreed_records WHERE proposal_id = 'demo-wba-1'"
-        ).fetchone()
-    assert agreed["record_digest"] == outcome["record_digest"]
+    with stack.seller_records() as records:
+        (agreed,) = records.agreed("demo-wba-1")
+    assert agreed.record_digest == outcome["record_digest"]
     assert _commits(stack, "demo-wba-1") == ["agreed"]
-    with stack.buyer_db() as db:
-        kept = db.execute(
-            "SELECT origin, status, keyid FROM signed_responses WHERE id = ?",
-            (outcome["evidence_id"],),
-        ).fetchone()
-    assert (kept["origin"], kept["status"]) == (SELLER, 200)
-    assert kept["keyid"] == stack.seller_key.thumbprint
+    with stack.buyer_records() as records:
+        kept = records.response(outcome["evidence_id"])
+    assert (str(kept.signer.origin), kept.response.status) == (SELLER, 200)
+    assert kept.signer.keyid == stack.seller_key.thumbprint
     _assert_kept_as_carried(stack, "demo-wba-1", outcome["evidence_id"])
 
 
@@ -113,14 +104,11 @@ def test_a_bearer_commit_is_agreed_with_no_signing_key(stack: Stack) -> None:
     (_, commit) = stack.requests
     assert commit.headers["authorization"].startswith("Bearer ")
     assert "signature" not in commit.headers
-    with stack.buyer_db() as db:
-        sent = db.execute(
-            "SELECT q.headers FROM signed_responses r JOIN signed_requests q ON q.id = r.request_id"
-        ).fetchone()
-    assert "authorization" not in sent["headers"].lower()  # the token is never kept
-    with BuyerRecords.open(stack.buyer_dir / "buyer.db") as records:
+    with stack.buyer_records() as records:
         kept = records.response(outcome["evidence_id"])
-    assert list(kept.response.request.lines) == _sent_lines(commit)
+    sent = kept.response.request.lines
+    assert all(name.lower() != "authorization" for name, _ in sent)  # the token is never kept
+    assert list(sent) == _sent_lines(commit)
 
 
 def _outside_line_items(proposal: JsonObject) -> JsonObject:
@@ -146,11 +134,9 @@ def test_a_commit_saves_the_agreed_proposal_and_leaves_what_it_was_decided_on(
 
     # The seller decided on the proposal as issued: the digest input it stored is the one
     # composed on what the buyer read before the commit.
-    with stack.seller_db() as db:
-        (stored,) = db.execute(
-            "SELECT digest_input FROM agreed_records WHERE proposal_id = 'demo-wba-2'"
-        ).fetchone()
-    assert bytes(stored) == digest_input(composed, [DISPLAY])
+    with stack.seller_records() as records:
+        (stored,) = records.agreed("demo-wba-2")
+    assert stored.digest_input == digest_input(composed, [DISPLAY])
 
     # The next commit is decided on the agreed proposal, and agrees the last line item.
     assert stack.commit("demo-wba-2", [CTV]).json()["state"] == "agreed"
@@ -170,12 +156,12 @@ def _assert_kept_as_carried(stack: Stack, proposal_id: str, evidence_id: int) ->
     them: in order, in case, and every line."""
     (sent,) = [r for r in stack.requests if r.method == "POST"]
     (delivered,) = [a for r, a in zip(stack.requests, stack.responses, strict=True) if r is sent]
-    with BuyerRecords.open(stack.buyer_dir / "buyer.db") as records:
+    with stack.buyer_records() as records:
         kept = records.response(evidence_id)
     assert list(kept.response.request.lines) == _sent_lines(sent)
     assert list(kept.response.lines) == lines(delivered.headers.raw)
     (received,) = [r for r in stack.received if r.method == "POST"]
-    with SellerRecords.open(stack.seller_dir / "seller.db") as records:
+    with stack.seller_records() as records:
         (commitment, _) = records.entries(proposal_id)
         assert commitment.evidence_id is not None
         kept_request = records.request(commitment.evidence_id)
@@ -319,7 +305,7 @@ def test_a_malformed_answer_to_a_commit_is_refused_and_settles_nothing(
     outcome = response.json()
     assert (outcome["state"], outcome["reason"]) == ("refused", reason), outcome
     assert _commits(stack, "demo-wba-1") == ["pending"]
-    assert _kept_answers(stack) == 0
+    assert _kept_nothing(stack)
 
 
 def _down(request: httpx.Request) -> httpx.Response:
@@ -384,7 +370,7 @@ def test_a_result_that_doesnt_answer_the_commit_is_refused_then_replayed(
     outcome = stack.commit("demo-wba-1", [DISPLAY]).json()
     assert (outcome["state"], outcome["reason"]) == ("refused", "result-mismatch"), outcome
     assert rule in outcome["detail"]
-    assert _commits(stack, "demo-wba-1") == ["pending"] and _kept_answers(stack) == 0
+    assert _commits(stack, "demo-wba-1") == ["pending"] and _kept_nothing(stack)
     # The same commit, re-sent whole, gets the seller's stored result.
     stack.answer = None
     assert stack.commit("demo-wba-1", [DISPLAY]).json()["state"] == "agreed"
@@ -413,20 +399,16 @@ def test_a_settlement_that_fails_keeps_no_evidence(stack: Stack) -> None:
         "error": "not-pending",
         "detail": "commit 1 is no longer pending, so it stays settled",
     }
-    assert _kept_answers(stack) == 0
-    with stack.buyer_db() as db:
-        assert db.execute("SELECT COUNT(*) FROM signed_requests").fetchone()[0] == 0
+    assert _kept_nothing(stack)
 
 
 def _corrupt_digest_input(stack: Stack, commit_id: int) -> None:
     """Tamper: the buyer's stored digest input for `commit_id` no longer matches its body."""
     db = sqlite3.connect(stack.buyer_dir / "buyer.db")
     try:
-        (kept,) = db.execute(
-            "SELECT digest_input FROM commits WHERE id = ?", (commit_id,)
-        ).fetchone()
         db.execute(
-            "UPDATE commits SET digest_input = ? WHERE id = ?", (bytes(kept) + b" ", commit_id)
+            "UPDATE commits SET digest_input = CAST(digest_input || ' ' AS BLOB) WHERE id = ?",
+            (commit_id,),
         )
         db.commit()
     finally:
@@ -445,7 +427,7 @@ def test_a_digest_that_doesnt_recompute_from_the_kept_input_is_refused(stack: St
     outcome = stack.commit("demo-wba-1", [DISPLAY]).json()
     assert (outcome["state"], outcome["reason"]) == ("refused", "result-mismatch"), outcome
     assert "record_digest doesn't recompute" in outcome["detail"]
-    assert _commits(stack, "demo-wba-1") == ["pending"] and _kept_answers(stack) == 0
+    assert _commits(stack, "demo-wba-1") == ["pending"] and _kept_nothing(stack)
 
 
 # Refused: an answer signed by another origin
@@ -478,8 +460,8 @@ def test_an_answer_signed_by_another_origin_is_refused(
     assert (outcome["state"], outcome["reason"]) == ("refused", "origin-mismatch"), outcome
     assert RESELLER in outcome["detail"]
     assert outcome["authentication_method"] == credential
-    assert _kept_answers(stack) == 0
-    assert _commits(stack, proposal_id) == ([] if on == "read" else ["pending"])
+    assert _kept_nothing(stack)
+    assert stack.commit_states(proposal_id, [CTV]) == ([] if on == "read" else ["pending"])
 
 
 def test_a_pending_commit_is_found_whatever_the_order_of_its_line_items(stack: Stack) -> None:
@@ -491,7 +473,7 @@ def test_a_pending_commit_is_found_whatever_the_order_of_its_line_items(stack: S
     assert agreed["state"] == "agreed", agreed
     first, again = (r.content for r in stack.requests if r.method == "POST")
     assert first == again  # the pending commit, re-sent whole
-    assert _commits(stack, "demo-wba-1") == ["agreed"]
+    assert stack.commit_states("demo-wba-1", [DISPLAY, CTV]) == ["agreed"]
 
 
 # Rejected
@@ -548,7 +530,7 @@ def test_each_fault_is_refused(
             outcome = stack.commit(proposal_id, [CTV], credential).json()
         assert (outcome["state"], outcome["reason"]) == ("refused", reason), outcome
         assert outcome["authentication_method"] == credential
-        assert _kept_answers(stack) == 0
+        assert _kept_nothing(stack)
         assert stack.seller.put("/test/fault", json={"mode": "none"}).status_code == 200
         assert stack.commit(proposal_id, [CTV], credential).json()["state"] == "agreed"
 

@@ -446,6 +446,10 @@
           "type": "boolean"
         },
         "authentication_method": {
+          "enum": [
+            "web_bot_auth",
+            "bearer"
+          ],
           "title": "Authentication Method",
           "type": "string"
         },

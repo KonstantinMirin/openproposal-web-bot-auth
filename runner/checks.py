@@ -11,6 +11,8 @@ from dataclasses import dataclass
 from http import HTTPStatus
 from typing import NoReturn
 
+from openproposal import AssentEntryRoles
+
 from persistence.observe import KeptAgreement, KeptCommit, KeptEntry
 from persistence.values import AuthMethod
 from protocol.values import JsonObject
@@ -56,7 +58,7 @@ def agreed(outcome: Outcome, method: AuthMethod) -> Agreed:
 
 def commitment(entries: list[KeptEntry], principal_id: str, method: AuthMethod) -> KeptEntry:
     """The seller resolved the stored principal, by the credential the buyer used."""
-    entry = next((e for e in entries if e.role == "commitment"), None)
+    entry = next((e for e in entries if e.role == AssentEntryRoles.COMMITMENT), None)
     if entry is None:
         fail("the seller holds no commitment entry")
     expect(

@@ -188,7 +188,12 @@ def _resources(
     # The token is the bearer flow's credential.
     seller = settings.peer_seller_origin
     store.add_counterparty(
-        Counterparty(seller, seller.host, "Demo Seller Inc.", settings.bearer_token)
+        Counterparty(
+            origin=seller,
+            domain=seller.host,
+            legal_name="Demo Seller Inc.",
+            bearer_token=settings.bearer_token,
+        )
     )
     cfbot = Cfbot(client, settings.peer_cfbot_origin, lambda: flow.signer)
     return BuyerResources(settings, store, flow.keyring, client, flow, cfbot)
