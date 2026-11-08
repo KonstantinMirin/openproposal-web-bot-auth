@@ -7,11 +7,7 @@ and it returns a typed value.
 
 from __future__ import annotations
 
-from typing import TypeVar
-
 from fastapi import Request
-
-T = TypeVar("T")
 
 
 class LifespanNotRunError(RuntimeError):
@@ -19,7 +15,7 @@ class LifespanNotRunError(RuntimeError):
     lifespan, or the lifespan yielded something else."""
 
 
-def state_of(request: Request, kind: type[T]) -> T:
+def state_of[T](request: Request, kind: type[T]) -> T:
     """The `kind` value the lifespan yielded as `resources`."""
     value = getattr(request.state, "resources", None)
     if not isinstance(value, kind):

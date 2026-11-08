@@ -9,19 +9,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from http import HTTPStatus
-from typing import Generic, NoReturn, TypeVar
+from typing import NoReturn
 
 from persistence.observe import KeptAgreement, KeptCommit, KeptEntry
 from protocol.values import JsonObject
 from transport.auth import AuthMethod
 from transport.control import Agreed, CloudflareCheck, Outcome
 
-T = TypeVar("T")
-V = TypeVar("V", covariant=True)
-
 
 @dataclass(frozen=True)
-class Done(Generic[V]):
+class Done[V]:
     """A step's value, and the one line its row in the report shows."""
 
     value: V
@@ -36,7 +33,7 @@ def fail(message: str) -> NoReturn:
     raise CheckFailed(message)
 
 
-def given(value: T | None, what: str) -> T:
+def given[T](value: T | None, what: str) -> T:
     """A value an earlier step produced. The schedule skips a step whose inputs failed,
     so a missing one means the schedule is wrong."""
     if value is None:

@@ -3,15 +3,14 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import TypeVar
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-E = TypeVar("E", bound=Exception)
 
-
-def on_error(app: FastAPI, kind: type[E], render: Callable[[E], JSONResponse]) -> None:
+def on_error[E: Exception](
+    app: FastAPI, kind: type[E], render: Callable[[E], JSONResponse]
+) -> None:
     """Renders every `kind` the app raises with `render`, in an async handler, so it runs on
     the event loop's thread."""
 

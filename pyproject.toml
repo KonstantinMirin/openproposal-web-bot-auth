@@ -2,7 +2,7 @@
 name = "openproposal-web-bot-auth"
 version = "0.1.0"
 description = "Demo: bearer tokens and Web Bot Auth signatures as credentials at one identity boundary, in front of OpenProposal offer acceptance"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 license = "Apache-2.0"
 dependencies = [
     # The Web Bot Auth module: signing, verification, the key directory, fetches.
@@ -54,7 +54,7 @@ pythonpath = ["."]
 
 [tool.ruff]
 line-length = 100
-target-version = "py311"
+target-version = "py312"
 extend-exclude = ["vendor"]
 
 [tool.ruff.lint]
@@ -79,6 +79,7 @@ max-statements = 50
 
 [tool.mypy]
 strict = true
+python_version = "3.12"
 plugins = ["pydantic.mypy"]
 warn_unused_ignores = true
 # No explicit Any anywhere: JSON is protocol.values.JsonValue, and every value is typed.
