@@ -53,7 +53,7 @@ from seller.app import create_app
 from seller.seed import seed
 from seller.settings import SellerSettings
 from seller.sqlite_store import SqliteSellerStore
-from tests._tools import load_yaml, seed_template
+from tests._tools import load_yaml, seed_issuer
 from tests.stack import TOKEN, Recorder
 from transport.wba import directory_resolver, http_client, tls_context
 
@@ -374,9 +374,7 @@ def _seeded_with_a_token_for_the_signing_buyer(data_dir: Path) -> None:
     data_dir.mkdir()
     store = SqliteSellerStore(data_dir / "seller.db")
     try:
-        seed(
-            store, seed_template(), buyer_origin=Origin.parse(BUYER), bearer_token=SecretStr(TOKEN)
-        )
+        seed(store, seed_issuer(), buyer_origin=Origin.parse(BUYER), bearer_token=SecretStr(TOKEN))
         with store.transaction():
             store.add_token_credential("buyer-wba", "buyer-wba-token")
     finally:

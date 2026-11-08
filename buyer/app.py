@@ -185,13 +185,13 @@ def _resources(
     settings: BuyerSettings, store: BuyerRepository, client: HTTPClient, flow: Buyer
 ) -> BuyerResources:
     # The buyer knows the seller by its origin only, and its domain is that origin's host.
-    # The token is the bearer flow's credential.
+    # Its legal name and the token, the bearer flow's credential, come from the settings.
     seller = settings.peer_seller_origin
     store.add_counterparty(
         Counterparty(
             origin=seller,
             domain=seller.host,
-            legal_name="Demo Seller Inc.",
+            legal_name=settings.peer_seller_legal_name,
             bearer_token=settings.bearer_token,
         )
     )

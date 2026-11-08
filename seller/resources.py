@@ -16,10 +16,10 @@ from typing import Annotated
 import httpx
 from fastapi import Depends, Request
 
-from protocol.values import JsonObject
 from transport.lifespan import state_of
 
 from .boundary import IdentityBoundary
+from .offers.issuance import Issuer
 from .ports import OfferStore, Onboarding
 from .sqlite_store import SqliteSellerStore
 
@@ -31,8 +31,8 @@ class SellerResources:
     client: httpx.AsyncClient
     #: The identity boundary, over the store's principals and the request verifier.
     boundary: IdentityBoundary
-    #: The proposal every buyer is issued, loaded once at startup.
-    template: JsonObject
+    #: What every proposal starts from: the seller's own party and the template, read once.
+    issuer: Issuer
 
 
 def resources(request: Request) -> SellerResources:
@@ -55,11 +55,11 @@ def boundary(resources: ResourcesDep) -> IdentityBoundary:
     return resources.boundary
 
 
-def template(resources: ResourcesDep) -> JsonObject:
-    return resources.template
+def issuer(resources: ResourcesDep) -> Issuer:
+    return resources.issuer
 
 
 OfferStoreDep = Annotated[OfferStore, Depends(offer_store)]
 OnboardingDep = Annotated[Onboarding, Depends(onboarding)]
 BoundaryDep = Annotated[IdentityBoundary, Depends(boundary)]
-TemplateDep = Annotated[JsonObject, Depends(template)]
+IssuerDep = Annotated[Issuer, Depends(issuer)]

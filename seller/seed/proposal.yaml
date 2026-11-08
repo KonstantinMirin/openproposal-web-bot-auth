@@ -1,15 +1,15 @@
-# The proposal the seller issues to each buyer at first boot (seller/seed.py fills
-# in proposal_id, buyer, and eligible_buyers).
+# The proposal the seller issues to each buyer. On issue (seller/offers/issuance.py),
+# the seller fills in proposal_id, seller (its own origin's host and legal name, from
+# its settings), buyer, and eligible_buyers.
 #
 # Adapted from examples/proposal-issued.yaml in the OpenProposal 3.0 text (§ 6.12):
-# - the seller is this demo's seller;
+# - the seller is whichever seller issues it;
 # - both line items are `published` at version 1, with no assent[], buyer writes,
 #   deliveries, hold, change requests, or external references yet;
 # - dates move forward so the offer still holds when you run the demo.
 proposal_id:       "PLACEHOLDER"
 version:           1
 spec_version:      "3.0"
-seller:            { domain: "seller.wba-demo.noetis.dev", legal_name: "Demo Seller Inc." }
 buyer:             { domain: "PLACEHOLDER", legal_name: "PLACEHOLDER" }
 type:              standard
 status:            published

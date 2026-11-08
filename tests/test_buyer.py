@@ -32,10 +32,11 @@ import httpx
 import pytest
 from openproposal import LineItemWrites
 
+from persistence.values import Origin
 from protocol.record import compose, digest_input, items_by_id
 from protocol.values import JsonObject
 from tests._tools import load_yaml
-from tests.stack import BUYER, CFBOT, OPERATOR, RESELLER, SELLER, Lines, Stack, lines
+from tests.stack import BUYER, CFBOT, OPERATOR, RESELLER, SELLER, Lines, Origins, Stack, lines
 
 DISPLAY = "business-daily-display"
 CTV = "weather-app-ctv"
@@ -109,6 +110,34 @@ def test_a_bearer_commit_is_agreed_with_no_signing_key(stack: Stack) -> None:
     sent = kept.response.request.lines
     assert all(name.lower() != "authorization" for name, _ in sent)  # the token is never kept
     assert list(sent) == _sent_lines(commit)
+
+
+#: Another deployment of the demo, under origins of its own.
+ELSEWHERE = Origins(
+    seller=Origin.parse("https://sell-side.wba-demo.noetis.dev"),
+    buyer=Origin.parse("https://buy-side.wba-demo.noetis.dev"),
+)
+
+
+@pytest.mark.parametrize(
+    ("proposal_id", "credential"),
+    [("demo-wba-1", "web_bot_auth"), ("demo-bearer-1", "bearer")],
+)
+def test_a_deployment_under_other_origins_reads_and_commits(
+    tmp_path: Path, proposal_id: str, credential: str
+) -> None:
+    """Each agent takes its own origin from its settings: the seller issues in its name."""
+    with Stack(tmp_path, origins=ELSEWHERE) as stack:
+        read = stack.read(proposal_id, credential).json()
+        assert read["state"] == "read", read
+        assert read["proposal"]["seller"] == {
+            "domain": "sell-side.wba-demo.noetis.dev",
+            "legal_name": "Demo Seller Inc.",
+        }
+        outcome = stack.commit(proposal_id, [DISPLAY], credential).json()
+    assert outcome["state"] == "agreed", outcome
+    assert outcome["seller"]["origin"] == "https://sell-side.wba-demo.noetis.dev"
+    assert {r.url.host for r in stack.requests} == {"sell-side.wba-demo.noetis.dev"}
 
 
 def _outside_line_items(proposal: JsonObject) -> JsonObject:

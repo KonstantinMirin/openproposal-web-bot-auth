@@ -72,6 +72,11 @@ def seconds(env: Environment, name: str, default: float) -> float:
     return number
 
 
+def text(env: Environment, name: str, default: str) -> str:
+    """`name` as text, or `default` when it is unset or empty."""
+    return env.get(name, "") or default
+
+
 def secret(env: Environment, name: str) -> SecretStr | None:
     """`name` as a secret, or None when it is unset or empty."""
     value = env.get(name, "")

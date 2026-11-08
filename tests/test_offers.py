@@ -35,7 +35,7 @@ from seller.app import create_app
 from seller.seed import seed
 from seller.settings import SellerSettings
 from seller.sqlite_store import SqliteSellerStore
-from tests._tools import load_yaml, seed_template
+from tests._tools import load_yaml, seed_issuer, seed_template
 
 SELLER = "https://seller.example.com"
 BUYER = "https://buyer.example.com"
@@ -64,7 +64,12 @@ def _seed(data_dir: Path, edit: Edit, prior: list[AssentEntry]) -> None:
     edit(template)
     store = SqliteSellerStore(data_dir / "seller.db")
     try:
-        seed(store, template, buyer_origin=Origin.parse(BUYER), bearer_token=SecretStr("t"))
+        seed(
+            store,
+            seed_issuer(template),
+            buyer_origin=Origin.parse(BUYER),
+            bearer_token=SecretStr("t"),
+        )
         with store.transaction():
             store.add_token_credential("buyer-wba", "buyer-wba-token")
             for entry in prior:

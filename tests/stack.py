@@ -68,14 +68,29 @@ RESELLER = "https://reseller.wba-demo.noetis.dev"
 OPERATOR = {"X-Operator-Key": "operator-key-for-tests"}
 TOKEN = "bearer-token-for-tests"  # noqa: S105 -- a test value, not a deployed secret
 
+
+@dataclass(frozen=True)
+class Origins:
+    """The origins the two agents run under: the demo's own by default."""
+
+    seller: Origin = Origin.parse(SELLER)
+    buyer: Origin = Origin.parse(BUYER)
+
+
+#: The demo's own origins, which a stack runs under unless a test names others.
+DEMO = Origins()
+
+
 #: Stands in for the seller: an answer to the buyer's request, or None to let the seller answer.
 Answer = Callable[[httpx.Request], httpx.Response | None]
 
 
-def seller_settings(data_dir: Path, *, faults: bool = False) -> SellerSettings:
+def seller_settings(
+    data_dir: Path, *, origins: Origins = DEMO, faults: bool = False
+) -> SellerSettings:
     return SellerSettings(
-        self_origin=Origin.parse(SELLER),
-        peer_buyer_origin=Origin.parse(BUYER),
+        self_origin=origins.seller,
+        peer_buyer_origin=origins.buyer,
         data_dir=data_dir,
         operator_key=SecretStr(OPERATOR["X-Operator-Key"]),
         bearer_token=SecretStr(TOKEN),
@@ -83,10 +98,10 @@ def seller_settings(data_dir: Path, *, faults: bool = False) -> SellerSettings:
     )
 
 
-def buyer_settings(data_dir: Path, *, token: bool = True) -> BuyerSettings:
+def buyer_settings(data_dir: Path, *, origins: Origins = DEMO, token: bool = True) -> BuyerSettings:
     return BuyerSettings(
-        self_origin=Origin.parse(BUYER),
-        peer_seller_origin=Origin.parse(SELLER),
+        self_origin=origins.buyer,
+        peer_seller_origin=origins.seller,
         peer_cfbot_origin=Origin.parse(CFBOT),
         data_dir=data_dir,
         operator_key=SecretStr(OPERATOR["X-Operator-Key"]),
@@ -131,7 +146,15 @@ def _directory_of(key: Ed25519Key, host: str) -> httpx.Response:
 
 
 class Stack:
-    def __init__(self, root: Path, *, faults: bool = False, token: bool = True) -> None:
+    def __init__(
+        self,
+        root: Path,
+        *,
+        origins: Origins = DEMO,
+        faults: bool = False,
+        token: bool = True,
+    ) -> None:
+        self.origins = origins
         self.seller_dir, self.buyer_dir = root / "seller", root / "buyer"
         self.seller_dir.mkdir(parents=True)
         # The seller loads this key at create_app; `signed` signs as the seller with it.
@@ -153,23 +176,27 @@ class Stack:
         self.answer: Answer | None = None
         #: What cfbot answers the buyer's signed check.
         self.cfbot: Callable[[httpx.Request], httpx.Response] = lambda _: httpx.Response(
-            200, json={"ok": True, "identity": BUYER, "verifier": "web-bot-auth (test)"}
+            200,
+            json={"ok": True, "identity": str(origins.buyer), "verifier": "web-bot-auth (test)"},
         )
         buyer = create_buyer(
-            buyer_settings(self.buyer_dir, token=token), transport=httpx.MockTransport(self.route)
+            buyer_settings(self.buyer_dir, origins=origins, token=token),
+            transport=httpx.MockTransport(self.route),
         )
         # The buyer mints its first key in create_app.
         self.buyer_keys = Keyring(self.buyer_dir / "keys", rotation_wait=0, signature_lifetime=0)
         to_buyer = http_client(tls_context(None), transport=httpx.MockTransport(self._to_buyer))
         seller = create_seller(
-            seller_settings(self.seller_dir, faults=faults),
+            seller_settings(self.seller_dir, origins=origins, faults=faults),
             nonces=MemoryNonceStore(),
             resolver=directory_resolver(to_buyer, max_cache_age=None),
         )
         self._seller = Recorder(seller)
         # A server error is an answer the test reads, as a client would, never an exception.
-        self.seller = TestClient(self._seller, base_url=SELLER, raise_server_exceptions=False)
-        self.buyer = TestClient(buyer, base_url=BUYER, raise_server_exceptions=False)
+        self.seller = TestClient(
+            self._seller, base_url=str(origins.seller), raise_server_exceptions=False
+        )
+        self.buyer = TestClient(buyer, base_url=str(origins.buyer), raise_server_exceptions=False)
 
     def __enter__(self) -> Stack:
         self.seller.__enter__()
@@ -216,7 +243,7 @@ class Stack:
         key = self._published.get(host)
         if key is not None:
             return _directory_of(key, host)
-        apps = {Origin.parse(SELLER).host: self.seller, Origin.parse(BUYER).host: self.buyer}
+        apps = {self.origins.seller.host: self.seller, self.origins.buyer.host: self.buyer}
         app = apps.get(host)
         if app is None:
             return httpx.Response(404)
@@ -262,11 +289,13 @@ class Stack:
         return answer
 
     def signed(
-        self, request: httpx.Request, status: int, body: bytes, *, by: str = SELLER
+        self, request: httpx.Request, status: int, body: bytes, *, by: str | None = None
     ) -> httpx.Response:
         """An answer bound to `request`, signed as the seller signs, by the seller or by the
         reseller (`by`) with its own key under its own origin."""
-        key = {SELLER: self.seller_key, RESELLER: self.reseller_key}[by]
+        seller = str(self.origins.seller)
+        by = seller if by is None else by
+        key = {seller: self.seller_key, RESELLER: self.reseller_key}[by]
         sent = HTTPRequest(
             request.method, str(request.url), lines(request.headers.raw), request.content
         )

@@ -4,6 +4,7 @@
 |---|---|---|
 | `SELF_ORIGIN` | `https://buyer.wba-demo.noetis.dev` | the buyer's own origin, which it signs as |
 | `PEER_SELLER_ORIGIN` | `https://seller.wba-demo.noetis.dev` | the seller it deals with |
+| `PEER_SELLER_LEGAL_NAME` | `Demo Seller Inc.` | that seller's legal name, as the buyer keeps it |
 | `PEER_CFBOT_ORIGIN` | `https://cfbot.wba-demo.noetis.dev` | Cloudflare's verifier |
 | `DATA_DIR` | `/data` | its database, `buyer.db` |
 | `KEYS_DIR` | `/keys` | its keyring, on a volume no other service mounts |
@@ -45,6 +46,7 @@ class BuyerSettings:
     bearer_token: SecretStr | None = None
     directory_max_age: int = 300
     max_cache_age: int | None = None
+    peer_seller_legal_name: str = "Demo Seller Inc."
     rotation_wait: float = 600.0
     signature_lifetime: int = 300
 
@@ -72,6 +74,7 @@ class BuyerSettings:
             bearer_token=read.secret(env, "DEMO_BEARER_TOKEN"),
             directory_max_age=read.integer(env, "WBA_DIRECTORY_MAX_AGE", 300),
             max_cache_age=read.optional_integer(env, "WBA_MAX_CACHE_AGE"),
+            peer_seller_legal_name=read.text(env, "PEER_SELLER_LEGAL_NAME", "Demo Seller Inc."),
             rotation_wait=read.seconds(env, "WBA_ROTATION_WAIT", 600.0),
             signature_lifetime=read.integer(env, "WBA_SIGNATURE_LIFETIME", 300),
         )

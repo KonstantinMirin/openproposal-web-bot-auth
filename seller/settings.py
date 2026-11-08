@@ -3,6 +3,7 @@
 | Variable | Default | What it sets |
 |---|---|---|
 | `SELF_ORIGIN` | `https://seller.wba-demo.noetis.dev` | the seller's own origin |
+| `SELF_LEGAL_NAME` | `Demo Seller Inc.` | the legal name it issues proposals under |
 | `PEER_BUYER_ORIGIN` | `https://buyer.wba-demo.noetis.dev` | the signing buyer it seeds |
 | `DATA_DIR` | `/data` | its database, `seller.db` |
 | `KEYS_DIR` | `/keys` | its signing key, `wba-key.jwk`, on a volume no other service mounts |
@@ -24,6 +25,7 @@ from pydantic import SecretStr
 
 from persistence.values import Origin
 from shared import settings as read
+from shared.party import OwnParty
 
 
 @dataclass(frozen=True)
@@ -38,8 +40,14 @@ class SellerSettings:
     bearer_token: SecretStr | None = None
     directory_max_age: int = 300
     max_cache_age: int | None = None
+    self_legal_name: str = "Demo Seller Inc."
     #: TEST ONLY: install seller/faults.py.
     faults: bool = False
+
+    @property
+    def own(self) -> OwnParty:
+        """The seller's own party, which every proposal it issues names as its seller."""
+        return OwnParty(origin=self.self_origin, legal_name=self.self_legal_name)
 
     @property
     def key_file(self) -> Path:
@@ -62,5 +70,6 @@ class SellerSettings:
             bearer_token=read.secret(env, "DEMO_BEARER_TOKEN"),
             directory_max_age=read.integer(env, "WBA_DIRECTORY_MAX_AGE", 300),
             max_cache_age=read.optional_integer(env, "WBA_MAX_CACHE_AGE"),
+            self_legal_name=read.text(env, "SELF_LEGAL_NAME", "Demo Seller Inc."),
             faults=read.flag(env, "DEMO_FAULT_INJECTION"),
         )

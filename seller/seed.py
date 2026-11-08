@@ -9,15 +9,14 @@ from __future__ import annotations
 from pydantic import SecretStr
 
 from persistence.values import Origin
-from protocol.values import JsonObject
 
-from .offers.issuance import issue
+from .offers.issuance import Issuer, issue
 from .ports import Onboarding, PrincipalRecord
 
 
 def seed(
     store: Onboarding,
-    template: JsonObject,
+    issuer: Issuer,
     *,
     buyer_origin: Origin,
     bearer_token: SecretStr | None,
@@ -33,7 +32,7 @@ def seed(
         store.add_principal(signing)
         store.add_origin_credential(signing.id, buyer_origin)
         for n in (1, 2):
-            issue(store, signing, template, f"demo-wba-{n}")
+            issue(store, issuer, signing, f"demo-wba-{n}")
 
         # A buyer that presents a bearer token the seller issued it.
         if bearer_token is not None:
@@ -44,4 +43,4 @@ def seed(
             )
             store.add_principal(bearer)
             store.add_token_credential(bearer.id, bearer_token.get_secret_value())
-            issue(store, bearer, template, "demo-bearer-1")
+            issue(store, issuer, bearer, "demo-bearer-1")

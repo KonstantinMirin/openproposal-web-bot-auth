@@ -46,9 +46,9 @@ from .errors import Rejected, UnknownPrincipal
 from .faults import FaultInjection
 from .http import CallerDep, ProvenanceDep, RawBodyDep, answer, install_handlers
 from .offers.acceptance import answer_commit
-from .offers.issuance import issue_fresh
+from .offers.issuance import Issuer, issue_fresh
 from .offers.reading import full_representation, parse_commit
-from .resources import OfferStoreDep, OnboardingDep, SellerResources, TemplateDep
+from .resources import IssuerDep, OfferStoreDep, OnboardingDep, SellerResources
 from .seed import seed
 from .settings import SellerSettings
 from .sqlite_store import SqliteSellerStore
@@ -96,14 +96,14 @@ operator = APIRouter(prefix="/operator")
 
 
 @operator.post("/issue")
-async def issue_proposal(body: IssueRequest, store: OnboardingDep, template: TemplateDep) -> Issued:
+async def issue_proposal(body: IssueRequest, store: OnboardingDep, issuer: IssuerDep) -> Issued:
     """Issues a fresh copy of the seed proposal to a buyer this seller knows (§ 4.3).
 
     The live runner (runner/main.py) commits to a fresh proposal on every run,
     because an agreed line item can't be committed to again.
     """
     try:
-        issued = issue_fresh(store, body.principal_id, template, datetime.now(UTC))
+        issued = issue_fresh(store, issuer, body.principal_id, datetime.now(UTC))
     except UnknownPrincipal as e:
         raise ControlError(404, "unknown-principal", f"no principal {e}") from e
     return Issued(proposal_id=issued.proposal_id, principal_id=issued.buyer_principal_id)
@@ -132,7 +132,7 @@ def create_app(
     # The seller mints its key on first boot. No buyer is ever configured with it.
     key = keyfile.load_or_create(settings.key_file)
     identity = ServerIdentity.from_config(str(settings.self_origin))
-    template = loads_yaml(TEMPLATE.read_text(encoding="utf-8"))
+    issuer = Issuer(settings.own, loads_yaml(TEMPLATE.read_text(encoding="utf-8")))
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[_State]:
@@ -141,7 +141,7 @@ def create_app(
         try:
             seed(
                 store,
-                template,
+                issuer,
                 buyer_origin=settings.peer_buyer_origin,
                 bearer_token=settings.bearer_token,
             )
@@ -154,7 +154,7 @@ def create_app(
                 keys, identity=identity, nonces=MemoryNonceStore() if nonces is None else nonces
             )
             boundary = IdentityBoundary(store, verifier, identity)
-            yield {"resources": SellerResources(store, client, boundary, template)}
+            yield {"resources": SellerResources(store, client, boundary, issuer)}
         finally:
             await client.aclose()
             store.close()

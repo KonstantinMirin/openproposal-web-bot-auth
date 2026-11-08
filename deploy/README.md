@@ -57,6 +57,8 @@ set the values the table's last column names.
 | Variable | Service | Default | What it sets |
 | :--- | :--- | :--- | :--- |
 | `SELF_ORIGIN` | Seller, buyer, cfbot | `https://<service>.wba-demo.noetis.dev` | The service's own origin, which it signs as and verifies against |
+| `SELF_LEGAL_NAME` | Seller | `Demo Seller Inc.` | The legal name the seller issues every proposal under, beside its own origin's host |
+| `PEER_SELLER_LEGAL_NAME` | Buyer | `Demo Seller Inc.` | The seller's legal name, as the buyer keeps it in its record of the seller |
 | `PEER_BUYER_ORIGIN` | Seller, runner, scenarios | `https://buyer.wba-demo.noetis.dev` | The signing buyer the seller seeds; the buyer the runner and the scenarios check |
 | `PEER_SELLER_ORIGIN` | Buyer, cfbot, runner, scenarios | `https://seller.wba-demo.noetis.dev` | The seller the buyer deals with and cfbot calls |
 | `PEER_CFBOT_ORIGIN` | Buyer, runner, scenarios | `https://cfbot.wba-demo.noetis.dev` | Cloudflare's verifier |
