@@ -26,6 +26,7 @@ from protocol.operations import (
     is_stored_result,
     parse_commit,
 )
+from protocol.record import WriteError
 from shared.keyring import SigningIdentity
 from transport.control import Agreed, Outcome, Read, Refused, Rejected, SellerView
 
@@ -134,13 +135,10 @@ class Buyer:
         writes = self.plan.writes_for(line_item_ids)
         if isinstance(writes, Refusal):
             return call.refused(writes)
-        read = await self.client.read(call.seller, call.credential, proposal_id)
-        if not isinstance(read, ReadProposal):
-            return call.refused(_unreadable(proposal_id, read))
-        key = CommitKey(
-            seller_origin=call.seller.origin, proposal_id=proposal_id, line_item_ids=tuple(writes)
-        )
-        pending = self._pending(key, read, writes)
+        prepared = await self._prepared(call, proposal_id, writes)
+        if isinstance(prepared, Refusal):
+            return call.refused(prepared)
+        read, pending = prepared
         answer = await self.client.commit(call.seller, call.credential, proposal_id, pending.body)
         if isinstance(answer, Refusal):
             return call.refused(answer)
@@ -148,16 +146,39 @@ class Buyer:
             return self._rejected(call, answer, pending)
         return self._agree(call, read, pending, answer)
 
+    async def _prepared(
+        self, call: _Call, proposal_id: str, writes: dict[str, LineItemWrites]
+    ) -> tuple[ReadProposal, PendingCommit] | Refusal:
+        """The proposal as read now, and the pending `commit` on it."""
+        read = await self.client.read(call.seller, call.credential, proposal_id)
+        if not isinstance(read, ReadProposal):
+            return _unreadable(proposal_id, read)
+        key = CommitKey(
+            seller_origin=call.seller.origin, proposal_id=proposal_id, line_item_ids=tuple(writes)
+        )
+        pending = self._pending(key, read, writes)
+        if isinstance(pending, Refusal):
+            return pending
+        return read, pending
+
     def _pending(
         self, key: CommitKey, read: ReadProposal, writes: dict[str, LineItemWrites]
-    ) -> PendingCommit:
-        """The pending `commit` for `key`, re-sent whole, or a newly composed one (§ 5.6.1)."""
+    ) -> PendingCommit | Refusal:
+        """The pending `commit` for `key`, re-sent whole, or a newly composed one (§ 5.6.1).
+
+        A plan write the proposal's line item doesn't offer, such as a selectable field
+        the item lacks, is refused before anything is sent or kept.
+        """
         pending = self.repo.pending(key)
         if pending is not None:
             return pending
-        composed = compose_commit(
-            read.proposal, read.raw, writes, at=datetime.now(UTC), key=str(uuid.uuid4())
-        )
+        try:
+            composed = compose_commit(
+                read.proposal, read.raw, writes, at=datetime.now(UTC), key=str(uuid.uuid4())
+            )
+        except WriteError as e:
+            detail = f"the plan doesn't fit proposal {key.proposal_id}: {e}"
+            return Refusal(Reason.PLAN_MISMATCH, detail)
         return self.repo.add_pending(key, composed.commit, composed.digest_input)
 
     def _rejected(self, call: _Call, rejection: Rejection, pending: PendingCommit) -> Rejected:

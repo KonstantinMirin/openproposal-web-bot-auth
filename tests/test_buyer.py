@@ -12,7 +12,8 @@ party kept.
   decides on the proposal as issued and saves the agreed proposal beside it.
 - A verified answer that is malformed, an error without `retry`, or a boundary
   refusal is refused, never a 500, and settles nothing.
-- An unknown line item or seller is refused before anything is sent.
+- An unknown line item or seller is refused before anything is sent, and a proposal
+  the plan's writes don't fit is refused before the commit is sent.
 - A proposal other than the one asked for, or one that names another seller, or another
   buyer by domain or by legal name, is refused; a `CommitResult` that
   doesn't answer the commit is refused, and so is one whose `record_digest`
@@ -480,6 +481,22 @@ def test_a_proposal_other_than_the_one_asked_for_is_refused(stack: Stack, operat
         outcome = as_state(Refused, stack.commit("demo-wba-1", [DISPLAY]))
     assert outcome.code == "wrong-proposal"
     assert "demo-wba-2" in outcome.detail and "demo-wba-1" in outcome.detail
+    assert [m for m, _ in _sent(stack)] == ["GET"]
+    assert _commits(stack, "demo-wba-1") == [] and _kept_nothing(stack)
+
+
+@pytest.mark.parametrize("credential", ["web_bot_auth", "bearer"])
+def test_a_proposal_the_plan_doesnt_fit_is_refused(stack: Stack, credential: AuthMethod) -> None:
+    """The plan selects a cancellation policy, and this proposal's line item offers none, so
+    the buyer has no commit to send: it refuses, and sends and keeps nothing."""
+
+    def without_the_policy(document: JsonObject) -> None:
+        del items_by_id(document)[DISPLAY]["cancellation_policy"]
+
+    _edited(stack, "GET", without_the_policy)
+    outcome = as_state(Refused, stack.commit("demo-wba-1", [DISPLAY], credential))
+    assert outcome.code == "plan-mismatch"
+    assert "/cancellation_policy/selected" in outcome.detail
     assert [m for m, _ in _sent(stack)] == ["GET"]
     assert _commits(stack, "demo-wba-1") == [] and _kept_nothing(stack)
 
