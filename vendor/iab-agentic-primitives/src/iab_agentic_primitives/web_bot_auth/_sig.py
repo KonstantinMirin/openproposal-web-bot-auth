@@ -25,7 +25,7 @@ from http_message_signatures import (
 from http_message_signatures import VerifyResult as _LibraryResult
 from http_message_signatures.exceptions import HTTPMessageSignaturesException
 
-from ._wire import ComponentId, SignatureMember, signature_values
+from ._wire import ComponentId, SignatureMember, only_member, signature_values
 from .errors import Refusal, SigningError, refuse
 from .keys import Ed25519Key
 from .message import HeaderLines, HTTPRequest, HTTPResponse
@@ -246,8 +246,12 @@ def verify(
         key_resolver=MappingKeyResolver(public_keys={member.keyid: public_key}, private_keys={}),
     )
     try:
+        alone = replace(message, headers=only_member(message.headers, member.label))
+    except ValueError as e:
+        raise refuse(Refusal.SIGNATURE_INVALID, f"signature {member.label}: {e}") from e
+    try:
         results = verifier.verify(
-            _view(message),
+            _view(alone),
             expect_tag=member.tag,
             expect_label=member.label,
             max_age=None,

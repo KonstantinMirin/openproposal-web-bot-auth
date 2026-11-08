@@ -3,8 +3,10 @@
 The profile modules read ``Signature-Input``, ``Signature``, ``Signature-Agent``,
 and ``Content-Digest`` only through this module, and get typed values back:
 
-- :func:`parse_signature_fields` parses the three signature fields once, under
-  one duplicate-key policy, into :class:`SignatureFields`.
+- :func:`is_signed` is the one test of whether a message is signed: it carries
+  ``Signature-Input``, so the profile's verification steps apply to it.
+- :func:`parse_signature_fields` parses the three signature fields of a signed
+  message once, under one duplicate-key policy, into :class:`SignatureFields`.
 - :func:`check_content_digest` checks a ``Content-Digest`` against the body.
 - :class:`ComponentId` is a covered component identifier.
 
@@ -96,20 +98,30 @@ class SignatureFields(Mapping[str, SignatureMember]):
     to :class:`SignatureMember`, in ``Signature-Input`` order.
 
     ``signatures`` maps each ``Signature`` label to its Byte Sequence, and
-    ``agents`` maps each ``Signature-Agent`` label to its member.
+    ``agents`` maps each ``Signature-Agent`` label to its member. A label
+    repeated in a field parses, and RFC 9651 keeps its last value:
+    ``repeated`` holds the labels repeated in ``Signature-Input`` or
+    ``Signature``, and ``repeated_agents`` those repeated in
+    ``Signature-Agent``. Only a repeat of the member a verifier selects makes
+    that member ambiguous, so the selection refuses it, not the parse.
     """
 
-    __slots__ = ("_members", "agents", "signatures")
+    __slots__ = ("_members", "agents", "repeated", "repeated_agents", "signatures")
 
     def __init__(
         self,
         members: Mapping[str, SignatureMember],
         signatures: Mapping[str, bytes],
         agents: Mapping[str, SignatureAgentMember],
+        *,
+        repeated: frozenset[str] = frozenset(),
+        repeated_agents: frozenset[str] = frozenset(),
     ) -> None:
         self._members = MappingProxyType(dict(members))
         self.signatures: Mapping[str, bytes] = MappingProxyType(dict(signatures))
         self.agents: Mapping[str, SignatureAgentMember] = MappingProxyType(dict(agents))
+        self.repeated = repeated
+        self.repeated_agents = repeated_agents
 
     def __getitem__(self, label: str) -> SignatureMember:
         return self._members[label]
@@ -126,7 +138,8 @@ class SignatureFields(Mapping[str, SignatureMember]):
         This is the one selection of a signature by its tag. Refuses
         ``signature-missing`` when there is no such member or its
         ``Signature`` member is absent, and ``multiple-signatures`` when there
-        is more than one.
+        is more than one or its label is repeated. A repeated label on any
+        other member is not this member's concern.
         """
         tagged = [m for m in self._members.values() if m.tag == tag]
         if not tagged:
@@ -136,8 +149,11 @@ class SignatureFields(Mapping[str, SignatureMember]):
                 Refusal.MULTIPLE_SIGNATURES,
                 f"{len(tagged)} {tag} signatures; the profile takes one",
             )
-        if tagged[0].label not in self.signatures:
-            raise refuse(Refusal.SIGNATURE_MISSING, f"Signature has no member {tagged[0].label}")
+        label = tagged[0].label
+        if label in self.repeated:
+            raise refuse(Refusal.MULTIPLE_SIGNATURES, f"signature member {label} is repeated")
+        if label not in self.signatures:
+            raise refuse(Refusal.SIGNATURE_MISSING, f"Signature has no member {label}")
         return tagged[0]
 
 
@@ -252,37 +268,73 @@ def _agent(label: str, member: object) -> SignatureAgentMember:
     return SignatureAgentMember(label, value if isinstance(value, str) else None, bool(params))
 
 
-def parse_signature_fields(lines: HeaderLines) -> SignatureFields:
+def is_signed(lines: HeaderLines) -> bool:
+    """True when the message carries ``Signature-Input``: the one test of whether it is signed.
+
+    The profile's verification steps apply to a message that carries
+    ``Signature-Input`` and to no other. A message with only a ``Signature``
+    field, such as one from another signature scheme, is unsigned under the
+    profile, and its ``Signature`` is never parsed.
+    """
+    return "signature-input" in lines
+
+
+def parse_signature_fields(lines: HeaderLines) -> SignatureFields | None:
     """Parses ``Signature-Input``, ``Signature``, and ``Signature-Agent`` once.
 
-    Refuses, with :class:`WebBotAuthError`:
-
-    - ``signature-missing`` when the message carries neither signature field;
-    - ``parse`` (``400``) when a field doesn't parse as a Dictionary, a
-      parameter is repeated, a ``Signature-Input`` member isn't an Inner List
-      of Strings with parameters of their RFC 9421 types, or a ``Signature``
-      member isn't a Byte Sequence;
-    - ``multiple-signatures`` or ``multiple-signature-agents`` when a member
-      label is repeated, which parses (RFC 9651 keeps the last) but leaves the
-      member ambiguous.
+    Returns ``None`` for a message that isn't signed (:func:`is_signed`), and
+    parses nothing. A signed message gets the profile's step 1: every member's
+    shape is checked, whatever its tag, and a failure refuses ``parse``
+    (``400``): a field that doesn't parse as a Dictionary, a repeated
+    parameter, a ``Signature-Input`` member that isn't an Inner List of
+    Strings with parameters of their RFC 9421 types, or a ``Signature``
+    member that isn't a Byte Sequence. The parse refuses nothing else: a
+    repeated label is carried on the result for the selection to judge.
     """
-    if not lines.is_signed():
-        raise refuse(Refusal.SIGNATURE_MISSING, "the message carries no signature")
+    if not is_signed(lines):
+        return None
     inputs = _field(lines, "signature-input")
     signatures = _field(lines, "signature")
     agents = _field(lines, "signature-agent")
-    repeated = inputs.repeated or signatures.repeated
-    if repeated:
-        raise refuse(Refusal.MULTIPLE_SIGNATURES, f"signature member {repeated[0]} is repeated")
-    if agents.repeated:
-        raise refuse(
-            Refusal.MULTIPLE_SIGNATURE_AGENTS,
-            f"Signature-Agent member {agents.repeated[0]} is repeated",
-        )
     return SignatureFields(
         {label: _signature_member(label, m) for label, m in inputs.members.items()},
         {label: _signature(label, m) for label, m in signatures.members.items()},
         {label: _agent(label, m) for label, m in agents.members.items()},
+        repeated=frozenset((*inputs.repeated, *signatures.repeated)),
+        repeated_agents=frozenset(agents.repeated),
+    )
+
+
+def only_member(lines: HeaderLines, label: str) -> HeaderLines:
+    """``lines`` with ``Signature-Input`` and ``Signature`` holding the member ``label`` alone.
+
+    A signature is verified from its own member (RFC 9421 section 3.2), and the
+    profile verifies no member with another tag. Left in, another signer's
+    member could fail the library's own parse, as a repeated label or a label
+    with no ``Signature`` member does, and refuse a valid signature. The
+    member is serialized again from its parse; the library serializes it
+    again for the signature base anyway. Lines with no other member are
+    returned as they are. Raises ``ValueError`` when the fields don't parse
+    or lack the member.
+    """
+    try:
+        inputs = _parse_dictionary(lines["signature-input"])
+        signatures = _parse_dictionary(lines["signature"])
+    except (KeyError, http_sf.StructuredFieldError) as e:
+        raise ValueError(f"the signature fields lack a member {label}: {e}") from e
+    alone = (label,)
+    if (tuple(inputs.members), tuple(signatures.members)) == (alone, alone) and not (
+        inputs.repeated or signatures.repeated
+    ):
+        return lines
+    if label not in inputs.members or label not in signatures.members:
+        raise ValueError(f"the signature fields lack a member {label}")
+
+    def member(field: _Dictionary) -> str:
+        return http_sf.ser({label: field.members[label]})  # type: ignore[dict-item]
+
+    return lines.with_replaced("Signature-Input", member(inputs)).with_replaced(
+        "Signature", member(signatures)
     )
 
 
@@ -343,6 +395,8 @@ __all__ = [
     "check_content_digest",
     "component_id",
     "content_digest",
+    "is_signed",
+    "only_member",
     "parse_signature_fields",
     "signature_values",
 ]

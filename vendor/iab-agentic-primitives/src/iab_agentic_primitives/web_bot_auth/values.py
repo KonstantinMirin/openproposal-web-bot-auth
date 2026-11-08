@@ -134,6 +134,24 @@ def is_canonical_host(host: str) -> bool:
         return False
 
 
+def _canonical_host(host: str) -> str:
+    """``host``, as ``urlsplit`` reads it, in the canonical form :func:`is_canonical_host` checks.
+
+    A name that IDNA-2008 can't encode is returned as given, for the caller's
+    check to refuse.
+    """
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        pass
+    else:
+        return f"[{ip}]" if ip.version == 6 else str(ip)
+    try:
+        return idna.encode(host, uts46=True, transitional=False).decode("ascii")
+    except (idna.IDNAError, UnicodeError):
+        return host
+
+
 def _split(value: object) -> tuple[str, str] | None:
     """Returns ``(host, rest)`` for ``https://<host><rest>`` with a canonical host, or ``None``."""
     if not isinstance(value, str) or not value.isascii() or not value.startswith(_SCHEME):
@@ -185,6 +203,26 @@ class Origin:
                 f"Signature-Agent {value!r} is not https://<host>{DIRECTORY_PATH} or https://<host>",
             )
         return cls(split[0])
+
+    @classmethod
+    def of_url(cls, url: str) -> Origin:
+        """The identity of the host ``url`` names, ``https://<host>``, whatever its scheme and port.
+
+        This is the one mapping from a URL host to an identity. A name is
+        mapped through IDNA-2008 (UTS #46, non-transitional), the
+        canonicalization :func:`is_canonical_host` checks, so
+        ``https://Bücher.example:8443/x`` names ``https://xn--bcher-kva.example``.
+        An IP address is written in its compressed form. Raises
+        :class:`ConfigurationError` when the URL has no host, or its host
+        can't be an identity, such as one with a trailing dot.
+        """
+        try:
+            host = urlsplit(url).hostname if isinstance(url, str) else None
+        except ValueError as e:
+            raise ConfigurationError(f"{url!r} is not a URL: {e}") from e
+        if not host:
+            raise ConfigurationError(f"{url!r} names no host")
+        return cls(_canonical_host(host))
 
     @property
     def authority(self) -> Authority:
@@ -243,14 +281,6 @@ def parse_authority(value: object) -> RequestAuthority:
 def key_id_set(values: object) -> frozenset[KeyId]:
     """Returns ``values`` as a set of key ids; :class:`ConfigurationError` for anything else."""
     return frozenset(KeyId(v) for v in identifier_set("the key ids", values))
-
-
-def authority_set(values: object) -> frozenset[RequestAuthority]:
-    """Returns ``values`` as a set of normalized request authorities.
-
-    Raises :class:`ConfigurationError` for anything but a collection of authorities.
-    """
-    return frozenset(parse_authority(v) for v in identifier_set("the authorities", values))
 
 
 #: A base URL: ``http`` or ``https``, an authority, and nothing after it.
@@ -312,16 +342,6 @@ def _base_url(value: object) -> _BaseURL:
     return _BaseURL(match["scheme"], host.strip("[]"), _port(port, match["scheme"]))
 
 
-def _request_authorities(values: object, base: _BaseURL) -> frozenset[RequestAuthority]:
-    """``values`` when they are normalized request authorities that include ``base``'s."""
-    authorities = authority_set(values)
-    if authorities != values or base.authority not in authorities:
-        raise ConfigurationError(
-            f"request_authorities holds normalized authorities, {base.authority} among them"
-        )
-    return authorities
-
-
 @dataclass(frozen=True, slots=True)
 class ServerIdentity:
     """A server's own identity, from configuration, never from a request.
@@ -329,17 +349,18 @@ class ServerIdentity:
     ``origin`` is the identity it signs as, ``https://<host>``. ``base_url`` is
     the scheme and authority of its public URLs, such as
     ``https://seller.example.com:8443``: the middlewares rebuild each request
-    URL on it, whatever ``Host`` the client sends. ``request_authorities``
-    lists every ``@authority`` a request to this server may name.
+    URL on it, whatever ``Host`` the client sends, and the request verifier
+    accepts a URL for its authority, :attr:`request_authority`, alone. One
+    fact sets both, so a request the edges rebuild is always one the verifier
+    can accept.
 
-    It checks itself when it is made: ``base_url`` has the origin's host, and
-    its authority is among ``request_authorities``. Anything else raises
-    :class:`ConfigurationError`. :meth:`from_config` builds one from strings.
+    It checks itself when it is made: ``base_url`` has the origin's host.
+    Anything else raises :class:`ConfigurationError`. :meth:`from_config`
+    builds one from a string.
     """
 
     origin: Origin
     base_url: str
-    request_authorities: frozenset[RequestAuthority]
 
     def __post_init__(self) -> None:
         if not isinstance(self.origin, Origin):
@@ -347,23 +368,25 @@ class ServerIdentity:
         base = _base_url(self.base_url)
         if base.host != self.origin.host.strip("[]"):
             raise ConfigurationError(f"base_url {self.base_url} isn't on {self.origin}")
-        _request_authorities(self.request_authorities, base)
+
+    @property
+    def request_authority(self) -> RequestAuthority:
+        """The ``@authority`` of the server's own URLs, from ``base_url``."""
+        return _base_url(self.base_url).authority
 
     @classmethod
-    def from_config(cls, base_url: str, *, authorities: object = ()) -> ServerIdentity:
+    def from_config(cls, base_url: str) -> ServerIdentity:
         """Builds the identity of the server whose public base URL is ``base_url``.
 
         ``base_url`` is ``https://<host>`` or ``http://<host>``, with a
         canonical host, an optional port other than the scheme's default, and
         an optional trailing ``/``. The identity origin is always
-        ``https://<host>``. ``authorities`` adds further authorities a request
-        may name. Raises :class:`ConfigurationError` for anything else.
+        ``https://<host>``. Raises :class:`ConfigurationError` for anything else.
         """
         value = base_url.removesuffix("/") if isinstance(base_url, str) else base_url
         base = _base_url(value)
         origin = Origin(f"[{base.host}]" if ":" in base.host else base.host)
-        extra = authority_set(authorities)
-        return cls(origin, str(value), frozenset({base.authority, *extra}))
+        return cls(origin, str(value))
 
 
 def b64url_decode(value: str) -> bytes:

@@ -2,7 +2,11 @@
 
 It is the buyer's mirror of the seller's identity boundary. Every answer is
 verified first: the seller's signature, against the origin this buyer knows the
-seller by, and, for a signed request, its binding to the request. Then the
+seller by, and, for a signed request, its binding to the request. An answer
+of any status that doesn't verify is refused: a failing signature with the
+library's reason, never taken as no signature, and an unsigned answer as
+`signature-missing`. Each verified answer keeps the instant it verified at, so
+the evidence verifies again at that instant. Then the
 answer is parsed as the document its status says it is: a `Proposal`, a
 `CommitResult`, or a § 2.4 `errors[]`. Verification and parsing run inside one
 refusal boundary, so whatever the seller sends comes back as a value
@@ -23,18 +27,25 @@ import httpx
 from iab_agentic_primitives.web_bot_auth import (
     KeyResolver,
     ResponseVerifier,
+    UnixSeconds,
     VerifiedResponse,
-    WebBotAuthError,
+    system_clock,
 )
-from iab_agentic_primitives.web_bot_auth.httpx import verified_response
+from iab_agentic_primitives.web_bot_auth import Refusal as LibraryRefusal
+from iab_agentic_primitives.web_bot_auth.httpx import (
+    ResponseNotVerified,
+    Unsigned,
+    VerificationFailed,
+    verification,
+)
 from openproposal import CommitResult, ErrorObject, Proposal
 from pydantic import ValidationError
 
-from persistence.values import KeptRequest, KeptResponse, Origin, SignedResponse, Signer
+from persistence.values import KeptResponse, Origin, SignedResponse, Signer
 from protocol.operations import RECEIVE, parse_errors, parse_result
 from protocol.values import JsonObject, read_json
 from transport.control import ErrorBody
-from transport.wba import fetch_of, lines_of, origin_of
+from transport.wba import fetch_of, lines_of, origin_of, sent_request
 
 from .credentials import BuyerCredential, seller_call
 from .refusal import Reason, Refusal
@@ -45,11 +56,35 @@ from .repository import Counterparty
 HTTPClient = httpx.AsyncClient
 
 
-class _Unsigned(Exception):
-    """The auth let an answer through without a verified signature."""
+class _NotVerified(Exception):
+    """An answer whose signature didn't verify, whatever its status: unsigned, or failing.
+
+    The auth returns every answer, and says what it found out about it. A
+    signature that fails is refused with the library's reason, never taken as
+    no signature; an unsigned answer is refused `signature-missing`. Either
+    way, the buyer acts on no answer the seller didn't sign.
+    """
+
+    def __init__(self, status: int, found: Unsigned | VerificationFailed | None) -> None:
+        if isinstance(found, VerificationFailed):
+            self.reason = found.reason
+            why = f"{found.reason.code}: {found.detail}"
+        else:
+            self.reason = LibraryRefusal.SIGNATURE_MISSING
+            why = "it carries no signature"
+        super().__init__(f"the seller's {status} answer is refused: {why}")
+
+
+class _Instant:
+    """The clock of one answer's verifier: it reads the system clock, and keeps the instant
+    it last read, which the buyer keeps with the answer as when it verified it."""
 
     def __init__(self) -> None:
-        super().__init__("the answer carries no verified signature")
+        self.at = system_clock()
+
+    def __call__(self) -> UnixSeconds:
+        self.at = system_clock()
+        return self.at
 
 
 @dataclass(frozen=True)
@@ -62,6 +97,8 @@ class Exchange:
     verified: VerifiedResponse
     #: The key that signed the request, or None for a bearer request.
     keyid: str | None
+    #: The instant the answer verified at, in Unix seconds.
+    verified_at: int
 
     def evidence(self, buyer_origin: Origin) -> SignedResponse:
         """The answer as the buyer keeps it (§ 4.1.2), with the request it is bound to."""
@@ -72,7 +109,12 @@ class Exchange:
             directory=None if directory is None else fetch_of(directory.evidence),
         )
         sender = Signer(origin=buyer_origin, keyid=self.keyid)
-        return SignedResponse(response=self.response, signer=signer, request_signer=sender)
+        return SignedResponse(
+            response=self.response,
+            signer=signer,
+            request_signer=sender,
+            verified_at=self.verified_at,
+        )
 
 
 @dataclass(frozen=True)
@@ -104,18 +146,18 @@ class Rejection:
 
 def _refusal(error: Exception) -> Refusal:
     """What the buyer says about an answer it can't take."""
-    if isinstance(error, WebBotAuthError):
-        return Refusal(error.refusal, f"the seller's answer is refused: {error.reason}: {error}")
+    if isinstance(error, _NotVerified):
+        return Refusal(error.reason, str(error))
     if isinstance(error, httpx.HTTPError):
         return Refusal(Reason.UNREACHABLE, f"the seller didn't answer: {error}")
     return Refusal(Reason.MALFORMED_ANSWER, f"the seller's answer doesn't parse: {error}")
 
 
 #: What verifying and parsing an answer can raise. Each one becomes a `Refusal`:
-#: ValueError covers pydantic's ValidationError, ProtocolViolation, and
-#: MalformedJsonError (a body that isn't JSON, or holds a number outside the
-#: RFC 8785 domain), and `_Unsigned` is the auth's own guarantee failing.
-_REFUSED = (WebBotAuthError, httpx.HTTPError, ValueError, _Unsigned)
+#: `_NotVerified` is an answer whose signature didn't verify, and ValueError covers
+#: pydantic's ValidationError, ProtocolViolation, and MalformedJsonError (a body that
+#: isn't JSON, or holds a number outside the RFC 8785 domain).
+_REFUSED = (_NotVerified, httpx.HTTPError, ValueError)
 
 
 def _rejection(exchange: Exchange) -> Rejection | Refusal:
@@ -150,8 +192,7 @@ class SellerClient:
     """Sends the buyer's requests to a seller, and verifies and parses each answer."""
 
     def __init__(self, http: HTTPClient, resolver: KeyResolver) -> None:
-        self._http = http
-        self._verifier = ResponseVerifier(resolver)
+        self._http, self._resolver = http, resolver
 
     async def read(
         self, seller: Counterparty, credential: BuyerCredential, proposal_id: str
@@ -187,26 +228,37 @@ class SellerClient:
         path: str,
         body: bytes = b"",
     ) -> Exchange:
-        """The one send path: the request with its credential, and the verified answer."""
-        url = f"{seller.origin}{path}"
-        call = seller_call(credential, self._verifier, seller.origin)
+        """The one send path: the request with its credential, and the verified answer.
+
+        The auth returns every answer with what it found out about it, and raises
+        `ResponseNotVerified` for a `2xx` it couldn't verify. Both come down to one
+        check: an answer whose signature didn't verify is refused, whatever its status.
+        """
+        instant = _Instant()
+        verifier = ResponseVerifier(self._resolver, clock=instant)
+        call = seller_call(credential, verifier, seller.origin)
         headers = {"Content-Type": "application/json"} if body else {}
-        response = await self._http.request(
-            method, url, content=body, headers=headers | dict(call.headers), auth=call.auth
-        )
-        verified = verified_response(response)
-        if verified is None:  # the auth refuses an unsigned answer, so this can't happen
-            raise _Unsigned
-        lines = lines_of(response.request.headers.raw)
-        sent = tuple((k, v) for k, v in lines if k.lower() != "authorization")
-        request = KeptRequest(method=method, url=url, lines=sent, body=body)
+        try:
+            response = await self._http.request(
+                method,
+                f"{seller.origin}{path}",
+                content=body,
+                headers=headers | dict(call.headers),
+                auth=call.auth,
+            )
+        except ResponseNotVerified as e:
+            raise _NotVerified(e.response.status_code, e.verification) from e
+        found = verification(response)
+        if not isinstance(found, VerifiedResponse):
+            raise _NotVerified(response.status_code, found)
         return Exchange(
             response=KeptResponse(
                 status=response.status_code,
                 lines=lines_of(response.headers.raw),
                 body=response.content,
-                request=request,
+                request=sent_request(response.request),
             ),
-            verified=verified,
+            verified=found,
             keyid=credential.keyid,
+            verified_at=instant.at,
         )

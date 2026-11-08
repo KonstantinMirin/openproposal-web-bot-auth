@@ -18,8 +18,8 @@ credential. It treats a Web Bot Auth signature and a bearer token the same way:
 The boundary writes nothing. A resolved caller carries its `Provenance`: the
 principal, how it authenticated, whether the signature attributes the body,
 and, for a signature, the verified request as a `SignedRequest` with the
-directory fetch it verified against. Storage keeps that only with an entry the
-request carried.
+directory fetch it verified against and the instant it verified at. Storage
+keeps that only with an entry the request carried.
 
 `create_app` (seller/app.py) builds the boundary from its collaborators, and
 seller/http.py binds it to `CallerDep`.
@@ -35,6 +35,7 @@ from iab_agentic_primitives.web_bot_auth import (
     Refusal,
     RequestVerifier,
     ServerIdentity,
+    UnixSeconds,
     VerifiedRequest,
     WebBotAuthError,
     refusal_response,
@@ -158,17 +159,19 @@ class IdentityBoundary:
             return PublicCaller()
         if isinstance(presented, _PresentedBearer):
             return self._resolve_bearer(presented.token)
-        return self._resolve_signed(await self._confirm_signature(kept), kept)
+        at = self._verifier.clock()
+        return self._resolve_signed(await self._confirm_signature(kept, at), kept, at)
 
-    async def _confirm_signature(self, request: KeptRequest) -> VerifiedRequest:
-        """The verified signature; the library fetches the origin's directory as needed."""
+    async def _confirm_signature(self, request: KeptRequest, at: UnixSeconds) -> VerifiedRequest:
+        """The signature, verified at `at`; the library fetches the origin's directory as
+        needed."""
         try:
-            return await self._verifier.verify(to_library(request))
+            return await self._verifier.verify(to_library(request), now=at)
         except WebBotAuthError as e:
             raise _signature_refused(e, has_body=bool(request.body)) from e
 
     def _resolve_signed(
-        self, verified: VerifiedRequest, request: KeptRequest
+        self, verified: VerifiedRequest, request: KeptRequest, at: UnixSeconds
     ) -> ResolvedCaller | PublicCaller:
         credential = _credential(verified)
         principal = self._directory.for_origin(credential.origin)
@@ -181,7 +184,7 @@ class IdentityBoundary:
             principal_id=principal.id,
             method=credential.method,
             attributed=attributed,
-            signed=_signed(credential, verified, request),
+            signed=_signed(credential, verified, request, at),
         )
         return ResolvedCaller(
             principal=principal,
@@ -221,14 +224,17 @@ def _credential(verified: VerifiedRequest) -> SignatureCredential:
 
 
 def _signed(
-    credential: SignatureCredential, verified: VerifiedRequest, request: KeptRequest
+    credential: SignatureCredential,
+    verified: VerifiedRequest,
+    request: KeptRequest,
+    at: UnixSeconds,
 ) -> SignedRequest:
-    """The verified request, with its signer and the directory fetch it verified against
-    (§ 4.1.2), when the resolver provides it."""
+    """The verified request, with its signer, the directory fetch it verified against
+    (§ 4.1.2) when the resolver provides it, and `at`, the instant it verified at."""
     directory = verified.directory
     signer = Signer(
         origin=credential.origin,
         keyid=credential.keyid,
         directory=None if directory is None else fetch_of(directory.evidence),
     )
-    return SignedRequest(request=request, signer=signer)
+    return SignedRequest(request=request, signer=signer, verified_at=at)

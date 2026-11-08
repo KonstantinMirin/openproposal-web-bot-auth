@@ -4,7 +4,11 @@
 directory it verified against, so that the message can be shown to verify
 later. These functions take what a party's records hold (persistence/evidence.py)
 and verify it with the library, with no network: the keys come from the kept
-directory fetch, after the library verifies that fetch's own signatures again.
+directory fetch, after the library verifies that fetch's own signatures again
+at its `fetched_at`, and the message verifies at its own `verified_at`. So the
+answer is a function of the kept row alone, the same whenever it is asked:
+a signature's lifetime is checked against when the party verified it, never
+against the wall clock.
 """
 
 from __future__ import annotations
@@ -41,16 +45,22 @@ def directory_keys(signer: Signer) -> StaticKeyResolver:
 
 
 async def reverify_request(kept: SignedRequest, identity: ServerIdentity) -> VerifiedRequest:
-    """Verifies a kept request again, as the party `identity` received it."""
+    """Verifies a kept request again, as the party `identity` received it, at the instant it
+    verified it; raises `NoEvidenceError` for a request the party sent and never verified."""
+    if kept.verified_at is None:
+        raise NoEvidenceError(kept.request.url)
     verifier = RequestVerifier(
         directory_keys(kept.signer), identity=identity, nonces=MemoryNonceStore()
     )
-    return await verifier.verify(to_library(kept.request))
+    return await verifier.verify(to_library(kept.request), now=UnixSeconds(kept.verified_at))
 
 
 async def reverify_response(kept: SignedResponse) -> VerifiedResponse:
-    """Verifies a kept response again, with its binding to the kept request."""
+    """Verifies a kept response again, with its binding to the kept request, at the instant
+    the party verified it."""
     verifier = ResponseVerifier(directory_keys(kept.signer))
     return await verifier.verify(
-        response_to_library(kept.response), expected_origin=library_origin(kept.signer.origin)
+        response_to_library(kept.response),
+        expected_origin=library_origin(kept.signer.origin),
+        now=UnixSeconds(kept.verified_at),
     )

@@ -94,7 +94,8 @@ The code path, in order:
    discriminated, and refuse an amended copy. A `ResolvedCaller` also carries
    its `Provenance` ([`persistence/values.py`](persistence/values.py)): the
    principal id, the method, the attribution, and, for a signature, the
-   verified request with the directory fetch it verified against.
+   verified request with the directory fetch it verified against and the
+   instant it verified at.
 6. The offer logic ([`seller/offers/`](seller/offers)) never sees the caller.
    The HTTP seam hands it the principal id to read a proposal, and the
    `Provenance` (or None, for a caller with no principal) to answer a commit.
@@ -120,7 +121,9 @@ a transport status with no `errors[]` object:
 | `503` | The verifier can't record the nonce | `Retry-After` |
 
 The seller signs every agent-facing answer with `ResponseSigningMiddleware`,
-refusals included, and binds it to the request it answers.
+refusals included, and binds it to the request it answers. The same middleware
+serves the seller's signed key directory, and it checks when the app is built
+that the directory lists the key it signs with.
 
 ## Bearer and Web Bot Auth interop
 
@@ -137,8 +140,11 @@ The buyer mirrors the seller's boundary
 ([`buyer/seller_client.py`](buyer/seller_client.py)). Its one client to a
 seller verifies each answer, then parses it as the document its status says it
 is (a `Proposal`, a `CommitResult`, or a § 2.4 `errors[]`), inside one refusal
-boundary. An answer that fails either step comes back as a refusal, never as an
-exception, and the buyer keeps nothing from it. The buyer's operator routes
+boundary. An answer whose signature doesn't verify is refused whatever its
+status: a failing signature with the library's reason, never taken as no
+signature, and an unsigned answer, such as a proxy's `502`, as
+`signature-missing`. An answer that fails either step comes back as a refusal,
+never as an exception, and the buyer keeps nothing from it. The buyer's operator routes
 answer a discriminated `Outcome` ([`transport/control.py`](transport/control.py)):
 `read`, `agreed`, `rejected` (the seller said no), or `refused` (the buyer said
 no, with its reason).
@@ -256,8 +262,12 @@ order: read, `compose_commit`, commit, `check_result`, and keep the agreement.
 It re-sends a pending `Commit` whole until the seller's answer verifies, and it
 settles a commit as rejected only on a stored rejection (`retry` other than
 `same`). Both parties keep the counterparty's signed message
-as exact bytes, with the exact directory bytes it verified against, so the
-evidence verifies again offline (§ 4.1.2).
+as exact bytes, with the exact directory bytes it verified against and the
+instant it verified the message, so the evidence verifies again offline
+(§ 4.1.2). Verifying it again is a function of the kept row alone: the
+directory is checked at its `fetched_at` and the message at its `verified_at`,
+so a record still verifies long after its signatures expired. The buyer keeps
+its own request as the wire carried it, the URL as encoded and signed.
 
 ## Topology
 
@@ -403,7 +413,7 @@ The live deployment differs from the local test only where production needs it:
   module of [`iab-agentic-primitives`](https://github.com/KonstantinMirin/iab-agentic-primitives-wba/blob/feat/web-bot-auth/WEB_BOT_AUTH.md), documented in its
   `WEB_BOT_AUTH.md`. Every signature, verification, directory, and fetch rule
   comes from it. The demo pins commit
-  `698e1e59d5483d4441e5a3f195b2279718a5660c` of the `refactor/wba-architecture`
+  `3d76d7216c8c61ceddde976078c91b37c6b3e37f` of the `refactor/wba-architecture`
   branch of
   [`iab-agentic-primitives-wba`](https://github.com/KonstantinMirin/iab-agentic-primitives-wba),
   vendored unchanged in

@@ -33,7 +33,7 @@ def principal(**fields: object) -> Principal:
 def signed_request() -> SignedRequest:
     request = KeptRequest(method="GET", url="https://seller.example/whoami", lines=(), body=b"")
     signer = Signer.model_validate({"origin": "https://buyer.example", "keyid": "kid-1"})
-    return SignedRequest(request=request, signer=signer)
+    return SignedRequest(request=request, signer=signer, verified_at=1_700_000_000)
 
 
 def provenance(**fields: object) -> Provenance:

@@ -41,6 +41,9 @@ CLOCK_SKEW: Final = 60
 NONCE_BYTES: Final = 64
 #: What the nonce rule requires, as a signer and a verifier say it.
 NONCE_RULE: Final = "nonce must be 64 bytes as unpadded base64url or padded base64"
+#: Media types whose responses stream: a server passes them through unsigned, so a
+#: client takes one unsigned.
+STREAMING_MEDIA_TYPES: Final = ("text/event-stream",)
 
 
 def validate_nonce(nonce: object) -> bool:
@@ -317,7 +320,8 @@ def web_bot_auth_label(headers: Headers | None) -> str | None:
     to the request's signature only when this returns a label.
     """
     try:
-        return parse_signature_fields(HeaderLines(headers)).one_tagged(SIGNATURE_TAG).label
+        fields = parse_signature_fields(HeaderLines(headers))
+        return None if fields is None else fields.one_tagged(SIGNATURE_TAG).label
     except WebBotAuthError:
         return None
 
@@ -343,6 +347,7 @@ __all__ = [
     "REQUEST",
     "RESPONSE",
     "SIGNATURE_TAG",
+    "STREAMING_MEDIA_TYPES",
     "CacheRules",
     "ComponentId",
     "ComponentParam",

@@ -24,7 +24,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Awaitable, Callable, Collection
 from dataclasses import InitVar, dataclass, field
-from typing import TypeVar
+from typing import Final, Literal, TypeVar
 
 from . import _sig
 from ._wire import (
@@ -33,10 +33,11 @@ from ._wire import (
     SignatureFields,
     SignatureMember,
     check_content_digest,
+    is_signed,
     parse_signature_fields,
 )
 from .directory import VerifiedDirectory
-from .errors import Refusal, WebBotAuthError, refuse
+from .errors import ConfigurationError, Refusal, WebBotAuthError, refuse
 from .message import HeaderLines, HTTPRequest, HTTPResponse
 from .ports import KeyResolver
 from .replay import NonceStore, NonceStoreUnavailable
@@ -63,6 +64,14 @@ from .values import (
 )
 
 logger = logging.getLogger(__name__)
+
+#: The mode in which a response must carry the signature of the host the request went to.
+SAME_ORIGIN: Final = "same-origin"
+
+#: Whose signature a response must carry: an :class:`Origin`; :data:`SAME_ORIGIN`,
+#: the identity of the host the request went to, :meth:`Origin.of_url` of its URL;
+#: or ``None``, any identity.
+ExpectedOrigin = Origin | Literal["same-origin"] | None
 
 M = TypeVar("M", HTTPRequest, HTTPResponse)
 N = TypeVar("N", str, str | None)
@@ -153,6 +162,10 @@ def select_signature_agent(fields: SignatureFields, label: str) -> Origin:
     parameters is ignored (draft -01 section 5.2.1).
     """
     agents = {k: a for k, a in fields.agents.items() if not a.has_parameters}
+    if label in fields.repeated_agents:
+        raise refuse(
+            Refusal.MULTIPLE_SIGNATURE_AGENTS, f"Signature-Agent member {label} is repeated"
+        )
     if len(agents) > 1:
         raise refuse(
             Refusal.MULTIPLE_SIGNATURE_AGENTS,
@@ -174,8 +187,14 @@ def select_signature_agent(fields: SignatureFields, label: str) -> Origin:
 
 
 def _select(lines: HeaderLines) -> _Selected:
-    """Parse the fields and select the signature: the member and the origin it names."""
+    """Parse the fields and select the signature: the member and the origin it names.
+
+    A message that isn't signed (:func:`is_signed`) is refused
+    ``signature-missing``: the verifier was asked for a signature it doesn't carry.
+    """
     fields = parse_signature_fields(lines)
+    if fields is None:
+        raise refuse(Refusal.SIGNATURE_MISSING, "the message carries no Signature-Input")
     member = fields.one_tagged(SIGNATURE_TAG)
     return _Selected(member, select_signature_agent(fields, member.label))
 
@@ -205,13 +224,29 @@ def _check_components(
 
 
 def _check_authority(request: HTTPRequest, identity: ServerIdentity) -> None:
-    """Check the authority: the request names one of this server's own authorities."""
+    """Check the authority: the request names this server's own authority."""
     try:
         authority = authority_of(request.url)
     except ValueError as e:
         raise refuse(Refusal.AUTHORITY, f"{request.url!r} is not an absolute URL") from e
-    if authority not in identity.request_authorities:
+    if authority != identity.request_authority:
         raise refuse(Refusal.AUTHORITY, f"the request is for {authority}, not this verifier")
+
+
+def _expected_signer(response: HTTPResponse, expected: ExpectedOrigin) -> Origin | None:
+    """The origin ``response`` must be signed by, under ``expected``; ``None`` for any.
+
+    Under :data:`SAME_ORIGIN` it is the identity of the host the request went
+    to (a responder names its own origin), which :meth:`Origin.of_url` maps;
+    a host that can't be an identity can't have signed, so it is refused.
+    """
+    if expected is None or isinstance(expected, Origin):
+        return expected
+    url = response.request.url
+    try:
+        return Origin.of_url(url)
+    except ConfigurationError as e:
+        raise refuse(Refusal.ORIGIN_MISMATCH, f"{url!r} names no host an identity can be") from e
 
 
 def _check_signer(origin: Origin, expected: Origin | None) -> None:
@@ -352,8 +387,8 @@ class RequestVerifier(_Verifier):
 
     ``resolver`` finds keys (usually a :class:`DirectoryResolver`).
     ``identity`` is the verifier's own :class:`ServerIdentity`: a request
-    whose URL names an authority outside
-    :attr:`ServerIdentity.request_authorities` is refused with ``403``, so a
+    whose URL names any authority but
+    :attr:`ServerIdentity.request_authority` is refused with ``403``, so a
     request signed for one server doesn't verify at another. ``nonces``
     records nonces; share one store across every worker that verifies
     requests for the same deployment (:class:`MemoryNonceStore` serves one
@@ -413,7 +448,9 @@ class ResponseVerifier(_Verifier):
 
     When the request carried a ``web-bot-auth`` signature, the response must
     cover ``"signature";req;key=<request label>``; otherwise it is refused, so
-    an unbound response never verifies. It is immutable. It takes the
+    an unbound response never verifies. A responder names its own origin
+    (OpenProposal § 2.8.2), so by default the response must be signed by the
+    identity of the host the request went to. It is immutable. It takes the
     ``resolver``, ``clock``, and ``reject_keyids`` a :class:`RequestVerifier`
     takes.
     """
@@ -422,24 +459,29 @@ class ResponseVerifier(_Verifier):
         self,
         response: HTTPResponse,
         *,
-        expected_origin: Origin | None = None,
+        expected_origin: ExpectedOrigin = SAME_ORIGIN,
         now: UnixSeconds | None = None,
     ) -> VerifiedResponse:
         """Verifies ``response``; raises :class:`WebBotAuthError` on failure, and logs it.
 
-        ``response.request`` carries the request's headers as sent, including
-        its own signature. ``expected_origin``, when given, must equal the
-        verified origin.
+        ``response.request`` carries the request's URL and headers as sent,
+        including its own signature. ``expected_origin`` names whose signature
+        the response carries: :data:`SAME_ORIGIN` (the default), the identity
+        :meth:`Origin.of_url` gives for ``response.request.url``, whatever its
+        scheme and port; an :class:`Origin`; or ``None`` for any identity. A
+        signature by anyone else is refused ``origin-mismatch``.
         """
-        if expected_origin is not None and not isinstance(expected_origin, Origin):
-            raise TypeError(f"expected_origin is an Origin, not {expected_origin!r}")
+        if expected_origin not in (SAME_ORIGIN, None) and not isinstance(expected_origin, Origin):
+            raise TypeError(
+                f"expected_origin is an Origin, {SAME_ORIGIN!r}, or None, not {expected_origin!r}"
+            )
         at = self._now(now)
 
         async def verify(selected: _Selected) -> VerifiedResponse:
             keyid, _ = _check_parameters(selected.member, RESPONSE, at)
             required = RESPONSE.components_for(response, selected.member.label)
             _check_components(selected.member, required, RESPONSE)
-            _check_signer(selected.origin, expected_origin)
+            _check_signer(selected.origin, _expected_signer(response, expected_origin))
             authenticated = await self._authenticate(response, selected, keyid, required, at)
             bound = web_bot_auth_label(response.request.headers) is not None
             return authenticated.response(bound=bound)
@@ -448,8 +490,11 @@ class ResponseVerifier(_Verifier):
 
 
 __all__ = [
+    "SAME_ORIGIN",
+    "ExpectedOrigin",
     "RequestVerifier",
     "ResponseVerifier",
     "VerifiedRequest",
     "VerifiedResponse",
+    "is_signed",
 ]

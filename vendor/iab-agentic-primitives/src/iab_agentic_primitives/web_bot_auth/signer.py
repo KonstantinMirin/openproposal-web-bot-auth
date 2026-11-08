@@ -44,7 +44,7 @@ from .rules import (
     Stamp,
     validate_nonce,
 )
-from .values import Clock, Origin, UnixSeconds, b64url_encode, system_clock
+from .values import Clock, KeyId, Origin, UnixSeconds, b64url_encode, system_clock
 
 M = TypeVar("M", HTTPRequest, HTTPResponse)
 N = TypeVar("N", str, str | None)
@@ -107,7 +107,7 @@ def _digest_lines(lines: HeaderLines, body: bytes) -> HeaderLines:
 def _prepared(message: M, config: SignerConfig) -> M:
     """``message`` with the lines its signature adds: ``Content-Digest`` and ``Signature-Agent``."""
     lines = message.headers
-    if lines.is_signed() or "signature-agent" in lines:
+    if lines.carries_signature_field() or "signature-agent" in lines:
         raise SigningError(
             "the message already carries a signature field; the profile signs once per message"
         )
@@ -152,6 +152,11 @@ class _Signer:
     def origin(self) -> Origin:
         """The identity the signer signs as."""
         return self.config.origin
+
+    @property
+    def keyid(self) -> KeyId:
+        """The key id the signer signs with: its key's thumbprint."""
+        return self.config.key.thumbprint
 
 
 @dataclass(frozen=True, slots=True)

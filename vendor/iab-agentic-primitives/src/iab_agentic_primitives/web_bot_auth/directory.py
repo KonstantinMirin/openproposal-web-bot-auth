@@ -290,6 +290,26 @@ async def current_keys(keys: KeySource) -> list[Ed25519Key]:
     return list(keys)
 
 
+def _checked_keys(keys: Sequence[Ed25519Key]) -> Sequence[Ed25519Key]:
+    """``keys`` when a verifier accepts a directory of them; :class:`ConfigurationError` else.
+
+    A directory holds at least one key and at most :data:`MAX_DIRECTORY_KEYS`,
+    each once: a key listed twice signs twice, and :func:`verify_directory`
+    refuses two signatures by one key.
+    """
+    if not keys:
+        raise ConfigurationError("a directory publishes at least one key")
+    if len(keys) > MAX_DIRECTORY_KEYS:
+        raise ConfigurationError(
+            f"a directory publishes at most {MAX_DIRECTORY_KEYS} keys, not {len(keys)}"
+        )
+    kids = [key.thumbprint for key in keys]
+    repeated = sorted({kid for kid in kids if kids.count(kid) > 1})
+    if repeated:
+        raise ConfigurationError(f"a directory lists each key once; {repeated[0]} is repeated")
+    return keys
+
+
 def _directory_request(origin: Origin) -> HTTPRequest:
     """The request a verifier sends for ``origin``'s directory, whose ``@authority`` is signed."""
     return HTTPRequest("GET", origin.directory_url)
@@ -308,11 +328,12 @@ def publish_directory(
     client sends: each signature covers ``"@authority";req``, which keeps
     another domain from serving the key set as its own. The headers are
     ``Content-Type``, ``Cache-Control`` (``max-age=<policy.max_age>``),
-    ``Content-Digest``, ``Signature-Input``, and ``Signature``. Publishing no
-    keys raises :class:`ConfigurationError`.
+    ``Content-Digest``, ``Signature-Input``, and ``Signature``. It publishes
+    only what :func:`verify_directory` accepts: no keys, more than
+    :data:`MAX_DIRECTORY_KEYS`, or a key listed twice raises
+    :class:`ConfigurationError`.
     """
-    if not keys:
-        raise ConfigurationError("a directory publishes at least one key")
+    _checked_keys(keys)
     body = build_directory(keys)
     lines = HeaderLines(
         [
@@ -336,9 +357,11 @@ class DirectoryPublisher:
 
     ``keys`` is a list, or a callable (sync or async) that returns the current
     keys, so adding or removing a key takes effect on the next answer. A list
-    with no keys raises :class:`ConfigurationError`; a callable that returns
-    none answers ``503``. ``policy`` sets each signature's lifetime and the
-    response's ``max-age``.
+    that :func:`publish_directory` would refuse raises
+    :class:`ConfigurationError` when the publisher is made; a callable that
+    returns no keys answers ``503``, and one that returns keys it would refuse
+    raises :class:`ConfigurationError` on that answer. ``policy`` sets each
+    signature's lifetime and the response's ``max-age``.
     """
 
     origin: Origin
@@ -349,9 +372,24 @@ class DirectoryPublisher:
         if not isinstance(self.origin, Origin):
             raise ConfigurationError(f"origin is an Origin, not {self.origin!r}")
         if not callable(self.keys):
-            if not self.keys:
-                raise ConfigurationError("a directory publishes at least one key")
-            object.__setattr__(self, "keys", tuple(self.keys))
+            object.__setattr__(self, "keys", tuple(_checked_keys(self.keys)))
+
+    def check_signer(self, origin: Origin, keyid: KeyId) -> None:
+        """Checks that a signer of ``origin`` with the key ``keyid`` signs under this directory.
+
+        The origin must be the publisher's, and, for a list of keys, ``keyid``
+        must be among them: peers find a key only in the directory. A callable
+        key source is read on each answer, so its keys can't be checked
+        ahead of one. Raises :class:`ConfigurationError`.
+        """
+        if origin != self.origin:
+            raise ConfigurationError(
+                f"the signer signs as {origin}, but the directory is {self.origin}'s"
+            )
+        if not callable(self.keys) and keyid not in {key.thumbprint for key in self.keys}:
+            raise ConfigurationError(
+                f"the signer's key {keyid} is not in {self.origin}'s directory"
+            )
 
     async def answer(self, now: UnixSeconds) -> Answer:
         """The signed directory at ``now``, or ``503`` when the source has no keys now."""
@@ -456,13 +494,21 @@ def parse_jwk_set(body: bytes, max_keys: int) -> KeySet:
 
 
 def _directory_fields(lines: HeaderLines) -> SignatureFields:
-    """The directory's signature fields; an unsigned response has none."""
-    if not lines.is_signed():
-        return SignatureFields({}, {}, {})
+    """The directory's signature fields; an unsigned response has none.
+
+    A repeated label leaves unclear which key made the signature under it, so
+    it is refused like a field that doesn't parse.
+    """
     try:
-        return parse_signature_fields(lines)
+        fields = parse_signature_fields(lines)
     except WebBotAuthError as e:
         raise refuse(Refusal.DIRECTORY_SIGNATURE_PARSE, f"directory signature fields: {e}") from e
+    if fields is None:
+        return SignatureFields({}, {}, {})
+    if fields.repeated:
+        label = min(fields.repeated)
+        raise refuse(Refusal.DIRECTORY_SIGNATURE_PARSE, f"directory signature {label} is repeated")
+    return fields
 
 
 def _select_directory_signature(fields: SignatureFields, kid: KeyId) -> SignatureMember:

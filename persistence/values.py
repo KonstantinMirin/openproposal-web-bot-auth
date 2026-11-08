@@ -12,7 +12,8 @@ converts them to and from the library's own types.
 - `KeptRequest`, `KeptResponse`, `DirectoryFetch`: a signed message and a key
   directory response as exact field lines and bytes (§ 4.1.2, Signed messages).
 - `Signer`, `SignedRequest`, `SignedResponse`: who signed a kept message, with
-  which key, and the directory fetch that key came from.
+  which key, the directory fetch that key came from, and when the party verified
+  it, so that it verifies again at that instant.
 - `Provenance`: who wrote an assent entry and how that was proven, which the
   seller keeps with the entry.
 """
@@ -180,18 +181,24 @@ class Signer(Value):
 
 
 class SignedRequest(Value):
-    """A kept request and who signed it."""
+    """A kept request, who signed it, and when the party verified it."""
 
     request: KeptRequest
     signer: Signer
+    #: When the party verified it, in Unix seconds: the instant it verifies again at. None
+    #: for a party's own request, which it sent and never verified.
+    verified_at: int | None
 
 
 class SignedResponse(Value):
-    """A kept response, who signed it, and who sent the request it is bound to."""
+    """A kept response, who signed it, who sent the request it is bound to, and when the
+    party verified it."""
 
     response: KeptResponse
     signer: Signer
     request_signer: Signer
+    #: When the party verified it, in Unix seconds: the instant it verifies again at.
+    verified_at: int
 
 
 class IllegalProvenanceError(ValueError):

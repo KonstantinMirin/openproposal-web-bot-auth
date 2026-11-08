@@ -38,8 +38,8 @@ from .errors import ConfigurationError
 from .message import HTTPRequest, HTTPResponse
 from .resolver import DirectoryResolver
 from .roles import RequestConfirmer, ResponseConfirmer
-from .values import Origin, UnixSeconds
-from .verifier import VerifiedRequest, VerifiedResponse
+from .values import UnixSeconds
+from .verifier import SAME_ORIGIN, ExpectedOrigin, VerifiedRequest, VerifiedResponse
 
 T = TypeVar("T")
 
@@ -171,7 +171,7 @@ class SyncResponseVerifier:
         self,
         response: HTTPResponse,
         *,
-        expected_origin: Origin | None = None,
+        expected_origin: ExpectedOrigin = SAME_ORIGIN,
         now: UnixSeconds | None = None,
     ) -> VerifiedResponse:
         """:meth:`ResponseVerifier.verify`, run to completion on the runtime's loop."""

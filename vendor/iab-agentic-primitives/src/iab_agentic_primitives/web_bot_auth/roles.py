@@ -18,8 +18,8 @@ from __future__ import annotations
 from typing import Protocol, runtime_checkable
 
 from .message import HTTPRequest, HTTPResponse
-from .values import Origin, ServerIdentity, UnixSeconds
-from .verifier import VerifiedRequest, VerifiedResponse
+from .values import KeyId, Origin, ServerIdentity, UnixSeconds
+from .verifier import SAME_ORIGIN, ExpectedOrigin, VerifiedRequest, VerifiedResponse
 
 
 @runtime_checkable
@@ -36,13 +36,17 @@ class RequestConfirmer(Protocol):
 
 @runtime_checkable
 class ResponseConfirmer(Protocol):
-    """Confirms a response's signature and its binding, or raises a refusal."""
+    """Confirms a response's signature and its binding, or raises a refusal.
+
+    ``expected_origin`` names whose signature the response must carry, as
+    :meth:`~.verifier.ResponseVerifier.verify` reads it.
+    """
 
     async def verify(
         self,
         response: HTTPResponse,
         *,
-        expected_origin: Origin | None = None,
+        expected_origin: ExpectedOrigin = SAME_ORIGIN,
         now: UnixSeconds | None = None,
     ) -> VerifiedResponse: ...
 
@@ -61,10 +65,17 @@ class RequestSigning(Protocol):
 
 @runtime_checkable
 class ResponseSigning(Protocol):
-    """Signs responses as ``origin``, bound to the requests they answer."""
+    """Signs responses as ``origin`` with the key ``keyid``, bound to the requests they answer.
+
+    A server checks ``keyid`` against the directory it publishes, so it never
+    signs with a key its peers can't find.
+    """
 
     @property
     def origin(self) -> Origin: ...
+
+    @property
+    def keyid(self) -> KeyId: ...
 
     def sign(self, response: HTTPResponse, *, now: UnixSeconds | None = None) -> HTTPResponse: ...
 

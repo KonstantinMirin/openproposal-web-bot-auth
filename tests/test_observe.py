@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import shutil
 import sqlite3
+import time
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -101,6 +102,44 @@ def test_both_parties_kept_evidence_verifies_again_offline(
     assert answered.bound and answered.body_covered
     assert commit is not None and commit.state == "agreed"
     assert kept.request.body == commit.body  # the exact bytes the buyer signed and sent
+
+
+def test_kept_evidence_verifies_again_long_after_its_signatures_expired(
+    agreed: tuple[Stack, Agreed], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Verifying a kept message again is a function of its row: it verifies at the instant
+    the party verified it, so a day later it gives the same answer as at once."""
+    stack, outcome = agreed
+    with stack.seller_records() as seller, stack.buyer_records() as buyer:
+        (commitment, _) = seller.entries("demo-wba-1")
+        assert commitment.evidence_id is not None
+        kept, answer = seller.request(commitment.evidence_id), buyer.response(outcome.evidence_id)
+    identity = ServerIdentity.from_config(SELLER)
+    at_once = asyncio.run(reverify_request(kept, identity)), asyncio.run(reverify_response(answer))
+    later = time.time() + 86_400
+    monkeypatch.setattr(time, "time", lambda: later)
+    again = asyncio.run(reverify_request(kept, identity)), asyncio.run(reverify_response(answer))
+    assert [(v.origin, v.keyid, v.expires) for v in again] == [
+        (v.origin, v.keyid, v.expires) for v in at_once
+    ]
+    assert all(v.expires < later for v in again)
+
+
+@pytest.mark.parametrize("proposal_id", ["offre-été", "a b"])
+def test_a_proposal_id_the_url_encodes_keeps_evidence_that_verifies(
+    tmp_path: Path, proposal_id: str
+) -> None:
+    """The buyer keeps its request as the wire carried it, the URL as encoded and signed."""
+    with Stack(tmp_path / "agents") as stack:
+        stack.issue(proposal_id)
+        outcome = as_state(Agreed, stack.commit(proposal_id, [DISPLAY]))
+        with stack.buyer_records() as buyer:
+            answer = buyer.response(outcome.evidence_id)
+        sent = stack.requests[-1]
+    assert (
+        answer.response.request.url == str(sent.url) != f"{SELLER}/proposals/{proposal_id}/commit"
+    )
+    assert asyncio.run(reverify_response(answer)).bound
 
 
 @pytest.mark.parametrize(

@@ -68,8 +68,11 @@ from buyer.app import create_app as create_buyer
 from buyer.settings import BuyerSettings
 from persistence.observe import BuyerRecords, SellerRecords
 from persistence.values import AuthMethod, Origin
+from protocol.documents import loads_yaml
 from seller.app import create_app as create_seller
+from seller.offers.issuance import Issuer, issue
 from seller.settings import SellerSettings
+from seller.sqlite_store import SqliteSellerStore
 from shared.keyring import KeyStore
 from shared.settings import DEFAULT_ORIGINS
 from transport.client import ControlClient
@@ -446,6 +449,20 @@ class Stack:
     def fault(self, mode: FaultName, on: FaultTarget = "commit") -> None:
         """TEST ONLY: sets the seller's fault (seller/faults.py); needs `faults=True`."""
         self.seller_control.call(FAULT, FaultMode(mode=mode, on=on))
+
+    def issue(self, proposal_id: str) -> None:
+        """Issues the seller's proposal to its signing buyer as `proposal_id`, as the seller's
+        onboarding issues one, through the seller's own store."""
+        settings = seller_settings(self.seller_dir, origins=self.origins)
+        template = loads_yaml(settings.template_file.read_text(encoding="utf-8"))
+        store = SqliteSellerStore(self.seller_dir / "seller.db")
+        try:
+            with store.transaction():
+                principal = store.principal("buyer-wba")
+                assert principal is not None
+                issue(store, Issuer(settings.own, template), principal, proposal_id)
+        finally:
+            store.close()
 
     # What each party kept
 

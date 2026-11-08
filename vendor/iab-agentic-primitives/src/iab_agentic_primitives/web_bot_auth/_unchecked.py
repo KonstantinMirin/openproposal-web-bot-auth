@@ -50,9 +50,11 @@ def signature_base(message: HTTPRequest | HTTPResponse, label: str, key: Ed25519
     signatures. Raises :class:`WebBotAuthError` when the signature doesn't
     parse or verify.
     """
-    member = parse_signature_fields(message.headers)[label]
+    fields = parse_signature_fields(message.headers)
+    if fields is None:
+        raise ValueError("the message carries no Signature-Input")
     return _sig.verify(
-        message, member, key.public_key, require_components=(), body=None
+        message, fields[label], key.public_key, require_components=(), body=None
     ).signature_base
 
 

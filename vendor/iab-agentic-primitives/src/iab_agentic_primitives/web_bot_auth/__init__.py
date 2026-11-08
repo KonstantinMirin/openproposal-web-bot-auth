@@ -88,7 +88,15 @@ from .values import (
     UnixSeconds,
     system_clock,
 )
-from .verifier import RequestVerifier, ResponseVerifier, VerifiedRequest, VerifiedResponse
+from .verifier import (
+    SAME_ORIGIN,
+    ExpectedOrigin,
+    RequestVerifier,
+    ResponseVerifier,
+    VerifiedRequest,
+    VerifiedResponse,
+    is_signed,
+)
 
 __all__ = [
     "ALGORITHM",
@@ -98,6 +106,7 @@ __all__ = [
     "DIRECTORY_TAG",
     "EXTRA_MODULES",
     "MAX_LIFETIME",
+    "SAME_ORIGIN",
     "SIGNATURE_TAG",
     "Answer",
     "Authority",
@@ -110,6 +119,7 @@ __all__ = [
     "DirectoryResponse",
     "DirectoryStore",
     "Ed25519Key",
+    "ExpectedOrigin",
     "FetchLimits",
     "HTTPRequest",
     "HTTPResponse",
@@ -145,6 +155,7 @@ __all__ = [
     "VerifiedResponse",
     "WebBotAuthError",
     "accept_signature",
+    "is_signed",
     "publish_directory",
     "refusal_response",
     "system_clock",

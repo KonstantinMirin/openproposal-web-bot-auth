@@ -16,6 +16,7 @@ party kept.
   doesn't recompute from the digest input the buyer kept.
 - An answer correctly signed by another origin than the seller's is refused,
   on a read and on a commit, under either credential.
+- An unsigned answer is refused whatever its status, and settles nothing.
 - A stored rejection settles the commit; `retry: same` keeps it pending.
 - Each seller fault mode is refused, on a read and on a commit, for each
   credential that it breaks.
@@ -509,6 +510,29 @@ def test_an_answer_signed_by_another_origin_is_refused(
     assert outcome.authentication_method == credential
     assert _kept_nothing(stack)
     assert stack.commit_states(proposal_id, [CTV]) == ([] if on == "read" else ["pending"])
+
+
+@pytest.mark.parametrize(
+    ("status", "body"),
+    [(409, NO_RETRY), (404, b'{"errors": [{"code": "not_found", "detail": "no"}]}'), (502, b"")],
+    ids=["stored-rejection", "not-found", "bad-gateway"],
+)
+@pytest.mark.parametrize("on", ["read", "commit"])
+def test_an_unsigned_answer_of_any_status_is_refused(
+    stack: Stack, status: int, body: bytes, on: str
+) -> None:
+    """An unsigned refusal arrives with its own status, and is still no word of the seller's:
+    it settles nothing, and its errors are never taken as a rejection."""
+    method = "GET" if on == "read" else "POST"
+    stack.answer = lambda r: httpx.Response(status, content=body) if r.method == method else None
+    if on == "read":
+        outcome = as_state(Refused, stack.read("demo-wba-1"))
+    else:
+        outcome = as_state(Refused, stack.commit("demo-wba-1", [DISPLAY]))
+    assert outcome.code == "signature-missing"
+    assert f"the seller's {status} answer" in outcome.detail
+    assert _kept_nothing(stack)
+    assert _commits(stack, "demo-wba-1") == ([] if on == "read" else ["pending"])
 
 
 def test_a_pending_commit_is_found_whatever_the_order_of_its_line_items(stack: Stack) -> None:

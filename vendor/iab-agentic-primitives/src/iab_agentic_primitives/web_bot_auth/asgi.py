@@ -5,11 +5,12 @@ These are plain ASGI and import no framework, so they work with Starlette,
 FastAPI, or any ASGI server.
 
 - :class:`ResponseSigningMiddleware` signs each buffered response and binds it
-  to the request it answers. It passes streaming responses
-  (``text/event-stream``) through unsigned.
+  to the request it answers, and serves the directory of the key it signs
+  with. It passes streaming responses (``text/event-stream``) through unsigned.
 - :class:`DirectoryMiddleware` answers ``GET`` on the well-known directory path
-  with the signed key directory of a :class:`~.directory.DirectoryPublisher`.
-  A framework route answers the same with :meth:`DirectoryPublisher.answer`.
+  with the signed key directory of a :class:`~.directory.DirectoryPublisher`,
+  for a party that signs no responses. A framework route answers the same with
+  :meth:`DirectoryPublisher.answer`.
 - :class:`RequireSignatureMiddleware` is opt-in. It verifies inbound
   signatures, refuses failures, and hands the app the :class:`VerifiedRequest`,
   which :func:`verified_request` reads from the scope. An application that
@@ -23,7 +24,7 @@ Every answer the helpers write, refusals included, comes from
 from __future__ import annotations
 
 import logging
-from collections.abc import Awaitable, Callable, Iterable, Mapping, MutableMapping, Sequence
+from collections.abc import Awaitable, Callable, Iterable, Mapping, MutableMapping
 from dataclasses import dataclass
 from typing import Literal, TypeVar
 from urllib.parse import quote
@@ -38,8 +39,9 @@ from .presentation import (
     unsignable_response,
 )
 from .roles import RequestConfirmer, ResponseSigning
+from .rules import STREAMING_MEDIA_TYPES
 from .values import DIRECTORY_PATH, Clock, ServerIdentity, is_decimal, system_clock, whole_number
-from .verifier import VerifiedRequest
+from .verifier import VerifiedRequest, is_signed
 
 Scope = MutableMapping[str, object]
 Message = MutableMapping[str, object]
@@ -50,8 +52,6 @@ ASGIApp = Callable[[Scope, Receive, Send], Awaitable[None]]
 #: The ``scope["state"]`` key that holds the :class:`VerifiedRequest`.
 STATE_KEY = "web_bot_auth"
 logger = logging.getLogger(__name__)
-#: Media types whose responses stream and pass through unsigned.
-STREAMING_MEDIA_TYPES = ("text/event-stream",)
 
 
 # ── reading ASGI mappings, typed once ─────────────────────────────────────
@@ -279,7 +279,7 @@ class _BufferedResponse:
 
     async def _started(self, message: Message) -> None:
         lines = HeaderLines(_headers(message))
-        if lines.is_signed() or lines.media_type() in self._options.skip:
+        if lines.carries_signature_field() or lines.media_type() in self._options.skip:
             self._state = "passthrough"
             await self._options.send(message)
             return
@@ -333,19 +333,53 @@ class _Options:
     limit: int
 
 
+@dataclass(frozen=True, slots=True)
+class SigningPolicy:
+    """What :class:`ResponseSigningMiddleware` signs, checked once.
+
+    Responses of the ``skip_media_types`` (``text/event-stream`` by default)
+    stream, and pass through unsigned. A response body is buffered up to
+    ``max_body_bytes`` (1 MiB by default). A bad value raises
+    :class:`ConfigurationError`.
+    """
+
+    skip_media_types: tuple[str, ...] = STREAMING_MEDIA_TYPES
+    max_body_bytes: int = MAX_BODY_BYTES
+
+    def __post_init__(self) -> None:
+        types = self.skip_media_types
+        if isinstance(types, str) or not all(isinstance(t, str) for t in types):
+            raise ConfigurationError(f"skip_media_types is a tuple of media types, not {types!r}")
+        object.__setattr__(self, "skip_media_types", tuple(t.lower() for t in types))
+        whole_number("max_body_bytes", self.max_body_bytes, minimum=0)
+
+
+#: The default signing policy: stream ``text/event-stream`` unsigned, buffer 1 MiB at most.
+DEFAULT_SIGNING = SigningPolicy()
+
+
 @dataclass(frozen=True, slots=True, init=False)
 class ResponseSigningMiddleware:
-    """Signs every buffered response with ``signer``, bound to the request it answers.
+    """Signs every buffered response with ``signer``, bound to the request it answers,
+    and serves the directory its peers verify those signatures with.
 
     ``identity`` is the server's own :class:`ServerIdentity`: the request each
-    response answers is rebuilt on its ``base_url``, and ``signer`` must sign
-    as its origin. The middleware passes through unsigned: streaming
-    responses, the directory path, and responses that already carry a
-    signature. A response it can't sign under the profile, such as a body
-    without ``Content-Type``, or a body over ``max_body_bytes`` (1 MiB by
-    default), becomes a ``500`` with error ``response-unsignable`` and is
-    logged, so a route never sends an unsigned answer silently. The app's
-    scope doesn't advertise ``http.response.pathsend``,
+    response answers is rebuilt on its ``base_url``. ``publisher`` is the
+    :class:`~.directory.DirectoryPublisher` of the same identity, which the
+    middleware serves at the well-known path as :class:`DirectoryMiddleware`
+    does. The three are checked against each other when the middleware is
+    made: ``signer`` signs as the identity's origin, the publisher publishes
+    that origin's directory, and a publisher with a list of keys lists the
+    signer's key. A mismatch raises :class:`ConfigurationError`, so a server
+    never starts up signing what its peers would refuse.
+
+    :class:`SigningPolicy` holds the options. The middleware passes through
+    unsigned the responses of its ``skip_media_types``, which stream, and
+    responses that already carry a signature. A response it can't sign under
+    the profile, such as a body without ``Content-Type``, or a body over
+    ``max_body_bytes``, becomes a ``500`` with error ``response-unsignable``
+    and is logged, so a route never sends an unsigned answer silently. The
+    app's scope doesn't advertise ``http.response.pathsend``,
     ``http.response.zerocopy``, or ``http.response.trailers``, so a file
     response is sent as a body and signed. A request whose ``web-bot-auth``
     signature is incomplete (no ``Signature`` member) gets an unbound
@@ -355,8 +389,8 @@ class ResponseSigningMiddleware:
     app: ASGIApp
     signer: ResponseSigning
     identity: ServerIdentity
-    skip: tuple[str, ...]
-    max_body_bytes: int
+    directory: DirectoryMiddleware
+    policy: SigningPolicy
 
     def __init__(
         self,
@@ -364,8 +398,8 @@ class ResponseSigningMiddleware:
         signer: ResponseSigning,
         *,
         identity: ServerIdentity,
-        skip_media_types: Sequence[str] = STREAMING_MEDIA_TYPES,
-        max_body_bytes: int = MAX_BODY_BYTES,
+        publisher: DirectoryPublisher,
+        policy: SigningPolicy = DEFAULT_SIGNING,
     ) -> None:
         checked = _checked_identity(identity)
         if signer.origin != checked.origin:
@@ -373,19 +407,24 @@ class ResponseSigningMiddleware:
                 f"the signer signs as {signer.origin}, but the server's identity is "
                 f"{checked.origin}"
             )
+        directory = DirectoryMiddleware(app, publisher)
+        publisher.check_signer(signer.origin, signer.keyid)
         object.__setattr__(self, "app", app)
         object.__setattr__(self, "signer", signer)
         object.__setattr__(self, "identity", checked)
-        object.__setattr__(self, "skip", tuple(t.lower() for t in skip_media_types))
-        limit = whole_number("max_body_bytes", max_body_bytes, minimum=0)
-        object.__setattr__(self, "max_body_bytes", limit)
+        object.__setattr__(self, "directory", directory)
+        object.__setattr__(self, "policy", policy)
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] != "http" or scope.get("path") == DIRECTORY_PATH:
+        if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
+        if scope.get("path") == DIRECTORY_PATH:
+            await self.directory(scope, receive, send)
+            return
         request = HTTPRequest(_method(scope), request_url(scope, self.identity), _headers(scope))
-        options = _Options(send, self.skip, self.max_body_bytes)
+        policy = self.policy
+        options = _Options(send, policy.skip_media_types, policy.max_body_bytes)
         await self.app(
             _signable_scope(scope), receive, _BufferedResponse(self.signer, request, options)
         )
@@ -439,7 +478,8 @@ class RequireSignatureMiddleware:
     confirmer's own ``identity``. :class:`RequirePolicy` holds the options. An
     unsigned request is refused (``on_unsigned="refuse"``, the default) or
     passed on with no identity (``"pass"``), decided from its header before
-    any of its body is read. A signed request's body is read up to
+    any of its body is read: a request is signed when it carries
+    ``Signature-Input`` (:func:`~.verifier.is_signed`). A signed request's body is read up to
     ``max_body_bytes`` (1 MiB by default); a larger one is answered ``413``. A
     request whose signature fails is always refused, with
     :func:`~.presentation.refusal_response`. A verified request reaches the app
@@ -473,7 +513,7 @@ class RequireSignatureMiddleware:
             return
         headers = HeaderLines(_headers(scope))
         url = request_url(scope, self.confirmer.identity)
-        if not headers.is_signed():
+        if not is_signed(headers):
             if self.policy.on_unsigned == "pass":
                 await self.app(scope, receive, send)
                 return
@@ -505,6 +545,7 @@ class RequireSignatureMiddleware:
 
 __all__ = [
     "DEFAULT_REQUIRE",
+    "DEFAULT_SIGNING",
     "MAX_BODY_BYTES",
     "STREAMING_MEDIA_TYPES",
     "ASGIApp",
@@ -517,6 +558,7 @@ __all__ = [
     "ResponseSigningMiddleware",
     "Scope",
     "Send",
+    "SigningPolicy",
     "request_url",
     "verified_request",
 ]

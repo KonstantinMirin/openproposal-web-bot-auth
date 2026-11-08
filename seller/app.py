@@ -9,8 +9,8 @@ Every agent-facing route takes the caller from the identity boundary
 nothing else. The `/operator/` routes are the seller's own controls, outside
 the boundary: no front routes them, and each call carries the operator key
 (transport/operator.py).
-`ResponseSigningMiddleware` signs every response, refusals included, and binds
-it to the request it answers.
+`ResponseSigningMiddleware` signs every response, refusals included, binds it
+to the request it answers, and serves the seller's signed key directory.
 """
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ from iab_agentic_primitives.web_bot_auth import (
     ServerIdentity,
     keyfile,
 )
-from iab_agentic_primitives.web_bot_auth.asgi import DirectoryMiddleware, ResponseSigningMiddleware
+from iab_agentic_primitives.web_bot_auth.asgi import ResponseSigningMiddleware
 from starlette.types import ASGIApp
 
 from protocol.documents import loads_yaml
@@ -133,15 +133,14 @@ def create_app(
     agent.include_router(operator, dependencies=[Depends(OperatorKey(settings.operator_key))])
 
     signer = ResponseSigner.of(key, identity.origin)
-    signed = ResponseSigningMiddleware(agent, signer, identity=identity)
-    answering = _with_faults(agent, signed, signer, identity) if settings.faults else signed
-    # The signed key directory at the well-known path, for buyers to find the seller's key.
-    return DirectoryMiddleware(
-        answering,
-        DirectoryPublisher(
-            identity.origin, [key], PublishPolicy(max_age=settings.directory_max_age)
-        ),
+    # The middleware also serves the signed key directory at the well-known path, for buyers
+    # to find the seller's key, and checks when it is made that the directory lists the key
+    # it signs with.
+    publisher = DirectoryPublisher(
+        identity.origin, [key], PublishPolicy(max_age=settings.directory_max_age)
     )
+    signed = ResponseSigningMiddleware(agent, signer, identity=identity, publisher=publisher)
+    return _with_faults(agent, signed, signer, identity) if settings.faults else signed
 
 
 @dataclass(frozen=True)

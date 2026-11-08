@@ -94,8 +94,13 @@ class HeaderLines:
         kept = tuple((n, v) for n, v in self._lines if n.lower() != name.lower())
         return HeaderLines((*kept, (name, value)))
 
-    def is_signed(self) -> bool:
-        """True when the message carries ``Signature`` or ``Signature-Input``."""
+    def carries_signature_field(self) -> bool:
+        """True when the message carries ``Signature`` or ``Signature-Input``, of any scheme.
+
+        This is not whether the message is signed under the profile, which
+        :func:`~.verifier.is_signed` decides. It is whether a signer must
+        leave the message alone, and whether a response is already signed.
+        """
         return "signature" in self or "signature-input" in self
 
     def media_type(self) -> str | None:

@@ -5,7 +5,9 @@ URL or the status, every header line as received or sent, in order and with
 its own case, and the body. A response is stored with the request it is bound
 to. Each is kept and read back as the one value persistence/values.py defines
 for it: a `SignedRequest` or a `SignedResponse`, whose `Signer` names the
-origin and key that signed it.
+origin and key that signed it. Each verified message keeps when the party
+verified it (`verified_at`), so verifying it again is a function of the row
+alone: it verifies at that instant, whenever it is checked.
 
 § 4.1.2 also asks a party to keep "the bytes of the key directory it verified
 against". Each verification stores the directory response it used (a
@@ -57,7 +59,9 @@ CREATE TABLE IF NOT EXISTS directories (
 """
 
 #: The signed messages a party keeps. headers is a JSON array of [name, value]
-#: lines, in order, as sent or received.
+#: lines, in order, as sent or received. verified_at is when the party verified the
+#: message, in Unix seconds; NULL for a request the party sent. It is the instant
+#: the message verifies again at, as fetched_at is for a directory.
 MESSAGES_SCHEMA = """
 -- A request: one the party verified (origin and keyid are its signer's), or one
 -- the party sent, which a kept response is bound to (keyid is NULL when it
@@ -70,7 +74,8 @@ CREATE TABLE IF NOT EXISTS signed_requests (
     url               TEXT NOT NULL,
     headers           TEXT NOT NULL,
     body              BLOB NOT NULL,
-    directory_digest  TEXT REFERENCES directories (digest)
+    directory_digest  TEXT REFERENCES directories (digest),
+    verified_at       INTEGER
 );
 -- A verified response, with the request it answers.
 CREATE TABLE IF NOT EXISTS signed_responses (
@@ -81,7 +86,8 @@ CREATE TABLE IF NOT EXISTS signed_responses (
     status            INTEGER NOT NULL,
     headers           TEXT NOT NULL,
     body              BLOB NOT NULL,
-    directory_digest  TEXT REFERENCES directories (digest)
+    directory_digest  TEXT REFERENCES directories (digest),
+    verified_at       INTEGER NOT NULL
 );
 """
 
@@ -106,6 +112,7 @@ class _RequestRow(Value):
     headers: _Lines
     body: bytes
     directory_digest: str | None
+    verified_at: int | None
 
 
 class _ResponseRow(Value):
@@ -116,6 +123,7 @@ class _ResponseRow(Value):
     headers: _Lines
     body: bytes
     directory_digest: str | None
+    verified_at: int
 
 
 class _DirectoryRow(Value):
@@ -143,12 +151,12 @@ class EvidenceStore:
     # Keeping
 
     def keep_request(self, kept: SignedRequest) -> int:
-        """Keeps a request and the directory that confirmed it; returns its row id."""
+        """Keeps a request, the directory that confirmed it, and when; returns its row id."""
         request, signer = kept.request, kept.signer
         cursor = self._db.execute(
             "INSERT INTO signed_requests"
-            " (origin, keyid, method, url, headers, body, directory_digest)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?)",
+            " (origin, keyid, method, url, headers, body, directory_digest, verified_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 str(signer.origin),
                 signer.keyid,
@@ -157,20 +165,22 @@ class EvidenceStore:
                 _lines(request.lines),
                 request.body,
                 self.keep_directory(signer.directory),
+                kept.verified_at,
             ),
         )
         return inserted(cursor)
 
     def keep_response(self, kept: SignedResponse) -> int:
-        """Keeps a response, the request it answers, and both directories; returns its row id."""
+        """Keeps a response, the request it answers, both directories, and when the response
+        was verified; returns its row id. The request is the party's own, never verified."""
         response, signer = kept.response, kept.signer
         request_id = self.keep_request(
-            SignedRequest(request=response.request, signer=kept.request_signer)
+            SignedRequest(request=response.request, signer=kept.request_signer, verified_at=None)
         )
         cursor = self._db.execute(
             "INSERT INTO signed_responses"
-            " (request_id, origin, keyid, status, headers, body, directory_digest)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?)",
+            " (request_id, origin, keyid, status, headers, body, directory_digest, verified_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 request_id,
                 str(signer.origin),
@@ -179,6 +189,7 @@ class EvidenceStore:
                 _lines(response.lines),
                 response.body,
                 self.keep_directory(signer.directory),
+                kept.verified_at,
             ),
         )
         return inserted(cursor)
@@ -217,7 +228,7 @@ class EvidenceStore:
         request = KeptRequest(
             method=row.method, url=row.url, lines=row.headers, body=row.body, id=request_id
         )
-        return SignedRequest(request=request, signer=self._signer(row))
+        return SignedRequest(request=request, signer=self._signer(row), verified_at=row.verified_at)
 
     def response(self, response_id: int) -> SignedResponse:
         query = select("signed_responses", _ResponseRow, where="id = ?")
@@ -231,7 +242,10 @@ class EvidenceStore:
             id=response_id,
         )
         return SignedResponse(
-            response=response, signer=self._signer(row), request_signer=request.signer
+            response=response,
+            signer=self._signer(row),
+            request_signer=request.signer,
+            verified_at=row.verified_at,
         )
 
     def directory(self, digest: str) -> DirectoryFetch:

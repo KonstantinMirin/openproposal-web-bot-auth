@@ -31,6 +31,7 @@ from iab_agentic_primitives.web_bot_auth import (
     UnixSeconds,
 )
 from iab_agentic_primitives.web_bot_auth import Origin as LibraryOrigin
+from iab_agentic_primitives.web_bot_auth import is_signed as library_is_signed
 from iab_agentic_primitives.web_bot_auth.asgi import Scope, request_url
 from iab_agentic_primitives.web_bot_auth.fetcher import HttpxDirectoryFetcher
 
@@ -106,8 +107,8 @@ def asgi_lines(lines: Iterable[HeaderLine]) -> list[tuple[bytes, bytes]]:
 
 
 def is_signed(lines: Iterable[HeaderLine]) -> bool:
-    """Whether a message carries signature fields, by the library's rule."""
-    return HeaderLines(tuple(lines)).is_signed()
+    """Whether a message is signed, by the library's rule: it carries `Signature-Input`."""
+    return library_is_signed(HeaderLines(tuple(lines)))
 
 
 def request_of(scope: Scope, identity: ServerIdentity, body: bytes) -> KeptRequest:
@@ -118,6 +119,16 @@ def request_of(scope: Scope, identity: ServerIdentity, body: bytes) -> KeptReque
         raise NotAnHTTPScopeError(scope)
     return KeptRequest(
         method=method, url=request_url(scope, identity), lines=lines_of(raw), body=body
+    )
+
+
+def sent_request(request: httpx.Request) -> KeptRequest:
+    """The request a client sent, as the wire carried it: the URL as httpx encoded it, which
+    is the URL the signature covers, and every field line as sent but `Authorization`, so a
+    bearer token is never kept."""
+    lines = tuple((k, v) for k, v in lines_of(request.headers.raw) if k.lower() != "authorization")
+    return KeptRequest(
+        method=request.method, url=str(request.url), lines=lines, body=request.content
     )
 
 
