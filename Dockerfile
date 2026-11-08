@@ -3,20 +3,17 @@
 #
 # deploy/compose.base.yml builds `base` for every service; only the scenarios
 # service of e2e/docker-compose.yml builds `scenarios`, so the live image holds
-# no test code. Their additional context `wba-lib` is the iab-agentic-primitives
-# checkout, which lands at the same relative path as on the host, so
-# pyproject.toml's path source resolves unchanged.
+# no test code. Both install the Web Bot Auth library and the OpenProposal SDK
+# from vendor/, where the repository pins them.
 FROM python:3.12-slim AS base
 COPY --from=ghcr.io/astral-sh/uv:0.11.28 /uv /bin/uv
 ENV UV_LINK_MODE=copy UV_PROJECT_ENVIRONMENT=/venv PATH=/venv/bin:$PATH \
     PYTHONPATH=/src/openproposal-web-bot-auth PYTHONDONTWRITEBYTECODE=1
 
-COPY --from=wba-lib pyproject.toml README.md /src/iab-agentic-primitives/
-COPY --from=wba-lib src /src/iab-agentic-primitives/src
 WORKDIR /src/openproposal-web-bot-auth
 COPY pyproject.toml uv.lock ./
 COPY vendor vendor
-RUN uv sync --no-install-project --no-dev
+RUN uv sync --locked --no-install-project --no-dev
 
 COPY protocol protocol
 COPY persistence persistence
@@ -33,6 +30,6 @@ USER app
 # The e2e scenarios (pytest e2e/scenarios), which run as the same user.
 FROM base AS scenarios
 USER root
-RUN uv sync --no-install-project
+RUN uv sync --locked --no-install-project
 COPY e2e/scenarios e2e/scenarios
 USER app

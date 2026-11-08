@@ -335,12 +335,10 @@ fresh stack:
 
 ## Run it locally
 
-You need Docker with Compose, and [uv](https://docs.astral.sh/uv/). A checkout
-of the library,
-[`iab-agentic-primitives-wba`](https://github.com/KonstantinMirin/iab-agentic-primitives-wba)
-on its `feat/web-bot-auth` branch, must sit next to this repository, at
-`../iab-agentic-primitives`: the directory name the uv path source in
-`pyproject.toml` and the image build use.
+You need Docker with Compose, and [uv](https://docs.astral.sh/uv/). The
+repository vendors the Web Bot Auth library it pins (see
+[Where the pieces live](#where-the-pieces-live)), so a clone installs on its
+own: `uv sync --locked --group dev`.
 
 To run the behavior tests, run `make test`.
 
@@ -379,8 +377,8 @@ live runner once, and checks that the site serves its report.
 
 ## Deploy it
 
-[`deploy/README.md`](deploy/README.md) has the exact steps: copy both
-repositories to the host, write the secrets with `deploy/make-env.sh`, start
+[`deploy/README.md`](deploy/README.md) has the exact steps: copy the
+repository to the host, write the secrets with `deploy/make-env.sh`, start
 `deploy/docker-compose.prod.yml`, add `deploy/Caddyfile.snippet` to the host's
 Caddy, and create the DNS records. It also covers teardown.
 
@@ -403,9 +401,18 @@ The live deployment differs from the local test only where production needs it:
 
 - **The Web Bot Auth library**: the `iab_agentic_primitives.web_bot_auth`
   module of [`iab-agentic-primitives`](https://github.com/KonstantinMirin/iab-agentic-primitives-wba/blob/feat/web-bot-auth/WEB_BOT_AUTH.md), documented in its
-  `WEB_BOT_AUTH.md`. This demo depends on a checkout next to this repository
-  through a uv path source in [`pyproject.toml`](pyproject.toml). Every
-  signature, verification, directory, and fetch rule comes from it.
+  `WEB_BOT_AUTH.md`. Every signature, verification, directory, and fetch rule
+  comes from it. The demo pins commit
+  `698e1e59d5483d4441e5a3f195b2279718a5660c` of the `refactor/wba-architecture`
+  branch of
+  [`iab-agentic-primitives-wba`](https://github.com/KonstantinMirin/iab-agentic-primitives-wba),
+  vendored unchanged in
+  [`vendor/iab-agentic-primitives/`](vendor/iab-agentic-primitives) and
+  installed through a uv path source in [`pyproject.toml`](pyproject.toml).
+  Its [`VENDORED.md`](vendor/iab-agentic-primitives/VENDORED.md) has the one
+  command that refreshes the copy. Once that commit is published, pinning it as
+  a git source is a one-line change to `[tool.uv.sources]`:
+  `iab-agentic-primitives = { git = "https://github.com/KonstantinMirin/iab-agentic-primitives-wba", rev = "<sha>" }`.
 - **The specification**: [OpenProposal 3.0](https://github.com/IABTechLab/OpenProposal/pull/142). The demo follows § 1.2
   (identity layers), § 2.8 (the Web Bot Auth profile), § 4.1.1 (binding
   record), § 4.1.2 (assent and signed-message evidence), § 4.3 (issued

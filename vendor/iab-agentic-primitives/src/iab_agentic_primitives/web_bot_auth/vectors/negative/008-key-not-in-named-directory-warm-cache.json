@@ -1,0 +1,89 @@
+{
+  "name": "negative/004 after a verified request from https://buyer.example.com: the warm cache still keys on (origin, keyid)",
+  "tier": "wba",
+  "spec": "OpenProposal 3.0 § 2.8",
+  "spec_reference": "https://github.com/IABTechLab/iab-agentic-primitives/blob/main/WEB_BOT_AUTH.md#profile-rules",
+  "signing_profile": "web-bot-auth",
+  "reference_now": 1794052810,
+  "operation": {
+    "op": "verify_request",
+    "request": {
+      "method": "POST",
+      "url": "https://seller.example.com/proposals/prop_7/commit",
+      "headers": [
+        ["Content-Type", "application/json"],
+        ["Content-Digest", "sha-256=:EuXs53uWxD5UR8fAISA74MZj5Zon8wxJPPpMOnOt0qQ=:"],
+        ["Signature-Agent", "sig1=\"https://other.example.com/.well-known/http-message-signatures-directory\""],
+        ["Signature-Input", "sig1=(\"@method\" \"@target-uri\" \"@authority\" \"content-type\" \"content-digest\" \"signature-agent\";key=\"sig1\");created=1794052800;keyid=\"T5rd7MzhvzHtrBDE04NVTnFpBFb63tjmy9o0JrtFH84\";alg=\"ed25519\";expires=1794053100;nonce=\"uscS52UQA89DChINZ4juFr3gFr8uGtEmrVJOomRNnn7kIrXAkNy3lgNLRwD9N1OdwwIYSOZQDkZ92d3cETfhVg\";tag=\"web-bot-auth\""],
+        ["Signature", "sig1=:Srl4NfKUlRm5lgg8fUHPUeAjiZJvYdj+8iU0BKrrx/9dIJX+2lIFAFSa+OHH6f9WdAXxdbZKX2L+o3XArdxqAg==:"]
+      ],
+      "body": "{\"entry\":{\"role\":\"commitment\",\"version\":3,\"record_digest\":\"sha256:b88664b8699501cb1b984959d4eb663a2036b223400796f269f8ae4c0762ec9f\",\"line_item_ids\":[\"li_1\"],\"at\":\"2026-11-07T12:00:00Z\",\"idempotency_key\":\"ba1fd8f3-d695-4e8d-8629-ee4073b4f184\"},\"writes\":{\"li_1\":{\"commitment\":{\"flight\":{\"start\":\"2026-12-01T00:00:00Z\",\"end\":\"2026-12-31T23:59:59Z\"}}}}}"
+    },
+    "authority": "seller.example.com",
+    "directories": {
+      "https://other.example.com": {
+        "url": "https://other.example.com/.well-known/http-message-signatures-directory",
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/http-message-signatures-directory+json"],
+          ["Cache-Control", "max-age=300"],
+          ["Content-Digest", "sha-256=:6ptKfJ2BtvWVIyqkzyFq1wwTKWinMqGErtX7GxL4VOs=:"],
+          ["Signature-Input", "key1=(\"@authority\";req \"content-digest\");created=1794052810;keyid=\"VR0Gby4SzMlU2nttpc8Ondksz1_VWMBzuycc-DzuQHc\";alg=\"ed25519\";expires=1794139210;tag=\"http-message-signatures-directory\""],
+          ["Signature", "key1=:rMiIsOmeCTz0zF6SHqZYudT8JpyzarTMXhz4gdOIh1VdpYUKNEOzBKFrjzO0pOi6EcD2XR4mFkCzebkvgWkXDw==:"]
+        ],
+        "body": "{\n  \"keys\": [\n    {\n      \"kty\": \"OKP\",\n      \"crv\": \"Ed25519\",\n      \"kid\": \"VR0Gby4SzMlU2nttpc8Ondksz1_VWMBzuycc-DzuQHc\",\n      \"x\": \"8BO_l61Nj5t5vhKM-HtfG19YsGG616DIr4ua9vdWxko\",\n      \"use\": \"sig\"\n    }\n  ]\n}"
+      },
+      "https://buyer.example.com": {
+        "url": "https://buyer.example.com/.well-known/http-message-signatures-directory",
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/http-message-signatures-directory+json"],
+          ["Cache-Control", "max-age=300"],
+          ["Content-Digest", "sha-256=:sUHrMjQsBZ1gtBzN6hY0J17RIkyWE9GveUwZ09Yz+KU=:"],
+          ["Signature-Input", "key1=(\"@authority\";req \"content-digest\");created=1794052810;keyid=\"T5rd7MzhvzHtrBDE04NVTnFpBFb63tjmy9o0JrtFH84\";alg=\"ed25519\";expires=1794139210;tag=\"http-message-signatures-directory\""],
+          ["Signature", "key1=:0Bb3wTK5UolNusnjC2jMXxuBGXChENGXKt4OfXRjaWZm+qiRMriBCWrY4WFbsn+GrCOC0OpVrayNRIgcmsEqBw==:"]
+        ],
+        "body": "{\n  \"keys\": [\n    {\n      \"kty\": \"OKP\",\n      \"crv\": \"Ed25519\",\n      \"kid\": \"T5rd7MzhvzHtrBDE04NVTnFpBFb63tjmy9o0JrtFH84\",\n      \"x\": \"eaZpKteR6m0v7GQPeK0Hv4B0DdvqI99SsTPztodAE5w\",\n      \"use\": \"sig\"\n    }\n  ]\n}"
+      }
+    },
+    "now": 1794052810,
+    "prior": [
+      {
+        "method": "POST",
+        "url": "https://seller.example.com/proposals/prop_7/commit",
+        "headers": [
+          ["Content-Type", "application/json"],
+          ["Content-Digest", "sha-256=:EuXs53uWxD5UR8fAISA74MZj5Zon8wxJPPpMOnOt0qQ=:"],
+          ["Signature-Agent", "sig1=\"https://buyer.example.com/.well-known/http-message-signatures-directory\""],
+          ["Signature-Input", "sig1=(\"@method\" \"@target-uri\" \"@authority\" \"content-type\" \"content-digest\" \"signature-agent\";key=\"sig1\");created=1794052800;keyid=\"T5rd7MzhvzHtrBDE04NVTnFpBFb63tjmy9o0JrtFH84\";alg=\"ed25519\";expires=1794053100;nonce=\"u3UIzgyJ1lcWwy3bW-sgBjTzto9bC55plCFjW5d7IXTNK8IpYPmaJxCahFuBPx7aaVJQn5S_JCogXc4V9eUAdg\";tag=\"web-bot-auth\""],
+          ["Signature", "sig1=:s5iVKzp/KDKOfXX9nBlU9o4j6ACeNoQnmxu3IcwtkEk1m6b12N1intmAHoig3TqAvevzdP3NCjSgKKtqGd/XBA==:"]
+        ],
+        "body": "{\"entry\":{\"role\":\"commitment\",\"version\":3,\"record_digest\":\"sha256:b88664b8699501cb1b984959d4eb663a2036b223400796f269f8ae4c0762ec9f\",\"line_item_ids\":[\"li_1\"],\"at\":\"2026-11-07T12:00:00Z\",\"idempotency_key\":\"ba1fd8f3-d695-4e8d-8629-ee4073b4f184\"},\"writes\":{\"li_1\":{\"commitment\":{\"flight\":{\"start\":\"2026-12-01T00:00:00Z\",\"end\":\"2026-12-31T23:59:59Z\"}}}}}"
+      }
+    ]
+  },
+  "replay_cache_entries": [],
+  "expected_signature_base": {
+    "sig1": "\"@method\": POST\n\"@target-uri\": https://seller.example.com/proposals/prop_7/commit\n\"@authority\": seller.example.com\n\"content-type\": application/json\n\"content-digest\": sha-256=:EuXs53uWxD5UR8fAISA74MZj5Zon8wxJPPpMOnOt0qQ=:\n\"signature-agent\";key=\"sig1\": \"https://other.example.com/.well-known/http-message-signatures-directory\"\n\"@signature-params\": (\"@method\" \"@target-uri\" \"@authority\" \"content-type\" \"content-digest\" \"signature-agent\";key=\"sig1\");created=1794052800;keyid=\"T5rd7MzhvzHtrBDE04NVTnFpBFb63tjmy9o0JrtFH84\";alg=\"ed25519\";expires=1794053100;nonce=\"uscS52UQA89DChINZ4juFr3gFr8uGtEmrVJOomRNnn7kIrXAkNy3lgNLRwD9N1OdwwIYSOZQDkZ92d3cETfhVg\";tag=\"web-bot-auth\""
+  },
+  "expected": {
+    "ok": false,
+    "rule": "key-not-found",
+    "status": 403,
+    "accept_signature": {
+      "label": "sig1",
+      "components": "(\"@method\" \"@target-uri\" \"@authority\" \"content-type\" \"content-digest\" \"signature-agent\";key=\"sig1\")",
+      "parameters": [
+        "created",
+        "expires",
+        "nonce",
+        "keyid",
+        "alg",
+        "tag"
+      ],
+      "tag": "web-bot-auth"
+    },
+    "rationale": "Key lookup is keyed on the (origin, keyid) pair, never on keyid alone (Web Bot Auth section 5.4). It holds with or without a cached directory."
+  },
+  "$comment": "The verifier first verifies positive/001-single-signer-request.json, so the directory of https://buyer.example.com is cached when this request arrives. A verifier whose cache answers any lookup from any cached directory finds the buyer's key there and attributes the request to https://other.example.com."
+}

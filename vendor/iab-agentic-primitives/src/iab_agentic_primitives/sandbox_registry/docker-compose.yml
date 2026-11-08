@@ -1,0 +1,60 @@
+# Local runner for the REAL IAB Tech Lab agent-registry (Node.js).
+#
+# This boots the ACTUAL registry at github.com/IABTechLab/agent-registry so
+# the `LOCAL` backend of RegistryClient (AAMP_REGISTRY_BACKEND=LOCAL,
+# default URL http://127.0.0.1:3001) talks to the real code, not a Python
+# reimplementation. See SANDBOX_REGISTRY.md.
+#
+#   docker compose -f docker-compose.yml up --build
+#
+# Then point the client at it:
+#   export AAMP_REGISTRY_BACKEND=LOCAL
+#   export AAMP_REGISTRY_URL=http://127.0.0.1:3001
+#   export AAMP_REGISTRY_TOKEN=<a JWT issued by the IAB Tools portal>
+#
+# NOTE (upstream gap): the agent-registry repo does NOT ship a schema
+# migration for a fresh database (its `db:init` references a
+# database/schema-sqlite.sql that is absent, and there is no CREATE TABLE
+# for Postgres). To bring up a usable DB you must supply the `agents` +
+# `verification_logs` schema out of band (mount it into ./initdb, or point
+# the app at an already-provisioned Postgres via the DB_* env below). CI
+# that lacks Docker skips the dockerized path and uses the in-process test
+# double (create_registry_double) instead — see tests/test_registry_client.py.
+
+services:
+  agent-registry:
+    # Build the real registry straight from the upstream repo. Pin REGISTRY_REF
+    # (a tag/branch/sha) for reproducibility.
+    build:
+      context: "https://github.com/IABTechLab/agent-registry.git#${REGISTRY_REF:-main}"
+    image: iab-agent-registry:local
+    ports:
+      - "3001:8080" # container listens on $PORT (8080); expose as 3001 locally
+    environment:
+      PORT: "8080"
+      NODE_ENV: development
+      # JWT config MUST match the IAB Tools Portal backend that issues tokens.
+      JWT_SECRET: "${JWT_SECRET:-change-me-in-production}"
+      JWT_ISSUER: IAB
+      JWT_ALGORITHM: HS256
+      # Point at the Postgres service below (provision its schema first).
+      DB_TYPE: postgres
+      DB_HOST: db
+      DB_PORT: "5432"
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      DB_NAME: iab_agents_registry
+    depends_on:
+      - db
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: iab_agents_registry
+    ports:
+      - "5432:5432"
+    volumes:
+      # Drop the agents/verification_logs schema SQL here to auto-init the DB.
+      - ./initdb:/docker-entrypoint-initdb.d:ro

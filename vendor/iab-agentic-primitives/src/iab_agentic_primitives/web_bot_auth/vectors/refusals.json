@@ -1,0 +1,173 @@
+{
+  "$comment": "The refusal vocabulary: every rule a verifier refuses with, and its status. Generated from the Refusal enum; a harness grades a refusal by its rule and status.",
+  "refusals": [
+    {
+      "rule": "parse",
+      "status": 400
+    },
+    {
+      "rule": "signature-missing",
+      "status": 403
+    },
+    {
+      "rule": "multiple-signatures",
+      "status": 403
+    },
+    {
+      "rule": "signature-agent-missing",
+      "status": 403
+    },
+    {
+      "rule": "multiple-signature-agents",
+      "status": 403
+    },
+    {
+      "rule": "signature-agent-parameters",
+      "status": 403
+    },
+    {
+      "rule": "signature-agent-not-covered",
+      "status": 403
+    },
+    {
+      "rule": "signature-agent-value",
+      "status": 403
+    },
+    {
+      "rule": "keyid",
+      "status": 403
+    },
+    {
+      "rule": "alg",
+      "status": 403
+    },
+    {
+      "rule": "window",
+      "status": 403
+    },
+    {
+      "rule": "lifetime",
+      "status": 403
+    },
+    {
+      "rule": "created-in-future",
+      "status": 403
+    },
+    {
+      "rule": "expired",
+      "status": 403
+    },
+    {
+      "rule": "nonce-missing",
+      "status": 403
+    },
+    {
+      "rule": "nonce-invalid",
+      "status": 403
+    },
+    {
+      "rule": "components",
+      "status": 403
+    },
+    {
+      "rule": "content-digest",
+      "status": 403
+    },
+    {
+      "rule": "authority",
+      "status": 403
+    },
+    {
+      "rule": "rejected-key",
+      "status": 403
+    },
+    {
+      "rule": "key-not-found",
+      "status": 403
+    },
+    {
+      "rule": "signature-invalid",
+      "status": 403
+    },
+    {
+      "rule": "response-not-bound",
+      "status": 403
+    },
+    {
+      "rule": "origin-mismatch",
+      "status": 403
+    },
+    {
+      "rule": "directory-unavailable",
+      "status": 403
+    },
+    {
+      "rule": "directory-status",
+      "status": 403
+    },
+    {
+      "rule": "directory-encoding",
+      "status": 403
+    },
+    {
+      "rule": "directory-media-type",
+      "status": 403
+    },
+    {
+      "rule": "directory-too-large",
+      "status": 403
+    },
+    {
+      "rule": "directory-content-digest",
+      "status": 403
+    },
+    {
+      "rule": "directory-format",
+      "status": 403
+    },
+    {
+      "rule": "directory-too-many-keys",
+      "status": 403
+    },
+    {
+      "rule": "directory-kid",
+      "status": 403
+    },
+    {
+      "rule": "directory-no-usable-key",
+      "status": 403
+    },
+    {
+      "rule": "directory-signature-parse",
+      "status": 403
+    },
+    {
+      "rule": "directory-one-signature-per-key",
+      "status": 403
+    },
+    {
+      "rule": "directory-tag",
+      "status": 403
+    },
+    {
+      "rule": "directory-components",
+      "status": 403
+    },
+    {
+      "rule": "directory-window",
+      "status": 403
+    },
+    {
+      "rule": "directory-signature",
+      "status": 403
+    },
+    {
+      "rule": "nonce-replayed",
+      "status": 429
+    },
+    {
+      "rule": "nonce-store-unavailable",
+      "status": 503
+    }
+  ]
+}

@@ -14,19 +14,19 @@ public roots only, and production cache and rotation values.
 
 ## Host layout
 
-The compose file finds everything relative to itself, so both checkouts sit
-side by side, as they do on a laptop:
+The compose file finds everything relative to itself. The repository vendors
+the library it builds with (`vendor/iab-agentic-primitives/`), so it is the one
+checkout:
 
 ```text
 /srv/wba-demo/
 ├── openproposal-web-bot-auth/   this repository
-├── iab-agentic-primitives/      the library; the image build copies its src/
 ├── wba-demo.env                 the secrets (make-env.sh), mode 600
 └── run/                         latest-run.json and history.json; the runner writes, Caddy reads
 ```
 
-The checkouts hold no state: keys and SQLite databases live in Docker volumes,
-and secrets and reports live outside both checkouts.
+The checkout holds no state: keys and SQLite databases live in Docker volumes,
+and secrets and reports live outside it.
 
 ## Settings
 
@@ -47,7 +47,6 @@ You can override these Compose variables when you run `docker compose`:
 
 | Variable | Default | Purpose |
 | :--- | :--- | :--- |
-| `WBA_LIB_DIR` | `../../iab-agentic-primitives` | The library checkout the image build copies |
 | `WBA_RUN_DIR` | `../../run` | Where the runner writes its reports |
 | `RUN_INTERVAL` | `900` | Seconds between runs |
 
@@ -99,7 +98,7 @@ the seller's test-only fault toggle isn't mounted.
 ## Deploy
 
 Run these steps in order. The host is `hetzner2`, and the commands that start
-with `rsync` run on your laptop from the directory that holds both checkouts.
+with `rsync` run on your laptop from the directory that holds the checkout.
 
 1.  Check that no placeholder is left in the tree: run `make placeholders`,
     which CI runs too. It fails on any placeholder outside the seed template
@@ -121,7 +120,7 @@ with `rsync` run on your laptop from the directory that holds both checkouts.
     Add `AAAA` records only if the host's Caddy listens on IPv6. To confirm the
     records, run `dig +short A seller.wba-demo.noetis.dev`.
 
-3.  Copy both checkouts to the host:
+3.  Copy the checkout to the host:
 
     ```bash
     ssh hetzner2 'mkdir -p /srv/wba-demo'
@@ -129,12 +128,9 @@ with `rsync` run on your laptop from the directory that holds both checkouts.
         --exclude .pytest_cache --exclude .ruff_cache --exclude node_modules \
         --exclude e2e/generated --exclude deploy/localhost/generated \
         openproposal-web-bot-auth/ hetzner2:/srv/wba-demo/openproposal-web-bot-auth/
-    rsync -av --delete --exclude .git --exclude .venv --exclude __pycache__ \
-        --exclude .pytest_cache --exclude .ruff_cache \
-        iab-agentic-primitives/ hetzner2:/srv/wba-demo/iab-agentic-primitives/
     ```
 
-    `--delete` is safe here: neither checkout holds secrets, keys, or reports.
+    `--delete` is safe here: the checkout holds no secrets, keys, or reports.
 
 4.  On the host, write the secrets and create the report directory. The runner
     runs as UID 10001, and Caddy reads the files it writes:

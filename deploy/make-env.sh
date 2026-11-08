@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Writes the live deployment's secrets once, with mode 600. Re-running keeps them.
 #
-#   deploy/make-env.sh [path]    # default: ../../wba-demo.env, next to both checkouts
+#   deploy/make-env.sh [path]    # default: ../../wba-demo.env, next to the checkout
 #
 # SELLER_OPERATOR_KEY, BUYER_OPERATOR_KEY, CFBOT_OPERATOR_KEY: what each agent's own
 #   controls require (transport/operator.py), one distinct key per party. The compose files

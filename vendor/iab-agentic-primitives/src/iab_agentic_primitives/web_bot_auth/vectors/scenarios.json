@@ -1,0 +1,1105 @@
+{
+  "$comment": "Failure scenarios for the Web Bot Auth profile, as data. A harness signs each request, directory, and response scenario at run time, applies after_signing, and grades the verifier on expected: a pass, or a refusal by its status and rule (refusals.json). created and expires are offsets in seconds from the harness clock; a null parameter is omitted; a nonce object asks for that many random bytes in that encoding. verifier is the verifier's own authority, which a request scenario's authority replaces. tier \"wba\": the reference libraries with no profile rules already give the expected outcome. tier \"profile\": the bare libraries give the opposite outcome and only the profile's rules give the expected one; a WBA MUST the library does not enforce stays \"profile\" until it does. See README.md.",
+  "spec": "OpenProposal 3.0 § 2.8",
+  "spec_reference": "https://github.com/IABTechLab/iab-agentic-primitives/blob/main/WEB_BOT_AUTH.md#profile-rules",
+  "signing_profile": "web-bot-auth",
+  "signer": {
+    "identity": "https://buyer.example.com",
+    "kid": "T5rd7MzhvzHtrBDE04NVTnFpBFb63tjmy9o0JrtFH84",
+    "signature_agent": "https://buyer.example.com/.well-known/http-message-signatures-directory"
+  },
+  "responder": {
+    "identity": "https://seller.example.com",
+    "kid": "-Rmj_GuEunGbO4x6GQSMCCi0P6oZ32paBkWMnvo3gDU",
+    "signature_agent": "https://seller.example.com/.well-known/http-message-signatures-directory"
+  },
+  "verifier": "seller.example.com",
+  "requests": {
+    "post": {
+      "method": "POST",
+      "url": "https://seller.example.com/proposals/prop_7/commit",
+      "headers": [
+        ["content-type", "application/json"]
+      ],
+      "body": "{\"entry\":{\"role\":\"commitment\",\"version\":3,\"record_digest\":\"sha256:b88664b8699501cb1b984959d4eb663a2036b223400796f269f8ae4c0762ec9f\",\"line_item_ids\":[\"li_1\"],\"at\":\"2026-11-07T12:00:00Z\",\"idempotency_key\":\"ba1fd8f3-d695-4e8d-8629-ee4073b4f184\"},\"writes\":{\"li_1\":{\"commitment\":{\"flight\":{\"start\":\"2026-12-01T00:00:00Z\",\"end\":\"2026-12-31T23:59:59Z\"}}}}}"
+    },
+    "get": {
+      "method": "GET",
+      "url": "https://seller.example.com/proposals/prop_7?view=a%7Eb&x=1",
+      "headers": [],
+      "body": ""
+    }
+  },
+  "components": {
+    "post": [
+      "@method",
+      "@target-uri",
+      "@authority",
+      "content-type",
+      "content-digest",
+      "signature-agent;key={label}"
+    ],
+    "get": [
+      "@method",
+      "@target-uri",
+      "@authority",
+      "signature-agent;key={label}"
+    ]
+  },
+  "parameters": {
+    "created": -5,
+    "expires": 295,
+    "nonce": {
+      "bytes": 64,
+      "encoding": "base64url"
+    },
+    "tag": "web-bot-auth"
+  },
+  "response": {
+    "status": 200,
+    "headers": [
+      ["content-type", "application/json"]
+    ],
+    "body": "{\"entries\":[{\"role\":\"commitment\",\"version\":3,\"record_digest\":\"sha256:b88664b8699501cb1b984959d4eb663a2036b223400796f269f8ae4c0762ec9f\",\"line_item_ids\":[\"li_1\"],\"at\":\"2026-11-07T12:00:00Z\",\"idempotency_key\":\"ba1fd8f3-d695-4e8d-8629-ee4073b4f184\"},{\"role\":\"acceptance\",\"version\":3,\"record_digest\":\"sha256:b88664b8699501cb1b984959d4eb663a2036b223400796f269f8ae4c0762ec9f\",\"line_item_ids\":[\"li_1\"],\"at\":\"2026-11-07T12:00:01Z\"}]}"
+  },
+  "response_components": {
+    "bound": [
+      "@status",
+      "@method;req",
+      "@target-uri;req",
+      "content-type",
+      "content-digest",
+      "signature-agent;key={label}",
+      "signature;req;key={request_label}"
+    ],
+    "unbound": [
+      "@status",
+      "@method;req",
+      "@target-uri;req",
+      "content-type",
+      "content-digest",
+      "signature-agent;key={label}"
+    ]
+  },
+  "response_parameters": {
+    "created": -5,
+    "expires": 295,
+    "tag": "web-bot-auth"
+  },
+  "directory_parameters": {
+    "created": 0,
+    "expires": 86400
+  },
+  "directory_max_age": 300,
+  "request_scenarios": [
+    {
+      "id": "R00",
+      "name": "Baseline",
+      "tier": "wba",
+      "basis": "Profile rules",
+      "expected": {
+        "ok": true,
+        "identity": "https://buyer.example.com"
+      },
+      "base": "post",
+      "label": "sig1"
+    },
+    {
+      "id": "R01",
+      "name": "Body changed after signing",
+      "tier": "profile",
+      "basis": "Content-Digest matches the body: RFC 9530; WBA section 5.2",
+      "expected": {
+        "ok": false,
+        "rule": "content-digest",
+        "status": 403
+      },
+      "base": "post",
+      "label": "sig1",
+      "after_signing": {
+        "append_to_body": "\n"
+      }
+    },
+    {
+      "id": "R02",
+      "name": "Covered header changed after signing",
+      "tier": "wba",
+      "basis": "RFC 9421 section 3.2",
+      "expected": {
+        "ok": false,
+        "rule": "signature-invalid",
+        "status": 403
+      },
+      "base": "post",
+      "label": "sig1",
+      "after_signing": {
+        "headers": {
+          "content-type": "text/plain"
+        }
+      }
+    },
+    {
+      "id": "R03",
+      "name": "Expired",
+      "tier": "wba",
+      "basis": "RFC 9421 section 3.2.1",
+      "expected": {
+        "ok": false,
+        "rule": "expired",
+        "status": 403
+      },
+      "base": "post",
+      "label": "sig1",
+      "parameters": {
+        "created": -400,
+        "expires": -100
+      }
+    },
+    {
+      "id": "R04",
+      "name": "created 120 seconds in the future",
+      "tier": "wba",
+      "basis": "Profile: 60 seconds of clock skew",
+      "expected": {
+        "ok": false,
+        "rule": "created-in-future",
+        "status": 403
+      },
+      "base": "post",
+      "label": "sig1",
+      "parameters": {
+        "created": 120,
+        "expires": 400
+      }
+    },
+    {
+      "id": "R05",
+      "name": "created 30 seconds in the future",
+      "tier": "profile",
+      "basis": "Profile: 60 seconds of clock skew; the library allows none by default",
+      "expected": {
+        "ok": true,
+        "identity": "https://buyer.example.com"
+      },
+      "base": "post",
+      "label": "sig1",
+      "parameters": {
+        "created": 30,
+        "expires": 300
+      }
+    },
+    {
+      "id": "R06",
+      "name": "Lifetime of 3600 seconds",
+      "tier": "profile",
+      "basis": "Profile: expires at most 300 seconds after created",
+      "expected": {
+        "ok": false,
+        "rule": "lifetime",
+        "status": 403
+      },
+      "base": "post",
+      "label": "sig1",
+      "parameters": {
+        "created": -5,
+        "expires": 3595
+      }
+    },
+    {
+      "id": "R07",
+      "name": "Nonce of 32 bytes",
+      "tier": "wba",
+      "basis": "Profile: 64-byte nonce; validateNonce",
+      "expected": {
+        "ok": false,
+        "rule": "nonce-invalid",
+        "status": 403
+      },
+      "base": "post",
+      "label": "sig1",
+      "parameters": {
+        "nonce": {
+          "bytes": 32,
+          "encoding": "base64url"
+        }
+      }
+    },
+    {
+      "id": "R08",
+      "name": "Nonce in canonical padded base64",
+      "tier": "wba",
+      "basis": "Profile: unpadded base64url or canonical padded base64",
+      "expected": {
+        "ok": true,
+        "identity": "https://buyer.example.com"
+      },
+      "base": "post",
+      "label": "sig1",
+      "parameters": {
+        "nonce": {
+          "bytes": 64,
+          "encoding": "base64"
+        }
+      }
+    },
+    {
+      "id": "R09",
+      "name": "Nonce in padded base64url",
+      "tier": "wba",
+      "basis": "Profile: unpadded base64url or canonical padded base64",
+      "expected": {
+        "ok": false,
+        "rule": "nonce-invalid",
+        "status": 403
+      },
+      "base": "post",
+      "label": "sig1",
+      "parameters": {
+        "nonce": {
+          "bytes": 64,
+          "encoding": "base64url-padded"
+        }
+      }
+    },
+    {
+      "id": "R10",
+      "name": "No alg parameter",
+      "tier": "wba",
+      "basis": "Profile: alg required",
+      "expected": {
+        "ok": false,
+        "rule": "alg",
+        "status": 403
+      },
+      "base": "post",
+      "label": "sig1",
+      "parameters": {
+        "alg": null
+      }
+    },
+    {
+      "id": "R11",
+      "name": "alg other than ed25519",
+      "tier": "wba",
+      "basis": "Profile: alg is ed25519 and matches the key; RFC 9421 section 3.2",
+      "expected": {
+        "ok": false,
+        "rule": "alg",
+        "status": 403
+      },
+      "base": "post",
+      "label": "sig1",
+      "parameters": {
+        "alg": "ecdsa-p256-sha256"
+      }
+    },
+    {
+      "id": "R12",
+      "name": "GET covering only @authority and the Signature-Agent member",
+      "tier": "profile",
+      "basis": "Profile: cover @method, @target-uri, and @authority; WBA section 5.2 needs one of @authority or @target-uri",
+      "expected": {
+        "ok": false,
+        "rule": "components",
+        "status": 403
+      },
+      "base": "get",
+      "label": "sig1",
+      "components": ["@authority", "signature-agent;key=sig1"]
+    },
+    {
+      "id": "R13",
+      "name": "Body without content-digest covered",
+      "tier": "profile",
+      "basis": "Profile: a request with a body covers content-type and content-digest; WBA section 5.2",
+      "expected": {
+        "ok": false,
+        "rule": "components",
+        "status": 403
+      },
+      "base": "post",
+      "label": "sig1",
+      "components": [
+        "@method",
+        "@target-uri",
+        "@authority",
+        "content-type",
+        "signature-agent;key=sig1"
+      ]
+    },
+    {
+      "id": "R13b",
+      "name": "Body without content-type covered",
+      "tier": "profile",
+      "basis": "Profile: a request with a body covers content-type and content-digest",
+      "expected": {
+        "ok": false,
+        "rule": "components",
+        "status": 403
+      },
+      "base": "post",
+      "label": "sig1",
+      "components": [
+        "@method",
+        "@target-uri",
+        "@authority",
+        "content-digest",
+        "signature-agent;key=sig1"
+      ]
+    },
+    {
+      "id": "R14",
+      "name": "tag other than web-bot-auth",
+      "tier": "wba",
+      "basis": "WBA section 5.2: tag MUST be web-bot-auth",
+      "expected": {
+        "ok": false,
+        "rule": "signature-missing",
+        "status": 403
+      },
+      "base": "post",
+      "label": "sig1",
+      "parameters": {
+        "tag": "other-profile/v1"
+      }
+    },
+    {
+      "id": "R23",
+      "name": "Components in another order",
+      "tier": "wba",
+      "basis": "RFC 9421: the order is the signer's",
+      "expected": {
+        "ok": true,
+        "identity": "https://buyer.example.com"
+      },
+      "base": "post",
+      "label": "sig1",
+      "components": [
+        "signature-agent;key=sig1",
+        "@authority",
+        "content-digest",
+        "@target-uri",
+        "content-type",
+        "@method"
+      ]
+    },
+    {
+      "id": "R24",
+      "name": "No nonce",
+      "tier": "profile",
+      "basis": "Profile: a nonce on every signed request; WBA leaves it to deployment policy",
+      "expected": {
+        "ok": false,
+        "rule": "nonce-missing",
+        "status": 403
+      },
+      "base": "post",
+      "label": "sig1",
+      "parameters": {
+        "nonce": null
+      }
+    },
+    {
+      "id": "R25",
+      "name": "GET with the profile's components",
+      "tier": "wba",
+      "basis": "Profile rules; a request without a body covers no content-digest",
+      "expected": {
+        "ok": true,
+        "identity": "https://buyer.example.com"
+      },
+      "base": "get",
+      "label": "sig1"
+    },
+    {
+      "id": "R15",
+      "name": "Bare-string Signature-Agent",
+      "tier": "profile",
+      "basis": "Profile: dictionary form only, so the field does not parse; WBA section 5.2.1 lets a verifier accept the bare string",
+      "expected": {
+        "ok": false,
+        "rule": "parse",
+        "status": 400
+      },
+      "base": "post",
+      "label": "sig1",
+      "components": [
+        "@method",
+        "@target-uri",
+        "@authority",
+        "content-type",
+        "content-digest",
+        "signature-agent"
+      ],
+      "signature_agent": "\"https://buyer.example.com/.well-known/http-message-signatures-directory\""
+    },
+    {
+      "id": "R16",
+      "name": "http:// key URL",
+      "tier": "profile",
+      "basis": "WBA section 5.2.1: the scheme MUST be https; the library accepts http (cloudflare/web-bot-auth#162)",
+      "expected": {
+        "ok": false,
+        "rule": "signature-agent-value",
+        "status": 403
+      },
+      "base": "post",
+      "label": "sig1",
+      "signature_agent": "sig1=\"http://buyer.example.com/.well-known/http-message-signatures-directory\"",
+      "directories": {
+        "http://buyer.example.com": [
+          "T5rd7MzhvzHtrBDE04NVTnFpBFb63tjmy9o0JrtFH84"
+        ]
+      }
+    },
+    {
+      "id": "R16b",
+      "name": "http:// origin",
+      "tier": "profile",
+      "basis": "WBA section 5.2.1: the scheme MUST be https",
+      "expected": {
+        "ok": false,
+        "rule": "signature-agent-value",
+        "status": 403
+      },
+      "base": "post",
+      "label": "sig1",
+      "signature_agent": "sig1=\"http://buyer.example.com\"",
+      "directories": {
+        "http://buyer.example.com": [
+          "T5rd7MzhvzHtrBDE04NVTnFpBFb63tjmy9o0JrtFH84"
+        ]
+      }
+    },
+    {
+      "id": "R17",
+      "name": "Path other than the well-known path",
+      "tier": "profile",
+      "basis": "Profile: the value is exactly https://<host>/.well-known/http-message-signatures-directory or https://<host>, compared without normalizing; the library does not check it",
+      "expected": {
+        "ok": false,
+        "rule": "signature-agent-value",
+        "status": 403
+      },
+      "base": "post",
+      "label": "sig1",
+      "signature_agent": "sig1=\"https://buyer.example.com/jwks.json\""
+    },
+    {
+      "id": "R17a",
+      "name": "Well-known path with a trailing /",
+      "tier": "profile",
+      "basis": "Profile: the value is exactly https://<host>/.well-known/http-message-signatures-directory or https://<host>, compared without normalizing; no trailing /",
+      "expected": {
+        "ok": false,
+        "rule": "signature-agent-value",
+        "status": 403
+      },
+      "base": "post",
+      "label": "sig1",
+      "signature_agent": "sig1=\"https://buyer.example.com/.well-known/http-message-signatures-directory/\""
+    },
+    {
+      "id": "R17b",
+      "name": "Well-known path in another case",
+      "tier": "profile",
+      "basis": "Profile: the value is exactly https://<host>/.well-known/http-message-signatures-directory or https://<host>, compared without normalizing; the path is compared as a string",
+      "expected": {
+        "ok": false,
+        "rule": "signature-agent-value",
+        "status": 403
+      },
+      "base": "post",
+      "label": "sig1",
+      "signature_agent": "sig1=\"https://buyer.example.com/.well-known/HTTP-Message-Signatures-Directory\""
+    },
+    {
+      "id": "R17c",
+      "name": "Origin with a trailing /",
+      "tier": "profile",
+      "basis": "Profile: the value is exactly https://<host>/.well-known/http-message-signatures-directory or https://<host>, compared without normalizing; no trailing /",
+      "expected": {
+        "ok": false,
+        "rule": "signature-agent-value",
+        "status": 403
+      },
+      "base": "post",
+      "label": "sig1",
+      "signature_agent": "sig1=\"https://buyer.example.com/\""
+    },
+    {
+      "id": "R17d",
+      "name": "Uppercase host",
+      "tier": "profile",
+      "basis": "Profile: the value is exactly https://<host>/.well-known/http-message-signatures-directory or https://<host>, compared without normalizing; a lowercase host",
+      "expected": {
+        "ok": false,
+        "rule": "signature-agent-value",
+        "status": 403
+      },
+      "base": "post",
+      "label": "sig1",
+      "signature_agent": "sig1=\"https://BUYER.example.com/.well-known/http-message-signatures-directory\""
+    },
+    {
+      "id": "R17e",
+      "name": "Explicit :443",
+      "tier": "profile",
+      "basis": "Profile: the value is exactly https://<host>/.well-known/http-message-signatures-directory or https://<host>, compared without normalizing; no port",
+      "expected": {
+        "ok": false,
+        "rule": "signature-agent-value",
+        "status": 403
+      },
+      "base": "post",
+      "label": "sig1",
+      "signature_agent": "sig1=\"https://buyer.example.com:443/.well-known/http-message-signatures-directory\""
+    },
+    {
+      "id": "R17f",
+      "name": "Other port",
+      "tier": "profile",
+      "basis": "Profile: the value is exactly https://<host>/.well-known/http-message-signatures-directory or https://<host>, compared without normalizing; no port",
+      "expected": {
+        "ok": false,
+        "rule": "signature-agent-value",
+        "status": 403
+      },
+      "base": "post",
+      "label": "sig1",
+      "signature_agent": "sig1=\"https://buyer.example.com:8443/.well-known/http-message-signatures-directory\"",
+      "directories": {
+        "https://buyer.example.com:8443": [
+          "T5rd7MzhvzHtrBDE04NVTnFpBFb63tjmy9o0JrtFH84"
+        ]
+      }
+    },
+    {
+      "id": "R17g",
+      "name": "Query",
+      "tier": "profile",
+      "basis": "Profile: the value is exactly https://<host>/.well-known/http-message-signatures-directory or https://<host>, compared without normalizing; no query",
+      "expected": {
+        "ok": false,
+        "rule": "signature-agent-value",
+        "status": 403
+      },
+      "base": "post",
+      "label": "sig1",
+      "signature_agent": "sig1=\"https://buyer.example.com/.well-known/http-message-signatures-directory?v=1\""
+    },
+    {
+      "id": "R17h",
+      "name": "Fragment",
+      "tier": "profile",
+      "basis": "Profile: the value is exactly https://<host>/.well-known/http-message-signatures-directory or https://<host>, compared without normalizing; no fragment",
+      "expected": {
+        "ok": false,
+        "rule": "signature-agent-value",
+        "status": 403
+      },
+      "base": "post",
+      "label": "sig1",
+      "signature_agent": "sig1=\"https://buyer.example.com/.well-known/http-message-signatures-directory#k\""
+    },
+    {
+      "id": "R17i",
+      "name": "Userinfo",
+      "tier": "profile",
+      "basis": "Profile: the value is exactly https://<host>/.well-known/http-message-signatures-directory or https://<host>, compared without normalizing; no userinfo",
+      "expected": {
+        "ok": false,
+        "rule": "signature-agent-value",
+        "status": 403
+      },
+      "base": "post",
+      "label": "sig1",
+      "signature_agent": "sig1=\"https://agent@buyer.example.com/.well-known/http-message-signatures-directory\""
+    },
+    {
+      "id": "R17j",
+      "name": "Origin with a query",
+      "tier": "profile",
+      "basis": "Profile: the value is exactly https://<host>/.well-known/http-message-signatures-directory or https://<host>, compared without normalizing; no query",
+      "expected": {
+        "ok": false,
+        "rule": "signature-agent-value",
+        "status": 403
+      },
+      "base": "post",
+      "label": "sig1",
+      "signature_agent": "sig1=\"https://buyer.example.com?v=1\""
+    },
+    {
+      "id": "R18",
+      "name": "Member with type=jwks_uri",
+      "tier": "profile",
+      "basis": "WBA -01 section 5.2.1: a verifier MUST ignore a member that carries parameters",
+      "expected": {
+        "ok": false,
+        "rule": "signature-agent-parameters",
+        "status": 403
+      },
+      "base": "post",
+      "label": "sig1",
+      "signature_agent": "sig1=\"https://buyer.example.com/jwks.json\";type=jwks_uri"
+    },
+    {
+      "id": "R18c",
+      "name": "Origin member with type=directory as a Token",
+      "tier": "profile",
+      "basis": "WBA -01 section 5.2.1: members MUST NOT carry parameters, and a verifier MUST ignore one that does",
+      "expected": {
+        "ok": false,
+        "rule": "signature-agent-parameters",
+        "status": 403
+      },
+      "base": "post",
+      "label": "sig1",
+      "signature_agent": "sig1=\"https://buyer.example.com\";type=directory"
+    },
+    {
+      "id": "R18d",
+      "name": "Key URL member with type=\"directory\" as a String",
+      "tier": "profile",
+      "basis": "WBA -01 section 5.2.1: members MUST NOT carry parameters, and a verifier MUST ignore one that does",
+      "expected": {
+        "ok": false,
+        "rule": "signature-agent-parameters",
+        "status": 403
+      },
+      "base": "post",
+      "label": "sig1",
+      "signature_agent": "sig1=\"https://buyer.example.com/.well-known/http-message-signatures-directory\";type=\"directory\""
+    },
+    {
+      "id": "R18e",
+      "name": "Bare origin, the draft -00 form",
+      "tier": "wba",
+      "basis": "WBA -00 section 5.5: a directory member is an origin; the verifier fetches the same well-known URL",
+      "expected": {
+        "ok": true,
+        "identity": "https://buyer.example.com"
+      },
+      "base": "post",
+      "label": "sig1",
+      "signature_agent": "sig1=\"https://buyer.example.com\""
+    },
+    {
+      "id": "R19",
+      "name": "Signature-Agent member keyed differently from the label",
+      "tier": "profile",
+      "basis": "WBA section 5.2.1: the member keyed to the label; the library does not check it",
+      "expected": {
+        "ok": false,
+        "rule": "signature-agent-missing",
+        "status": 403
+      },
+      "base": "post",
+      "label": "sig1",
+      "components": [
+        "@method",
+        "@target-uri",
+        "@authority",
+        "content-type",
+        "content-digest",
+        "signature-agent;key=agent1"
+      ],
+      "signature_agent": "agent1=\"https://buyer.example.com/.well-known/http-message-signatures-directory\""
+    },
+    {
+      "id": "R21",
+      "name": "Two Signature-Agent members, one signature",
+      "tier": "profile",
+      "basis": "Profile: exactly one Signature-Agent member",
+      "expected": {
+        "ok": false,
+        "rule": "multiple-signature-agents",
+        "status": 403
+      },
+      "base": "post",
+      "label": "sig1",
+      "signature_agent": "sig1=\"https://buyer.example.com/.well-known/http-message-signatures-directory\", sig2=\"https://other.example.com/.well-known/http-message-signatures-directory\""
+    },
+    {
+      "id": "R22",
+      "name": "Label other than sig1",
+      "tier": "wba",
+      "basis": "RFC 9421: the signer chooses the label",
+      "expected": {
+        "ok": true,
+        "identity": "https://buyer.example.com"
+      },
+      "base": "post",
+      "label": "wba"
+    },
+    {
+      "id": "R20",
+      "name": "Second signature with tag cdn-edge",
+      "tier": "profile",
+      "basis": "Profile: Signature-Input members with other tags are not read; the library requires a label when a request carries two signatures",
+      "expected": {
+        "ok": true,
+        "identity": "https://buyer.example.com"
+      },
+      "base": "post",
+      "label": "sig1",
+      "extra_signature": {
+        "label": "cdn",
+        "kid": "VR0Gby4SzMlU2nttpc8Ondksz1_VWMBzuycc-DzuQHc",
+        "components": ["@method", "@authority"],
+        "parameters": {
+          "created": -5,
+          "expires": 295,
+          "nonce": null,
+          "tag": "cdn-edge"
+        }
+      }
+    },
+    {
+      "id": "R20b",
+      "name": "Second member with tag cdn-edge whose Signature value is a token",
+      "tier": "wba",
+      "basis": "RFC 9421 section 4.2: every Signature member value is a Byte Sequence, so the field is malformed whatever the member's tag",
+      "expected": {
+        "ok": false,
+        "rule": "parse",
+        "status": 400
+      },
+      "base": "post",
+      "label": "sig1",
+      "after_signing": {
+        "append_members": {
+          "signature-input": "cdn=(\"@method\" \"@authority\");tag=\"cdn-edge\"",
+          "signature": "cdn=edge-token"
+        }
+      }
+    },
+    {
+      "id": "R26",
+      "name": "Signed for seller.example.com, verified by seller-b.example.com",
+      "tier": "profile",
+      "basis": "OpenProposal § 2.8.4 step 5: the signed @authority is the verifier's own configured authority, never the Host it was sent",
+      "expected": {
+        "ok": false,
+        "rule": "authority",
+        "status": 403
+      },
+      "base": "post",
+      "label": "sig1",
+      "authority": "seller-b.example.com"
+    }
+  ],
+  "directory_scenarios": [
+    {
+      "id": "D00",
+      "name": "Baseline",
+      "tier": "wba",
+      "basis": "WBA Appendix B.1",
+      "expected": {
+        "ok": true
+      }
+    },
+    {
+      "id": "D01",
+      "name": "Signed for another authority",
+      "tier": "wba",
+      "basis": "WBA Appendix B.1: covers \"@authority\";req",
+      "expected": {
+        "ok": false,
+        "rule": "directory-signature",
+        "status": 403
+      },
+      "authority": "other.example.com"
+    },
+    {
+      "id": "D02",
+      "name": "Body changed after signing",
+      "tier": "profile",
+      "basis": "WBA Appendix B.1: the verifier MUST validate Content-Digest; the library does not compare it with the body",
+      "expected": {
+        "ok": false,
+        "rule": "directory-content-digest",
+        "status": 403
+      },
+      "after_signing": {
+        "append_to_body": "\n"
+      }
+    },
+    {
+      "id": "D03",
+      "name": "Unsigned",
+      "tier": "wba",
+      "basis": "Profile: every Ed25519 key signs (Appendix B.1 recommends it)",
+      "expected": {
+        "ok": false,
+        "rule": "directory-one-signature-per-key",
+        "status": 403
+      },
+      "keys": [],
+      "unsigned_keys": [
+        {
+          "kty": "OKP",
+          "crv": "Ed25519",
+          "kid": "T5rd7MzhvzHtrBDE04NVTnFpBFb63tjmy9o0JrtFH84",
+          "x": "eaZpKteR6m0v7GQPeK0Hv4B0DdvqI99SsTPztodAE5w",
+          "use": "sig"
+        }
+      ]
+    },
+    {
+      "id": "D04",
+      "name": "Signature created in the future",
+      "tier": "wba",
+      "basis": "WBA Appendix B.1: reject a future created; the profile allows the same 60 s skew as for requests",
+      "expected": {
+        "ok": false,
+        "rule": "directory-window",
+        "status": 403
+      },
+      "parameters": {
+        "created": 3600,
+        "expires": 90000
+      }
+    },
+    {
+      "id": "D05",
+      "name": "Covers \"@authority\";req only",
+      "tier": "profile",
+      "basis": "WBA Appendix B.1: covers content-digest",
+      "expected": {
+        "ok": false,
+        "rule": "directory-components",
+        "status": 403
+      },
+      "components": [
+        "@authority;req"
+      ]
+    },
+    {
+      "id": "D06",
+      "name": "Expired signature",
+      "tier": "wba",
+      "basis": "RFC 9421 section 3.2.1",
+      "expected": {
+        "ok": false,
+        "rule": "directory-window",
+        "status": 403
+      },
+      "parameters": {
+        "created": -7200,
+        "expires": -3600
+      }
+    },
+    {
+      "id": "D07",
+      "name": "Extra P-256 key that does not sign",
+      "tier": "wba",
+      "basis": "Profile: ignore keys the profile does not use (RFC 7517 section 5)",
+      "expected": {
+        "ok": true
+      },
+      "unsigned_keys": [
+        {
+          "kty": "EC",
+          "crv": "P-256",
+          "x": "ArXncr6ZErPFgXrSNK1KOKudgiJHgP-4Is8qwtccObY",
+          "y": "2cbTVFLdzD1p2A2hoYxW4eCFEoRtP-ycYTvjimo3sGM",
+          "kid": "55mk-PC9BklPC5aPgL1ONxpbh-xnPs1J79S0ZGWUbAM",
+          "use": "sig"
+        }
+      ]
+    },
+    {
+      "id": "D08",
+      "name": "Media type application/json",
+      "tier": "profile",
+      "basis": "WBA section 5.5.1: the well-known directory MUST be served with application/http-message-signatures-directory+json",
+      "expected": {
+        "ok": false,
+        "rule": "directory-media-type",
+        "status": 403
+      },
+      "content_type": "application/json"
+    },
+    {
+      "id": "D09",
+      "name": "Signature expired one second ago",
+      "tier": "wba",
+      "basis": "Profile: the clock skew applies to created only; a directory verifies until its expires",
+      "expected": {
+        "ok": false,
+        "rule": "directory-window",
+        "status": 403
+      },
+      "parameters": {
+        "created": -600,
+        "expires": -1
+      }
+    },
+    {
+      "id": "D10",
+      "name": "Signature that expires now",
+      "tier": "wba",
+      "basis": "Profile: a directory verifies until its expires, that second included",
+      "expected": {
+        "ok": true
+      },
+      "parameters": {
+        "created": -600,
+        "expires": 0
+      }
+    }
+  ],
+  "response_scenarios": [
+    {
+      "id": "P00",
+      "name": "Baseline, bound to the signed request",
+      "tier": "wba",
+      "basis": "OpenProposal 3.0 § 2.8: response components; RFC 9421 section 2.4",
+      "expected": {
+        "ok": true,
+        "identity": "https://seller.example.com"
+      },
+      "label": "sig1",
+      "request": "bound"
+    },
+    {
+      "id": "P01",
+      "name": "Body changed after signing",
+      "tier": "profile",
+      "basis": "Content-Digest matches the body: RFC 9530",
+      "expected": {
+        "ok": false,
+        "rule": "content-digest",
+        "status": 403
+      },
+      "label": "sig1",
+      "request": "bound",
+      "after_signing": {
+        "append_to_body": "\n"
+      }
+    },
+    {
+      "id": "P02",
+      "name": "Status changed after signing",
+      "tier": "wba",
+      "basis": "RFC 9421 section 2.2.9: @status is covered",
+      "expected": {
+        "ok": false,
+        "rule": "signature-invalid",
+        "status": 403
+      },
+      "label": "sig1",
+      "request": "bound",
+      "after_signing": {
+        "status": 201
+      }
+    },
+    {
+      "id": "P03",
+      "name": "Signed request, response not bound to it",
+      "tier": "profile",
+      "basis": "Profile: a response to a signed request covers \"signature\";req;key=<request label>",
+      "expected": {
+        "ok": false,
+        "rule": "response-not-bound",
+        "status": 403
+      },
+      "label": "sig1",
+      "components": [
+        "@status",
+        "@method;req",
+        "@target-uri;req",
+        "content-type",
+        "content-digest",
+        "signature-agent;key={label}"
+      ],
+      "request": "bound"
+    },
+    {
+      "id": "P04",
+      "name": "Bound to another request",
+      "tier": "wba",
+      "basis": "RFC 9421 section 2.4: the request's signature is covered",
+      "expected": {
+        "ok": false,
+        "rule": "signature-invalid",
+        "status": 403
+      },
+      "label": "sig1",
+      "request": "bound",
+      "after_signing": {
+        "request_headers": {
+          "Signature": "sig1=:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==:"
+        }
+      }
+    },
+    {
+      "id": "P05",
+      "name": "@status not covered",
+      "tier": "profile",
+      "basis": "Profile: response components",
+      "expected": {
+        "ok": false,
+        "rule": "components",
+        "status": 403
+      },
+      "label": "sig1",
+      "components": [
+        "@method;req",
+        "@target-uri;req",
+        "content-type",
+        "content-digest",
+        "signature-agent;key={label}",
+        "signature;req;key={request_label}"
+      ],
+      "request": "bound"
+    },
+    {
+      "id": "P06",
+      "name": "Lifetime of 3600 seconds",
+      "tier": "profile",
+      "basis": "Profile: expires at most 300 seconds after created",
+      "expected": {
+        "ok": false,
+        "rule": "lifetime",
+        "status": 403
+      },
+      "label": "sig1",
+      "parameters": {
+        "created": -5,
+        "expires": 3595
+      },
+      "request": "bound"
+    },
+    {
+      "id": "P07",
+      "name": "Unsigned request, response without a binding",
+      "tier": "wba",
+      "basis": "Profile: the binding applies when the request carried a signature",
+      "expected": {
+        "ok": true,
+        "identity": "https://seller.example.com"
+      },
+      "label": "sig1",
+      "request": "unbound"
+    },
+    {
+      "id": "P08",
+      "name": "Response signed with tag other than web-bot-auth",
+      "tier": "profile",
+      "basis": "Profile: tag web-bot-auth",
+      "expected": {
+        "ok": false,
+        "rule": "signature-missing",
+        "status": 403
+      },
+      "label": "sig1",
+      "parameters": {
+        "tag": "other-profile/v1"
+      },
+      "request": "bound"
+    }
+  ]
+}

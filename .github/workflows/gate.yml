@@ -1,84 +1,40 @@
 # The demo's gate: make quality on every push and pull request, and the whole
 # demo stack (make e2e) beside it.
 #
-# pyproject.toml names the library as a path dependency, ../iab-agentic-primitives,
-# so the quality and e2e jobs check this repository out next to a checkout of the
-# library. LIBRARY_READ_TOKEN is a read-only token for the library repository, and
-# the LIBRARY_REF variable names the library branch to test against.
-#
-# The fresh-clone job builds the repository as a reader who clones it alone: no
-# sibling checkout, the locked dev group, then make quality and make e2e. It
-# passes once the library is pinned inside the repository.
+# Every job is a fresh clone of this repository alone, as a reader clones it: no
+# sibling checkout and no token. The Web Bot Auth library installs from
+# vendor/iab-agentic-primitives, pinned at the commit its VENDORED.md names, and
+# the OpenProposal SDK from vendor/openproposal-sdk, both through uv.lock.
 name: gate
 
 on:
   push:
   pull_request:
 
-env:
-  LIBRARY_REPOSITORY: KonstantinMirin/iab-agentic-primitives-wba
-  LIBRARY_REF: ${{ vars.LIBRARY_REF || 'main' }}
-
 jobs:
   quality:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          path: openproposal-web-bot-auth
-      - uses: actions/checkout@v4
-        with:
-          repository: ${{ env.LIBRARY_REPOSITORY }}
-          ref: ${{ env.LIBRARY_REF }}
-          token: ${{ secrets.LIBRARY_READ_TOKEN }}
-          path: iab-agentic-primitives
       - uses: astral-sh/setup-uv@v6
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Install the locked dev group
-        working-directory: openproposal-web-bot-auth
+      - name: Install the locked dev group, the vendored library included
         run: uv sync --locked --group dev
       - name: make quality
-        working-directory: openproposal-web-bot-auth
         run: make quality
 
   e2e:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          path: openproposal-web-bot-auth
-      - uses: actions/checkout@v4
-        with:
-          repository: ${{ env.LIBRARY_REPOSITORY }}
-          ref: ${{ env.LIBRARY_REF }}
-          token: ${{ secrets.LIBRARY_READ_TOKEN }}
-          path: iab-agentic-primitives
       - uses: astral-sh/setup-uv@v6
       - name: make e2e
-        working-directory: openproposal-web-bot-auth
         run: make e2e
       - name: make live-config
-        working-directory: openproposal-web-bot-auth
         run: make live-config
       # The production compose file, rehearsed: one live run, the routing policy, and
       # no agent key readable in the runner's container.
       - name: make live-local
-        working-directory: openproposal-web-bot-auth
         run: make live-local
-
-  fresh-clone:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - name: Install the locked dev group
-        run: uv sync --locked --group dev
-      - name: make quality
-        run: make quality
-      - name: make e2e
-        run: make e2e

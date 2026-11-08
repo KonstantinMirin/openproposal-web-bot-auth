@@ -717,7 +717,7 @@ wheels = [
 [[package]]
 name = "iab-agentic-primitives"
 version = "0.5.1"
-source = { editable = "../iab-agentic-primitives" }
+source = { editable = "vendor/iab-agentic-primitives" }
 dependencies = [
     { name = "pydantic" },
 ]
@@ -1073,7 +1073,7 @@ dev = [
 requires-dist = [
     { name = "fastapi", specifier = ">=0.115" },
     { name = "httpx", specifier = ">=0.28.1,<1" },
-    { name = "iab-agentic-primitives", extras = ["wba"], editable = "../iab-agentic-primitives" },
+    { name = "iab-agentic-primitives", extras = ["wba"], editable = "vendor/iab-agentic-primitives" },
     { name = "idna", specifier = ">=3.7,<4" },
     { name = "openproposal-sdk", editable = "vendor/openproposal-sdk" },
     { name = "pydantic", specifier = ">=2.11,<3" },

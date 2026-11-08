@@ -1,0 +1,61 @@
+{
+  "name": "The seller's response to a signed request, not bound to that request",
+  "tier": "profile",
+  "spec": "OpenProposal 3.0 § 2.8",
+  "spec_reference": "https://github.com/IABTechLab/iab-agentic-primitives/blob/main/WEB_BOT_AUTH.md#profile-rules",
+  "signing_profile": "web-bot-auth",
+  "reference_now": 1794052810,
+  "operation": {
+    "op": "verify_response",
+    "request": {
+      "method": "POST",
+      "url": "https://seller.example.com/proposals/prop_7/commit",
+      "headers": [
+        ["Content-Type", "application/json"],
+        ["Content-Digest", "sha-256=:EuXs53uWxD5UR8fAISA74MZj5Zon8wxJPPpMOnOt0qQ=:"],
+        ["Signature-Agent", "sig1=\"https://buyer.example.com/.well-known/http-message-signatures-directory\""],
+        ["Signature-Input", "sig1=(\"@method\" \"@target-uri\" \"@authority\" \"content-type\" \"content-digest\" \"signature-agent\";key=\"sig1\");created=1794052800;keyid=\"T5rd7MzhvzHtrBDE04NVTnFpBFb63tjmy9o0JrtFH84\";alg=\"ed25519\";expires=1794053100;nonce=\"u3UIzgyJ1lcWwy3bW-sgBjTzto9bC55plCFjW5d7IXTNK8IpYPmaJxCahFuBPx7aaVJQn5S_JCogXc4V9eUAdg\";tag=\"web-bot-auth\""],
+        ["Signature", "sig1=:s5iVKzp/KDKOfXX9nBlU9o4j6ACeNoQnmxu3IcwtkEk1m6b12N1intmAHoig3TqAvevzdP3NCjSgKKtqGd/XBA==:"]
+      ],
+      "body": "{\"entry\":{\"role\":\"commitment\",\"version\":3,\"record_digest\":\"sha256:b88664b8699501cb1b984959d4eb663a2036b223400796f269f8ae4c0762ec9f\",\"line_item_ids\":[\"li_1\"],\"at\":\"2026-11-07T12:00:00Z\",\"idempotency_key\":\"ba1fd8f3-d695-4e8d-8629-ee4073b4f184\"},\"writes\":{\"li_1\":{\"commitment\":{\"flight\":{\"start\":\"2026-12-01T00:00:00Z\",\"end\":\"2026-12-31T23:59:59Z\"}}}}}"
+    },
+    "response": {
+      "status": 200,
+      "headers": [
+        ["Content-Type", "application/json"],
+        ["Content-Digest", "sha-256=:MKVkbVABQlLjWYxMhW/N4sHR9zVovpkWoT/jpzUClTA=:"],
+        ["Signature-Agent", "sig1=\"https://seller.example.com/.well-known/http-message-signatures-directory\""],
+        ["Signature-Input", "sig1=(\"@status\" \"@method\";req \"@target-uri\";req \"content-type\" \"content-digest\" \"signature-agent\";key=\"sig1\");created=1794052801;keyid=\"-Rmj_GuEunGbO4x6GQSMCCi0P6oZ32paBkWMnvo3gDU\";alg=\"ed25519\";expires=1794053101;tag=\"web-bot-auth\""],
+        ["Signature", "sig1=:9U7r1TpYtQe1V9agdOICxzgfFestS3OSS5SA/8QWJUJJR68UdbyjwGAK541kz5RV/yrK4WLaPnX5+jSWuWe/AA==:"]
+      ],
+      "body": "{\"entries\":[{\"role\":\"commitment\",\"version\":3,\"record_digest\":\"sha256:b88664b8699501cb1b984959d4eb663a2036b223400796f269f8ae4c0762ec9f\",\"line_item_ids\":[\"li_1\"],\"at\":\"2026-11-07T12:00:00Z\",\"idempotency_key\":\"ba1fd8f3-d695-4e8d-8629-ee4073b4f184\"},{\"role\":\"acceptance\",\"version\":3,\"record_digest\":\"sha256:b88664b8699501cb1b984959d4eb663a2036b223400796f269f8ae4c0762ec9f\",\"line_item_ids\":[\"li_1\"],\"at\":\"2026-11-07T12:00:01Z\"}]}"
+    },
+    "directories": {
+      "https://seller.example.com": {
+        "url": "https://seller.example.com/.well-known/http-message-signatures-directory",
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/http-message-signatures-directory+json"],
+          ["Cache-Control", "max-age=300"],
+          ["Content-Digest", "sha-256=:rdSZr7OiNDjsX5TKvyuh/gdc1lz/tRonWTtqSQECWyc=:"],
+          ["Signature-Input", "key1=(\"@authority\";req \"content-digest\");created=1794052810;keyid=\"-Rmj_GuEunGbO4x6GQSMCCi0P6oZ32paBkWMnvo3gDU\";alg=\"ed25519\";expires=1794139210;tag=\"http-message-signatures-directory\""],
+          ["Signature", "key1=:G1XXn7Y7FKZ4qv0VEvNBnmFFBxQPBTueiocC2WQhQeZ4Qur1aPmF3PDTAkZLdNuysVrCjfz0TGw8A74XV5s0CQ==:"]
+        ],
+        "body": "{\n  \"keys\": [\n    {\n      \"kty\": \"OKP\",\n      \"crv\": \"Ed25519\",\n      \"kid\": \"-Rmj_GuEunGbO4x6GQSMCCi0P6oZ32paBkWMnvo3gDU\",\n      \"x\": \"O2bxA-9_Zieq0cojD3MrpDjUrMla41lwZMGIwmit9IQ\",\n      \"use\": \"sig\"\n    }\n  ]\n}"
+      }
+    },
+    "now": 1794052810,
+    "expected_origin": "https://seller.example.com"
+  },
+  "replay_cache_entries": [],
+  "expected_signature_base": {
+    "sig1": "\"@status\": 200\n\"@method\";req: POST\n\"@target-uri\";req: https://seller.example.com/proposals/prop_7/commit\n\"content-type\": application/json\n\"content-digest\": sha-256=:MKVkbVABQlLjWYxMhW/N4sHR9zVovpkWoT/jpzUClTA=:\n\"signature-agent\";key=\"sig1\": \"https://seller.example.com/.well-known/http-message-signatures-directory\"\n\"@signature-params\": (\"@status\" \"@method\";req \"@target-uri\";req \"content-type\" \"content-digest\" \"signature-agent\";key=\"sig1\");created=1794052801;keyid=\"-Rmj_GuEunGbO4x6GQSMCCi0P6oZ32paBkWMnvo3gDU\";alg=\"ed25519\";expires=1794053101;tag=\"web-bot-auth\""
+  },
+  "expected": {
+    "ok": false,
+    "rule": "response-not-bound",
+    "status": 403,
+    "rationale": "A response to a request that carried a web-bot-auth signature covers \"signature\";req;key=<request label>. Without it, the response could answer any request."
+  },
+  "$comment": "The response signature is valid over its covered components, so a verifier that does not check the binding accepts a response that could have been captured from another exchange."
+}

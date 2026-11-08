@@ -10,11 +10,10 @@
 # SSL_CERT_FILE, no NODE_EXTRA_CA_CERTS. An agent reaches another through public
 # DNS and that Caddy, as any outside party does.
 #
-# Paths default to the host layout of deploy/README.md, relative to this file:
-# ../../iab-agentic-primitives (the library checkout) and ../../run (the runner's
-# reports, which Caddy serves). The secrets come from the file passed with
-# `--env-file` (deploy/make-env.sh writes it): each agent gets its own operator
-# key, and the runner the seller's and the buyer's.
+# The report directory defaults to the host layout of deploy/README.md: ../../run,
+# relative to this file, where the runner writes and Caddy serves. The secrets come
+# from the file passed with `--env-file` (deploy/make-env.sh writes it): each agent
+# gets its own operator key, and the runner the seller's and the buyer's.
 name: wba-demo-live
 
 x-live: &live

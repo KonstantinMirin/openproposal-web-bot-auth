@@ -1,0 +1,32 @@
+{
+  "name": "Signed key directory response for https://buyer.example.com, one signature per key",
+  "tier": "wba",
+  "spec": "OpenProposal 3.0 § 2.8",
+  "spec_reference": "https://github.com/IABTechLab/iab-agentic-primitives/blob/main/WEB_BOT_AUTH.md#profile-rules",
+  "signing_profile": "web-bot-auth",
+  "reference_now": 1794052810,
+  "operation": {
+    "op": "verify_directory",
+    "origin": "https://buyer.example.com",
+    "response": {
+      "status": 200,
+      "headers": [
+        ["Content-Type", "application/http-message-signatures-directory+json"],
+        ["Cache-Control", "max-age=300"],
+        ["Content-Digest", "sha-256=:sUHrMjQsBZ1gtBzN6hY0J17RIkyWE9GveUwZ09Yz+KU=:"],
+        ["Signature-Input", "key1=(\"@authority\";req \"content-digest\");created=1794052200;keyid=\"T5rd7MzhvzHtrBDE04NVTnFpBFb63tjmy9o0JrtFH84\";alg=\"ed25519\";expires=1794138600;tag=\"http-message-signatures-directory\""],
+        ["Signature", "key1=:06Nk7YQaA3XtUO0SJOTWLqcptz/FRehPH2p7tleFIyLyiSlX8eT0xAtABKy1JiN7NNIl1wU+7TbM43ZiUow6Ag==:"]
+      ],
+      "body": "{\n  \"keys\": [\n    {\n      \"kty\": \"OKP\",\n      \"crv\": \"Ed25519\",\n      \"kid\": \"T5rd7MzhvzHtrBDE04NVTnFpBFb63tjmy9o0JrtFH84\",\n      \"x\": \"eaZpKteR6m0v7GQPeK0Hv4B0DdvqI99SsTPztodAE5w\",\n      \"use\": \"sig\"\n    }\n  ]\n}"
+    },
+    "now": 1794052810
+  },
+  "replay_cache_entries": [],
+  "expected_signature_base": {
+    "key1": "\"@authority\";req: buyer.example.com\n\"content-digest\": sha-256=:sUHrMjQsBZ1gtBzN6hY0J17RIkyWE9GveUwZ09Yz+KU=:\n\"@signature-params\": (\"@authority\";req \"content-digest\");created=1794052200;keyid=\"T5rd7MzhvzHtrBDE04NVTnFpBFb63tjmy9o0JrtFH84\";alg=\"ed25519\";expires=1794138600;tag=\"http-message-signatures-directory\""
+  },
+  "expected": {
+    "ok": true
+  },
+  "$comment": "Web Bot Auth Appendix B.1: the directory server signs the response once per key, covering \"@authority\";req and content-digest, with created, expires, the key's thumbprint as keyid, and tag http-message-signatures-directory. The verifier validates the signature with the key the directory itself provides and validates Content-Digest against the body. Covering the request authority stops the key set from being served again from another domain."
+}

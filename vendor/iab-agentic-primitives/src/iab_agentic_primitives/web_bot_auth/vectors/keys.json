@@ -1,0 +1,35 @@
+{
+  "$comment": "Public test keys for the Web Bot Auth profile conformance vectors. The private seeds are published so that implementations can reproduce every signature. Each seed is SHA-256 of the ASCII string 'aamp-wba-test/<seed_name>'. Web Bot Auth section 6.8: test keys MUST NOT be used in production, and verifiers SHOULD reject them when detected. Each kid is the RFC 7638 JWK thumbprint (RFC 8037 Appendix A.3 for Ed25519). Each entry's identity is the origin whose key directory publishes the key.",
+  "keys": [
+    {
+      "identity": "https://buyer.example.com",
+      "seed_name": "buyer-request",
+      "kty": "OKP",
+      "crv": "Ed25519",
+      "kid": "T5rd7MzhvzHtrBDE04NVTnFpBFb63tjmy9o0JrtFH84",
+      "x": "eaZpKteR6m0v7GQPeK0Hv4B0DdvqI99SsTPztodAE5w",
+      "use": "sig",
+      "_private_d_for_test_only": "g44DZG8rBK01xgiEFitrDE95iH3gnIFS4fF9PKPboMI"
+    },
+    {
+      "identity": "https://other.example.com",
+      "seed_name": "other-request",
+      "kty": "OKP",
+      "crv": "Ed25519",
+      "kid": "VR0Gby4SzMlU2nttpc8Ondksz1_VWMBzuycc-DzuQHc",
+      "x": "8BO_l61Nj5t5vhKM-HtfG19YsGG616DIr4ua9vdWxko",
+      "use": "sig",
+      "_private_d_for_test_only": "aka63hqHs29Iu_kAOdgfPg0dPUjDdml9Sc-vOU2t-lw"
+    },
+    {
+      "identity": "https://seller.example.com",
+      "seed_name": "seller-response",
+      "kty": "OKP",
+      "crv": "Ed25519",
+      "kid": "-Rmj_GuEunGbO4x6GQSMCCi0P6oZ32paBkWMnvo3gDU",
+      "x": "O2bxA-9_Zieq0cojD3MrpDjUrMla41lwZMGIwmit9IQ",
+      "use": "sig",
+      "_private_d_for_test_only": "XBBbjz0evXFV4vCLsjmFoWb7riH8qdrvRwGhNEmCDs8"
+    }
+  ]
+}
