@@ -8,8 +8,9 @@ library's reason, never taken as no signature, and an unsigned answer as
 `signature-missing`. Each verified answer keeps the instant it verified at, so
 the evidence verifies again at that instant. Then the answer is parsed as the
 document its status says it is: a `Proposal`, a `CommitResult`, or a § 2.4
-`errors[]`. A proposal must name the seller the buyer called as its seller and
-the buyer's own party as its buyer; a `CommitResult` is taken only for the
+`errors[]`. A proposal must be the one the buyer asked for, and name the seller
+the buyer called as its seller and the buyer's own party, its domain and its
+legal name, as its buyer; a `CommitResult` is taken only for the
 record of such a proposal, whose digest its entries must match
 (`protocol.operations.check_result`). Verification and parsing run inside one
 refusal boundary, so whatever the seller sends comes back as a value
@@ -178,22 +179,36 @@ def _rejection(exchange: Exchange) -> Rejection | Refusal:
     )
 
 
-def _proposal(seller: Counterparty, own: OwnParty, exchange: Exchange) -> ReadProposal | Refusal:
-    """The proposal, when it names `seller` as its seller and this buyer as its buyer."""
+def _proposal(
+    seller: Counterparty, own: OwnParty, proposal_id: str, exchange: Exchange
+) -> ReadProposal | Refusal:
+    """The proposal, when it is `proposal_id` and names `seller` as its seller and this buyer,
+    by its domain and its legal name, as its buyer."""
     body = exchange.response.body
     # The raw JSON, unknown members and all, is the digest input, so its numbers must
     # canonicalize; the typed value, read from the same bytes, decides.
     raw = read_json(body)
     proposal = Proposal.model_validate_json(body, context=RECEIVE)
+    if proposal.proposal_id != proposal_id:
+        return Refusal(
+            Reason.WRONG_PROPOSAL,
+            f"the seller answered with proposal {proposal.proposal_id}, not {proposal_id}",
+        )
     if proposal.seller.domain != seller.domain:
         return Refusal(
             Reason.WRONG_SELLER,
             f"the proposal names seller {proposal.seller.domain}, not {seller.domain}",
         )
-    buyer = None if proposal.buyer is None else proposal.buyer.domain
-    if buyer != own.domain:
+    buyer = proposal.buyer
+    if buyer is None or buyer.domain != own.domain:
+        named = None if buyer is None else buyer.domain
         return Refusal(
-            Reason.WRONG_BUYER, f"the proposal names buyer {buyer}, not this buyer {own.domain}"
+            Reason.WRONG_BUYER, f"the proposal names buyer {named}, not this buyer {own.domain}"
+        )
+    if buyer.legal_name != own.legal_name:
+        return Refusal(
+            Reason.WRONG_BUYER,
+            f"the proposal names buyer {buyer.legal_name!r}, not this buyer {own.legal_name!r}",
         )
     return ReadProposal(proposal, raw, exchange)
 
@@ -213,7 +228,7 @@ class SellerClient:
             exchange = await self._send(seller, credential, "GET", f"/proposals/{proposal_id}")
             if exchange.response.status != httpx.codes.OK:
                 return _rejection(exchange)
-            return _proposal(seller, self._own, exchange)
+            return _proposal(seller, self._own, proposal_id, exchange)
         except _REFUSED as e:
             return _refusal(e)
 

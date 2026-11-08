@@ -162,7 +162,8 @@ The buyer mirrors the seller's boundary
 ([`buyer/seller_client.py`](buyer/seller_client.py)). Its one client to a
 seller verifies each answer, then parses it as the document its status says it
 is (a `Proposal`, a `CommitResult`, or a § 2.4 `errors[]`), inside one refusal
-boundary. A proposal must name the seller it called and the buyer's own party
+boundary. A proposal must be the one the buyer asked for, or it is refused
+`wrong-proposal`, and must name the seller it called and the buyer's own party
 (its `SELF_ORIGIN` host and its legal name, from its settings): one that names
 another buyer is refused `wrong-buyer`, so the buyer never agrees to a record
 that doesn't name it. An answer whose signature doesn't verify is refused whatever its

@@ -13,7 +13,8 @@ party kept.
 - A verified answer that is malformed, an error without `retry`, or a boundary
   refusal is refused, never a 500, and settles nothing.
 - An unknown line item or seller is refused before anything is sent.
-- A proposal that names another seller, or another buyer, is refused; a `CommitResult` that
+- A proposal other than the one asked for, or one that names another seller, or another
+  buyer by domain or by legal name, is refused; a `CommitResult` that
   doesn't answer the commit is refused, and so is one whose `record_digest`
   doesn't recompute from the digest input the buyer kept.
 - An answer correctly signed by another origin than the seller's is refused,
@@ -451,6 +452,36 @@ def test_a_proposal_that_names_another_buyer_is_refused(
     assert named in outcome.detail and BUYER.removeprefix("https://") in outcome.detail
     assert [m for m, _ in _sent(stack)] == ["GET"]
     assert _commits(stack, "demo-wba-1") == []
+
+
+@pytest.mark.parametrize("credential", ["web_bot_auth", "bearer"])
+def test_a_proposal_that_names_this_buyers_domain_under_another_legal_name_is_refused(
+    stack: Stack, credential: AuthMethod
+) -> None:
+    """The buyer's own party is its domain and its legal name: a proposal that names its
+    domain with another legal name doesn't name it, so the buyer agrees to nothing."""
+    host = BUYER.removeprefix("https://")
+    _edited(stack, "GET", lambda d: d.update(buyer={"domain": host, "legal_name": "Other LLC"}))
+    outcome = as_state(Refused, stack.commit("demo-wba-1", [DISPLAY], credential))
+    assert outcome.code == "wrong-buyer"
+    assert "'Other LLC'" in outcome.detail and "'Demo Buyer Agency LLC'" in outcome.detail
+    assert [m for m, _ in _sent(stack)] == ["GET"]
+    assert _commits(stack, "demo-wba-1") == []
+
+
+@pytest.mark.parametrize("operation", ["read", "commit"])
+def test_a_proposal_other_than_the_one_asked_for_is_refused(stack: Stack, operation: str) -> None:
+    """A correctly signed answer to the read of demo-wba-1 that is another proposal: the buyer
+    neither shows it as demo-wba-1 nor commits to it under that id."""
+    _edited(stack, "GET", lambda d: d.update(proposal_id="demo-wba-2"))
+    if operation == "read":
+        outcome = as_state(Refused, stack.read("demo-wba-1"))
+    else:
+        outcome = as_state(Refused, stack.commit("demo-wba-1", [DISPLAY]))
+    assert outcome.code == "wrong-proposal"
+    assert "demo-wba-2" in outcome.detail and "demo-wba-1" in outcome.detail
+    assert [m for m, _ in _sent(stack)] == ["GET"]
+    assert _commits(stack, "demo-wba-1") == [] and _kept_nothing(stack)
 
 
 def _entries(edit: Callable[[list[JsonValue]], object]) -> Callable[[JsonObject], None]:

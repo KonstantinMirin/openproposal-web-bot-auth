@@ -94,12 +94,17 @@ class Reason(StrEnum):
     MALFORMED_ANSWER = "malformed-answer"
     #: A verified proposal that names another seller.
     WRONG_SELLER = "wrong-seller"
-    #: A verified proposal that names no buyer, or another buyer than this one.
+    #: A verified proposal that names no buyer, or another buyer than this one: another
+    #: domain, or another legal name.
     WRONG_BUYER = "wrong-buyer"
+    #: A verified proposal whose `proposal_id` isn't the id the buyer asked for.
+    WRONG_PROPOSAL = "wrong-proposal"
     #: The seller's identity boundary refused the buyer's credential.
     CREDENTIAL_REFUSED = "credential-refused"
     #: The seller answered the read of the proposal to commit to with an error.
     UNREADABLE_PROPOSAL = "unreadable-proposal"
+    #: The plan writes a path the proposal's line item doesn't offer (§ 3.4).
+    PLAN_MISMATCH = "plan-mismatch"
     #: A verified `CommitResult` that doesn't answer the buyer's `commit` (§ 4.1.2, § 5.6.1).
     RESULT_MISMATCH = "result-mismatch"
 
