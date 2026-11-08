@@ -11,6 +11,10 @@ here="$(cd "$(dirname "$0")" && pwd)"
 repo="$(cd "$here/../.." && pwd)"
 gen="$here/generated"
 mkdir -p "$gen/run" "$gen/logs"
+# The runner writes its reports as UID 10001. The live host creates this directory owned by
+# that UID (deploy/README.md, step 4); here the directory belongs to whoever runs the script,
+# so it is opened to everyone. Docker Desktop hides the difference; a Linux CI runner doesn't.
+chmod 0777 "$gen/run"
 
 # The e2e stack's throwaway CA and its leaf for *.wba-demo.noetis.dev and the apex.
 (cd "$repo/e2e" && uv run --project .. python gen_demo_tls.py)
