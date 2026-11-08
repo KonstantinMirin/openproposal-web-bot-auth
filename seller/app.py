@@ -34,7 +34,7 @@ from iab_agentic_primitives.web_bot_auth import (
     ServerIdentity,
     keyfile,
 )
-from iab_agentic_primitives.web_bot_auth.asgi import ResponseSigningMiddleware
+from iab_agentic_primitives.web_bot_auth.asgi import ResponseSigningMiddleware, ServerEdge
 from starlette.types import ASGIApp
 
 from protocol.documents import loads_yaml
@@ -123,23 +123,27 @@ def create_app(
     # The seller mints its key on first boot. No buyer is ever configured with it.
     key = keyfile.load_or_create(settings.key_file)
     identity = ServerIdentity.from_config(str(settings.self_origin))
+    # The seller's one identity at its edges: the key it signs its answers with, and the
+    # directory that lists it, which the edge checks against each other when it is made.
+    # The response signing middleware also serves that directory at the well-known path,
+    # for buyers to find the seller's key.
+    edge = ServerEdge(
+        identity,
+        signer=ResponseSigner.of(key, identity.origin),
+        publisher=DirectoryPublisher(
+            identity.origin, [key], PublishPolicy(max_age=settings.directory_max_age)
+        ),
+    )
     issuer = Issuer(settings.own, loads_yaml(settings.template_file.read_text(encoding="utf-8")))
-    resources = _Parts(settings, issuer, identity, nonces, resolver).resources
+    resources = _Parts(settings, issuer, edge, nonces, resolver).resources
     store = partial(SqliteSellerStore, settings.data_dir / "seller.db")
     agent = FastAPI(title="Demo seller", lifespan=lifespan(store, settings.ca_bundle, resources))
     install_handlers(agent)
     agent.include_router(api)
     agent.include_router(operator, dependencies=[Depends(OperatorKey(settings.operator_key))])
 
-    signer = ResponseSigner.of(key, identity.origin)
-    # The middleware also serves the signed key directory at the well-known path, for buyers
-    # to find the seller's key, and checks when it is made that the directory lists the key
-    # it signs with.
-    publisher = DirectoryPublisher(
-        identity.origin, [key], PublishPolicy(max_age=settings.directory_max_age)
-    )
-    signed = ResponseSigningMiddleware(agent, signer, identity=identity, publisher=publisher)
-    return _with_faults(agent, signed, signer, identity) if settings.faults else signed
+    signed = ResponseSigningMiddleware(agent, edge)
+    return _with_faults(agent, signed, edge) if settings.faults else signed
 
 
 @dataclass(frozen=True)
@@ -148,7 +152,8 @@ class _Parts:
 
     settings: SellerSettings
     issuer: Issuer
-    identity: ServerIdentity
+    #: The seller's one identity, which the boundary rebuilds requests on and verifies for.
+    edge: ServerEdge
     nonces: NonceStore | None
     resolver: KeyResolver | None
 
@@ -167,16 +172,14 @@ class _Parts:
         )
         keys = resolver_or_default(client, settings.max_cache_age, self.resolver)
         nonces = MemoryNonceStore() if self.nonces is None else self.nonces
-        verifier = RequestVerifier(keys, identity=self.identity, nonces=nonces)
-        boundary = IdentityBoundary(store, verifier, self.identity)
+        verifier = RequestVerifier(keys, identity=self.edge.identity, nonces=nonces)
+        boundary = IdentityBoundary(store, verifier, self.edge)
         return SellerResources(store, client, boundary, self.issuer)
 
 
-def _with_faults(
-    agent: FastAPI, signed: ASGIApp, signer: ResponseSigner, identity: ServerIdentity
-) -> FaultInjection:
+def _with_faults(agent: FastAPI, signed: ASGIApp, edge: ServerEdge) -> FaultInjection:
     """TEST ONLY: wraps the signed app in seller/faults.py and mounts its `PUT /test/fault`."""
-    faults = FaultInjection(signed, signer, identity)
+    faults = FaultInjection(signed, edge)
     agent.include_router(faults.control())
     return faults
 

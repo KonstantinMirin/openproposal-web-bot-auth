@@ -25,8 +25,8 @@ from ..replay import MemoryNonceStore
 from ..resolver import DirectoryResolver
 from ..signer import RequestSigner, ResponseSigner, SignerConfig
 from ..testing import served_resolver
-from ..values import Origin, ServerIdentity
-from ..verifier import RequestVerifier, ResponseVerifier
+from ..values import Origin, ServerIdentity, UnixSeconds
+from ..verifier import CONFORMANCE_KEYS, RequestVerifier, ResponseVerifier
 from .models import (
     OPERATION,
     DirectoryDoc,
@@ -64,14 +64,14 @@ def _is_origin(value: str) -> bool:
     return True
 
 
-def _resolver(directories: Mapping[str, DirectoryDoc]) -> DirectoryResolver:
-    """A resolver over the operation's directories, fetched through the bounded read.
+def _resolver(directories: Mapping[str, DirectoryDoc], now: UnixSeconds) -> DirectoryResolver:
+    """A resolver over the operation's directories, fetched through the bounded read at ``now``.
 
     Only an origin's directory URL is ever fetched; a directory listed under
     anything else, such as an origin with a port, is never reached.
     """
     served = {Origin.parse(o): d.answer() for o, d in directories.items() if _is_origin(o)}
-    return served_resolver(served)
+    return served_resolver(served, clock=lambda: now)
 
 
 def _sign_request(op: SignRequest) -> RequestDoc:
@@ -101,10 +101,11 @@ def _verify_directory(op: VerifyDirectory) -> KeysVerified:
 
 async def _verify_requests(op: VerifyRequest) -> Result:
     verifier = RequestVerifier(
-        _resolver(op.directories),
+        _resolver(op.directories, op.now),
         identity=ServerIdentity.from_config(f"https://{op.authority}"),
         nonces=MemoryNonceStore(clock=lambda: op.now),
         clock=lambda: op.now,
+        keys=CONFORMANCE_KEYS,
     )
     for i, earlier in enumerate(op.prior):
         try:
@@ -118,7 +119,9 @@ async def _verify_requests(op: VerifyRequest) -> Result:
 
 
 def _verify_response(op: VerifyResponse) -> Verified:
-    verifier = ResponseVerifier(_resolver(op.directories), clock=lambda: op.now)
+    verifier = ResponseVerifier(
+        _resolver(op.directories, op.now), clock=lambda: op.now, keys=CONFORMANCE_KEYS
+    )
     expected = op.expected_origin
     response = op.response.message(op.request.message())
     verified = asyncio.run(verifier.verify(response, expected_origin=expected))

@@ -27,12 +27,11 @@ from iab_agentic_primitives.web_bot_auth import (
     HeaderLines,
     HTTPRequest,
     HTTPResponse,
-    ServerIdentity,
     UnixSeconds,
 )
 from iab_agentic_primitives.web_bot_auth import Origin as LibraryOrigin
 from iab_agentic_primitives.web_bot_auth import is_signed as library_is_signed
-from iab_agentic_primitives.web_bot_auth.asgi import Scope, request_url
+from iab_agentic_primitives.web_bot_auth.asgi import Scope, ServerEdge
 from iab_agentic_primitives.web_bot_auth.fetcher import HttpxDirectoryFetcher
 
 from persistence.values import DirectoryFetch, HeaderLine, KeptRequest, KeptResponse, Origin
@@ -111,15 +110,13 @@ def is_signed(lines: Iterable[HeaderLine]) -> bool:
     return library_is_signed(HeaderLines(tuple(lines)))
 
 
-def request_of(scope: Scope, identity: ServerIdentity, body: bytes) -> KeptRequest:
+def request_of(scope: Scope, edge: ServerEdge, body: bytes) -> KeptRequest:
     """The request an ASGI app received, as the library verifies it: the URL rebuilt on the
-    server's own base URL, and every field line as received."""
+    base URL of the server's one identity (`edge`), and every field line as received."""
     method, raw = scope["method"], scope["headers"]
     if not isinstance(method, str) or not isinstance(raw, Iterable):
         raise NotAnHTTPScopeError(scope)
-    return KeptRequest(
-        method=method, url=request_url(scope, identity), lines=lines_of(raw), body=body
-    )
+    return KeptRequest(method=method, url=edge.request_url(scope), lines=lines_of(raw), body=body)
 
 
 def sent_request(request: httpx.Request) -> KeptRequest:

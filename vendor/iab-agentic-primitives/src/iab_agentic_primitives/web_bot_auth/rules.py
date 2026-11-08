@@ -19,7 +19,7 @@ from __future__ import annotations
 import base64
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import ClassVar, Final, Generic, TypeVar
+from typing import ClassVar, Final
 
 from ._sig import SignatureParams
 from ._wire import ComponentId, ComponentParam, component_id, parse_signature_fields
@@ -44,6 +44,17 @@ NONCE_RULE: Final = "nonce must be 64 bytes as unpadded base64url or padded base
 #: Media types whose responses stream: a server passes them through unsigned, so a
 #: client takes one unsigned.
 STREAMING_MEDIA_TYPES: Final = ("text/event-stream",)
+#: The key ids of the published test keys, whose private keys ship in the
+#: conformance vectors (``vectors/keys.json``). Web Bot Auth section 6.8 says
+#: they "MUST NOT be used in production": a verifier always refuses them, unless
+#: a conformance run makes it with ``verifier.CONFORMANCE_KEYS``.
+TEST_KEY_IDS: Final = frozenset(
+    {
+        KeyId("T5rd7MzhvzHtrBDE04NVTnFpBFb63tjmy9o0JrtFH84"),
+        KeyId("VR0Gby4SzMlU2nttpc8Ondksz1_VWMBzuycc-DzuQHc"),
+        KeyId("-Rmj_GuEunGbO4x6GQSMCCi0P6oZ32paBkWMnvo3gDU"),
+    }
+)
 
 
 def validate_nonce(nonce: object) -> bool:
@@ -139,19 +150,15 @@ class Stamp:
     expires: UnixSeconds
 
 
-M = TypeVar("M", HTTPRequest, HTTPResponse)
-#: What the nonce rule yields: the nonce on a request, and an optional one on a response.
-N = TypeVar("N", str, str | None)
-
-
 def _checked_nonce(nonce: str | None) -> str | None:
     if nonce is not None and not validate_nonce(nonce):
         raise refuse(Refusal.NONCE_INVALID, NONCE_RULE)
     return nonce
 
 
-class Rules(ABC, Generic[M, N]):
-    """The rules of a signature on a message of type ``M``, whose nonce is an ``N``.
+class Rules[M: (HTTPRequest, HTTPResponse), N: (str, str | None)](ABC):
+    """The rules of a signature on a message of type ``M``, whose nonce is an ``N``:
+    a ``str`` on a request, and ``str | None`` on a response.
 
     ``tag``, ``window``, and ``nonce_required`` are class constants.
     """
@@ -348,6 +355,7 @@ __all__ = [
     "RESPONSE",
     "SIGNATURE_TAG",
     "STREAMING_MEDIA_TYPES",
+    "TEST_KEY_IDS",
     "CacheRules",
     "ComponentId",
     "ComponentParam",

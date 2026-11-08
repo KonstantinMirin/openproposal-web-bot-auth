@@ -222,6 +222,8 @@ class WebBotAuth(httpx.Auth):
         if self._signer is None:
             return sent, ()
         signed = self._signer.sign(sent)
+        if signed.url != sent.url:  # sent as signed, without an empty query
+            request.url = httpx.URL(signed.url)
         # Signing only appends field lines, so the new ones follow the request's own.
         added = signed.headers.items()[len(sent.headers) :]
         for name, value in added:

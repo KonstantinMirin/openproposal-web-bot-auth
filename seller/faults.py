@@ -29,7 +29,7 @@ import base64
 from typing import get_args
 
 from fastapi import APIRouter
-from iab_agentic_primitives.web_bot_auth import ResponseSigner, ServerIdentity
+from iab_agentic_primitives.web_bot_auth.asgi import ServerEdge
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from persistence.values import AuthMethod, KeptRequest, KeptResponse
@@ -82,8 +82,10 @@ def _targets(scope: Scope, on: FaultTarget) -> bool:
 
 
 class FaultInjection:
-    def __init__(self, app: ASGIApp, signer: ResponseSigner, identity: ServerIdentity) -> None:
-        self.app, self.signer, self.identity = app, signer, identity
+    def __init__(self, app: ASGIApp, edge: ServerEdge) -> None:
+        """`edge` is the seller's one identity: its signer signs the broken answers again, and
+        its base URL rebuilds the request they are bound to."""
+        self.app, self.edge = app, edge
         self.fault = FaultMode(mode="none")
 
     def control(self) -> APIRouter:
@@ -118,7 +120,7 @@ class FaultInjection:
 
     def _request(self, mode: FaultName, scope: Scope) -> KeptRequest:
         """The request the broken signature is bound to."""
-        received = request_of(scope, self.identity, b"")
+        received = request_of(scope, self.edge, b"")
         fields = list(received.lines)
         if mode == "unbound":
             fields = [(k, v) for k, v in fields if k.lower().encode() not in SIGNATURE_FIELDS]
@@ -145,7 +147,7 @@ class FaultInjection:
                 body=signed_body,
                 request=self._request(mode, scope),
             )
-            signed = self.signer.sign(response_to_library(response))
+            signed = self.edge.signer.sign(response_to_library(response))
             # The lines signing added follow the response's own.
             headers += asgi_lines(signed.headers.items()[len(text) :])
         await send({**start, "headers": headers})

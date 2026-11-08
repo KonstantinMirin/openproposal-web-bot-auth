@@ -13,7 +13,7 @@ from __future__ import annotations
 import datetime
 from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass, replace
-from typing import Literal, TypeVar
+from typing import Literal
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from http_message_signatures import (
@@ -31,7 +31,6 @@ from .keys import Ed25519Key
 from .message import HeaderLines, HTTPRequest, HTTPResponse
 from .values import OMIT, KeyId, Omit, UnixSeconds
 
-M = TypeVar("M", HTTPRequest, HTTPResponse)
 #: Whether a signature replaces the message's signatures or joins them.
 Mode = Literal["replace", "append"]
 
@@ -143,7 +142,9 @@ def _utc(seconds: UnixSeconds) -> datetime.datetime:
     return datetime.datetime.fromtimestamp(seconds, tz=datetime.UTC)
 
 
-def signed(message: M, key: Ed25519Key, params: SignatureParams, *, mode: Mode) -> M:
+def signed[M: (HTTPRequest, HTTPResponse)](
+    message: M, key: Ed25519Key, params: SignatureParams, *, mode: Mode
+) -> M:
     """``message`` signed with ``key`` under ``params``: the one signing call.
 
     ``mode="append"`` keeps the signatures already on the message, and
@@ -181,7 +182,9 @@ def signed(message: M, key: Ed25519Key, params: SignatureParams, *, mode: Mode) 
     return replace(message, headers=lines.with_replaced("Signature", signature))
 
 
-def signed_by_each(message: M, signers: Sequence[tuple[Ed25519Key, SignatureParams]]) -> M:
+def signed_by_each[M: (HTTPRequest, HTTPResponse)](
+    message: M, signers: Sequence[tuple[Ed25519Key, SignatureParams]]
+) -> M:
     """``message`` signed once by each key, in order, each signature kept beside the others."""
     for i, (key, params) in enumerate(signers):
         message = signed(message, key, params, mode="append" if i else "replace")

@@ -6,13 +6,17 @@ directory is good for (OpenProposal § 2.8.3):
 
 - It fetches exactly ``https://<host>/.well-known/http-message-signatures-directory``
   and verifies the response with :func:`~.directory.verify_directory` under
-  one :class:`~.directory.FetchLimits`.
-- A stored directory answers only for its own origin, and only until the
-  earliest ``expires`` among its signatures, whatever the store returns.
-- While it is younger than :attr:`CachePolicy.max_cache_age` it answers every
+  one :class:`~.directory.FetchLimits`, at the time it was fetched.
+- The store keeps the response as plain data. The resolver verifies what the
+  store returns again, as fetched, for the origin it asked for and under its
+  own limits; a stored response that doesn't verify is a cache miss.
+- The resolver's own clock stamps each fetch and judges the cache: a
+  directory younger than :attr:`CachePolicy.max_cache_age` answers every
   keyid without a fetch. A directory that resolves without the key replaces
   the stored one. A failed fetch does not evict it, and isn't retried for
   :attr:`CachePolicy.negative_ttl` seconds.
+- The time a verifier judges at decides only whether the directory still
+  holds then: it answers until the earliest ``expires`` among its signatures.
 - Concurrent resolves of one origin share one fetch.
 
 Keys are always looked up by the pair ``(origin, keyid)``, never by ``keyid``
@@ -33,6 +37,7 @@ from typing import TYPE_CHECKING, Final
 
 from .directory import (
     DEFAULT_LIMITS,
+    DirectoryResponse,
     FetchLimits,
     KeyInput,
     KeySet,
@@ -42,7 +47,7 @@ from .directory import (
 from .errors import ConfigurationError, Refusal, WebBotAuthError, refuse
 from .ports import DirectoryFetcher, DirectoryStore, KeyResolver, ResolvedKey
 from .rules import CACHE
-from .values import KeyId, Origin, UnixSeconds, whole_number
+from .values import Clock, KeyId, Origin, UnixSeconds, system_clock, whole_number
 
 if TYPE_CHECKING:
     from .fetcher import HttpxDirectoryFetcher
@@ -77,31 +82,26 @@ class MemoryDirectoryStore:
     """An in-process :class:`~.ports.DirectoryStore`, bounded, and safe across threads.
 
     When either map holds ``max_entries`` origins, a new entry pushes out the
-    oldest: for directories, those that expired before the new one was
-    fetched go first. ``max_entries`` is a whole number, 1 or more; anything
-    else raises :class:`ConfigurationError`.
+    one written longest ago. ``max_entries`` is a whole number, 1 or more;
+    anything else raises :class:`ConfigurationError`.
     """
 
     __slots__ = ("_directories", "_failures", "_lock", "_max_entries")
 
     def __init__(self, *, max_entries: int = 10_000) -> None:
         self._max_entries: Final = whole_number("max_entries", max_entries, minimum=1)
-        self._directories: dict[Origin, VerifiedDirectory] = {}
+        self._directories: dict[Origin, DirectoryResponse] = {}
         self._failures: dict[Origin, UnixSeconds] = {}
         self._lock: Final = threading.Lock()
 
-    async def get(self, origin: Origin) -> VerifiedDirectory | None:
+    async def get(self, origin: Origin) -> DirectoryResponse | None:
         with self._lock:
             return self._directories.get(origin)
 
-    async def put(self, directory: VerifiedDirectory) -> None:
-        now = directory.evidence.fetched_at
+    async def put(self, origin: Origin, response: DirectoryResponse) -> None:
         with self._lock:
-            self._directories.pop(directory.origin, None)
-            self._directories[directory.origin] = directory
-            if len(self._directories) > self._max_entries:
-                for origin in [o for o, d in self._directories.items() if d.expires < now]:
-                    del self._directories[origin]
+            self._directories.pop(origin, None)
+            self._directories[origin] = response
             self._bound(self._directories)
 
     async def record_failure(self, origin: Origin, until: UnixSeconds) -> None:
@@ -120,7 +120,7 @@ class MemoryDirectoryStore:
             self._directories.clear()
             self._failures.clear()
 
-    def _bound(self, entries: dict[Origin, VerifiedDirectory] | dict[Origin, UnixSeconds]) -> None:
+    def _bound(self, entries: dict[Origin, DirectoryResponse] | dict[Origin, UnixSeconds]) -> None:
         """Drops the oldest entries while ``entries`` is over the bound."""
         while len(entries) > self._max_entries:
             del entries[next(iter(entries))]
@@ -132,14 +132,20 @@ class DirectoryResolver:
     ``fetcher`` fetches directory responses; without one, the resolver builds
     an :class:`~.fetcher.HttpxDirectoryFetcher` with a plain client and closes
     it in :meth:`aclose`. An injected fetcher belongs to the caller. ``store``
-    persists verified directories; :class:`MemoryDirectoryStore` by default.
-    ``limits`` holds the profile's fetch limits, and ``cache`` how long a
-    directory is kept. Each is fixed when the resolver is made.
+    keeps each origin's directory response; :class:`MemoryDirectoryStore` by
+    default. ``limits`` holds the profile's fetch limits, ``cache`` how long a
+    directory is kept, and ``clock`` the time the resolver stamps fetches with
+    and judges its cache and failures by. Each is fixed when the resolver is
+    made.
 
-    A fresh directory answers every keyid without a fetch, so an unknown keyid
-    never causes one. A stale but valid directory is fetched again; when that
-    fetch fails, the stored keys still answer. Only a refusal is a failed
-    fetch; any other error propagates and records nothing.
+    What the store returns is verified again, at the time it was fetched and
+    under ``limits``; a response that doesn't verify is a cache miss. A fresh
+    directory answers every keyid without a fetch, so an unknown keyid never
+    causes one. A stale but valid directory is fetched again; when that fetch
+    fails, the stored keys still answer. Only a refusal is a failed fetch; any
+    other error propagates and records nothing. The ``now`` a resolve is
+    judged at decides only whether the directory has expired by then
+    (``directory-window``); it never stamps or ages the cache.
 
     A resolver belongs to the event loop it first resolves on, as its fetches
     in flight and its client's connections do: a resolve on another loop
@@ -149,6 +155,7 @@ class DirectoryResolver:
 
     __slots__ = (
         "_cache",
+        "_clock",
         "_closed",
         "_fetcher",
         "_flights",
@@ -165,6 +172,7 @@ class DirectoryResolver:
         *,
         limits: FetchLimits = DEFAULT_LIMITS,
         cache: CachePolicy = DEFAULT_CACHE,
+        clock: Clock = system_clock,
     ) -> None:
         if not isinstance(limits, FetchLimits) or not isinstance(cache, CachePolicy):
             raise ConfigurationError("limits is a FetchLimits and cache a CachePolicy")
@@ -178,6 +186,7 @@ class DirectoryResolver:
         self._store: Final = MemoryDirectoryStore() if store is None else store
         self._limits: Final = limits
         self._cache: Final = cache
+        self._clock: Final = clock
         self._flights: Final[dict[Origin, asyncio.Future[VerifiedDirectory]]] = {}
         self._loop: asyncio.AbstractEventLoop | None = None
         self._closed = False
@@ -198,10 +207,23 @@ class DirectoryResolver:
     def cache(self) -> CachePolicy:
         return self._cache
 
+    @property
+    def clock(self) -> Clock:
+        return self._clock
+
     async def resolve(self, origin: Origin, keyid: KeyId, *, now: UnixSeconds) -> ResolvedKey:
-        """Returns the key ``keyid`` of ``origin`` with the verified directory it came from."""
+        """Returns the key ``keyid`` of ``origin`` with the verified directory it came from.
+
+        ``now`` is the time the caller judges at: a directory that has
+        expired by then is refused ``directory-window``.
+        """
         self._bind()
-        directory = await self._directory(origin, now)
+        directory = await self._directory(origin)
+        if now > directory.expires:
+            raise refuse(
+                Refusal.DIRECTORY_WINDOW,
+                f"the directory of {origin} expired at {directory.expires}, before {now}",
+            )
         return ResolvedKey(directory.key(keyid), directory)
 
     def _bind(self) -> None:
@@ -216,24 +238,43 @@ class DirectoryResolver:
                 "this resolver is bound to another event loop; share it through one SyncRuntime"
             )
 
-    async def _stored(self, origin: Origin, now: UnixSeconds) -> VerifiedDirectory | None:
-        """The stored directory, when it is ``origin``'s own and still valid at ``now``."""
-        directory = await self._store.get(origin)
-        if directory is None or directory.origin != origin or now > directory.expires:
+    def _verified(self, response: DirectoryResponse, origin: Origin) -> VerifiedDirectory:
+        """``response`` verified for ``origin`` under the resolver's limits, as fetched."""
+        return verify_directory(response, origin, response.fetched_at, self._limits)
+
+    async def _stored(self, origin: Origin, at: UnixSeconds) -> VerifiedDirectory | None:
+        """The stored directory of ``origin``, verified again and unexpired at ``at``.
+
+        A stored response that doesn't verify, such as another origin's, is a miss.
+        """
+        response = await self._store.get(origin)
+        if response is None:
             return None
-        return directory
+        try:
+            directory = self._verified(response, origin)
+        except WebBotAuthError as e:
+            logger.warning(
+                "the stored directory of %s doesn't verify, so it is fetched again: %s %s",
+                origin,
+                e.reason,
+                e,
+            )
+            return None
+        return None if at > directory.expires else directory
 
-    def _fresh(self, directory: VerifiedDirectory | None, now: UnixSeconds) -> bool:
-        age = 0 if directory is None else now - directory.evidence.fetched_at
-        return directory is not None and age < self._cache.max_cache_age
+    def _fresh(self, directory: VerifiedDirectory, at: UnixSeconds) -> bool:
+        """Younger than the cache age at ``at``; a fetch stamped after ``at`` isn't."""
+        age = at - directory.evidence.fetched_at
+        return 0 <= age < self._cache.max_cache_age
 
-    async def _directory(self, origin: Origin, now: UnixSeconds) -> VerifiedDirectory:
+    async def _directory(self, origin: Origin) -> VerifiedDirectory:
+        now = self._clock()
         stored = await self._stored(origin, now)
         if stored is not None and self._fresh(stored, now):
             return stored
         flight = self._flights.get(origin)
         if flight is None:
-            flight = asyncio.ensure_future(self._refresh(origin, now))
+            flight = asyncio.ensure_future(self._refresh(origin))
             self._flights[origin] = flight
             flight.add_done_callback(partial(self._landed, origin))
         return await asyncio.shield(flight)
@@ -244,12 +285,13 @@ class DirectoryResolver:
         if not flight.cancelled():
             flight.exception()  # retrieved here too, so a flight nobody awaits stays quiet
 
-    async def _failing(self, origin: Origin, now: UnixSeconds) -> bool:
+    async def _failing(self, origin: Origin, at: UnixSeconds) -> bool:
         until = await self._store.failure_until(origin)
-        return until is not None and now < until
+        return until is not None and at < until
 
-    async def _refresh(self, origin: Origin, now: UnixSeconds) -> VerifiedDirectory:
+    async def _refresh(self, origin: Origin) -> VerifiedDirectory:
         """One fetch for ``origin``; it rechecks the store, which a landed flight may fill."""
+        now = self._clock()
         stored = await self._stored(origin, now)
         if stored is not None and self._fresh(stored, now):
             return stored
@@ -261,7 +303,7 @@ class DirectoryResolver:
             )
         try:
             response = await self._fetcher.fetch(origin, limits=self._limits, now=now)
-            directory = verify_directory(response, origin, now, self._limits)
+            directory = self._verified(response, origin)
         except WebBotAuthError as e:
             until = UnixSeconds(now + self._cache.negative_ttl)
             await self._store.record_failure(origin, until)
@@ -277,7 +319,7 @@ class DirectoryResolver:
                 return stored  # a failed fetch doesn't evict
             raise
         # A directory that resolves is evidence: it replaces the entry, with or without the key.
-        await self._store.put(directory)
+        await self._store.put(origin, response)
         return directory
 
     async def aclose(self) -> None:

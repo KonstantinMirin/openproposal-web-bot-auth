@@ -17,14 +17,14 @@ from collections.abc import Callable, Mapping
 
 import httpx
 
-from .directory import DirectoryResponse, VerifiedDirectory, publish_directory, verify_directory
+from .directory import DirectoryResponse, publish_directory
 from .fetcher import HttpxDirectoryFetcher
 from .keys import Ed25519Key
 from .message import Answer, HeaderLines
 from .ports import DirectoryStore
 from .replay import NonceStore
 from .resolver import DirectoryResolver
-from .values import Clock, Origin, Seconds, UnixSeconds
+from .values import Clock, Origin, Seconds, UnixSeconds, system_clock
 
 _NOT_FOUND = Answer(404, HeaderLines(), b"")
 
@@ -48,12 +48,17 @@ def directory_transport(responses: Mapping[Origin, Answer]) -> httpx.MockTranspo
     return httpx.MockTransport(handler)
 
 
-def served_resolver(directories: Mapping[Origin, Answer]) -> DirectoryResolver:
+def served_resolver(
+    directories: Mapping[Origin, Answer], *, clock: Clock = system_clock
+) -> DirectoryResolver:
     """A resolver that fetches each origin's directory from ``directories``, with no network.
 
-    The fetch runs the same bounded read as one over the network.
+    The fetch runs the same bounded read as one over the network. ``clock`` is
+    the resolver's own: it stamps each fetch, and the directory is verified
+    at that time.
     """
-    return DirectoryResolver(HttpxDirectoryFetcher(transport=directory_transport(directories)))
+    fetcher = HttpxDirectoryFetcher(transport=directory_transport(directories))
+    return DirectoryResolver(fetcher, clock=clock)
 
 
 # ── the store contracts ───────────────────────────────────────────────────
@@ -62,14 +67,14 @@ def served_resolver(directories: Mapping[Origin, Answer]) -> DirectoryResolver:
 _AT = UnixSeconds(1794052800)
 
 
-def _directory(host: str, key: Ed25519Key) -> VerifiedDirectory:
-    """A real verified directory of ``https://<host>``, fetched at :data:`_AT`."""
+def _directory(host: str, key: Ed25519Key) -> tuple[Origin, DirectoryResponse]:
+    """``https://<host>`` and a real signed directory response of it, fetched at :data:`_AT`."""
     origin = Origin(host)
     published = publish_directory(origin, [key], now=_AT)
     fetched = DirectoryResponse(
         origin.directory_url, published.status, published.headers, published.body, _AT
     )
-    return verify_directory(fetched, origin, _AT)
+    return origin, fetched
 
 
 def _require(holds: bool, rule: str) -> None:
@@ -78,43 +83,45 @@ def _require(holds: bool, rule: str) -> None:
         raise AssertionError(f"the store breaks its contract: {rule}")
 
 
-def _same(got: VerifiedDirectory | None, want: VerifiedDirectory, rule: str) -> None:
-    """``got`` is ``want``: the same origin, keys, expiry, and evidence."""
+def _same(got: DirectoryResponse | None, want: DirectoryResponse, rule: str) -> None:
+    """``got`` is ``want``: the same URL, status, field lines, body bytes, and fetch time."""
     _require(got is not None, f"{rule} (get returned nothing)")
     if got is not None:
-        found = (got.origin, list(got.keys), got.expires, got.evidence)
-        _require(found == (want.origin, list(want.keys), want.expires, want.evidence), rule)
+        found = (got.url, got.status, got.headers.items(), got.body, got.fetched_at)
+        expected = (want.url, want.status, want.headers.items(), want.body, want.fetched_at)
+        _require(found == expected, rule)
 
 
 async def check_directory_store(make: Callable[[], DirectoryStore]) -> None:
     """Checks the stores ``make`` returns, each empty, against the DirectoryStore contract.
 
-    A store keeps each directory under its own origin, in either order of
-    puts, replaces only that origin's, and keeps each origin's failure
-    deadline apart from the others'.
+    A store keeps each directory response under its origin, in either order
+    of puts, replaces only that origin's, gives back the exact bytes and
+    fetch time it was given, and keeps each origin's failure deadline apart
+    from the others'.
     """
     key = Ed25519Key.generate()
     a, b = _directory("a.store-check.example", key), _directory("b.store-check.example", key)
     for first, second in ((a, b), (b, a)):
         store = make()
-        _require(await store.get(first.origin) is None, "an empty store holds nothing")
-        await store.put(first)
-        await store.put(second)
-        _same(await store.get(first.origin), first, "a put keeps other origins' directories")
-        _same(await store.get(second.origin), second, "a put keeps its origin's directory")
+        _require(await store.get(first[0]) is None, "an empty store holds nothing")
+        await store.put(*first)
+        await store.put(*second)
+        _same(await store.get(first[0]), first[1], "a put keeps other origins' directories")
+        _same(await store.get(second[0]), second[1], "a put keeps its origin's directory")
     store = make()
-    await store.put(a)
-    await store.put(b)
+    await store.put(*a)
+    await store.put(*b)
     again = _directory("a.store-check.example", Ed25519Key.generate())
-    await store.put(again)
-    _same(await store.get(a.origin), again, "a put replaces its origin's directory")
-    _same(await store.get(b.origin), b, "a put replaces no other origin's directory")
+    await store.put(*again)
+    _same(await store.get(a[0]), again[1], "a put replaces its origin's directory")
+    _same(await store.get(b[0]), b[1], "a put replaces no other origin's directory")
     until = UnixSeconds(_AT + 60)
-    await store.record_failure(a.origin, until)
-    _require(await store.failure_until(a.origin) == until, "a failure deadline is kept")
-    _require(await store.failure_until(b.origin) is None, "a failure is its origin's alone")
-    await store.record_failure(a.origin, UnixSeconds(until + 60))
-    _require(await store.failure_until(a.origin) == until + 60, "a later failure replaces one")
+    await store.record_failure(a[0], until)
+    _require(await store.failure_until(a[0]) == until, "a failure deadline is kept")
+    _require(await store.failure_until(b[0]) is None, "a failure is its origin's alone")
+    await store.record_failure(a[0], UnixSeconds(until + 60))
+    _require(await store.failure_until(a[0]) == until + 60, "a later failure replaces one")
 
 
 async def check_nonce_store(make: Callable[[Clock], NonceStore]) -> None:

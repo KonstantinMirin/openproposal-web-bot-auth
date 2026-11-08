@@ -21,9 +21,9 @@ directory publishes the key.
 
 **These keys are valid only for grading against this suite.** WBA section 6.8
 says test keys "MUST NOT be used in production", and verifiers SHOULD reject
-them when detected. Pass `published_key_ids()` from
-`iab_agentic_primitives.web_bot_auth.conformance` as `reject_keyids` to a
-production `RequestVerifier`.
+them when detected. This library's `RequestVerifier` and `ResponseVerifier`
+always refuse them (`rules.TEST_KEY_IDS`), unless a conformance run makes them
+with `keys=CONFORMANCE_KEYS`.
 
 The origins `https://buyer.example.com`, `https://seller.example.com`, and
 `https://other.example.com` are placeholders. A harness serves each directory from

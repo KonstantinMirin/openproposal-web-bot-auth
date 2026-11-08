@@ -38,12 +38,12 @@ from typing import Literal, Protocol
 from iab_agentic_primitives.web_bot_auth import (
     Refusal,
     RequestVerifier,
-    ServerIdentity,
     UnixSeconds,
     VerifiedRequest,
     WebBotAuthError,
     refusal_response,
 )
+from iab_agentic_primitives.web_bot_auth.asgi import ServerEdge
 from starlette.requests import Request
 
 from persistence.values import HeaderLine, KeptRequest, Origin, Provenance, SignedRequest, Signer
@@ -154,9 +154,11 @@ class IdentityBoundary:
     """Confirms the presented credential and resolves it to this seller's principal."""
 
     def __init__(
-        self, directory: PrincipalDirectory, verifier: RequestVerifier, identity: ServerIdentity
+        self, directory: PrincipalDirectory, verifier: RequestVerifier, edge: ServerEdge
     ) -> None:
-        self._directory, self._verifier, self._identity = directory, verifier, identity
+        """`edge` is the seller's one identity, whose base URL every request is rebuilt on; the
+        verifier verifies for the same identity."""
+        self._directory, self._verifier, self._edge = directory, verifier, edge
 
     async def resolve(self, request: Request, body: bytes) -> Caller:
         """The caller of `request`, whose body is `body`; raises `Refused`.
@@ -164,7 +166,7 @@ class IdentityBoundary:
         The body is read before the credential is confirmed, because the
         signature covers it through `Content-Digest`. Nothing parses it here.
         """
-        kept = request_of(request.scope, self._identity, body)
+        kept = request_of(request.scope, self._edge, body)
         presented = _presented(kept)
         if presented is None:
             return PublicCaller()

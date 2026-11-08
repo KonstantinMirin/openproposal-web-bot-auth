@@ -47,6 +47,7 @@ from .rules import (
     REQUEST,
     RESPONSE,
     SIGNATURE_TAG,
+    TEST_KEY_IDS,
     Rules,
     signature_agent_component,
     web_bot_auth_label,
@@ -74,8 +75,6 @@ SAME_ORIGIN: Final = "same-origin"
 ExpectedOrigin = Origin | Literal["same-origin"] | None
 
 M = TypeVar("M", HTTPRequest, HTTPResponse)
-N = TypeVar("N", str, str | None)
-T = TypeVar("T")
 
 
 class _Token:
@@ -199,7 +198,7 @@ def _select(lines: HeaderLines) -> _Selected:
     return _Selected(member, select_signature_agent(fields, member.label))
 
 
-def _check_parameters(
+def _check_parameters[M: (HTTPRequest, HTTPResponse), N: (str, str | None)](
     member: SignatureMember, rules: Rules[M, N], now: UnixSeconds
 ) -> tuple[KeyId, N]:
     """Check the parameters: ``keyid``, ``alg``, the window, and the nonce rule.
@@ -214,7 +213,7 @@ def _check_parameters(
     return member.keyid, rules.nonce_of(member.nonce)
 
 
-def _check_components(
+def _check_components[M: (HTTPRequest, HTTPResponse), N: (str, str | None)](
     member: SignatureMember, required: tuple[ComponentId, ...], rules: Rules[M, N]
 ) -> None:
     """Check the components: the signature covers every one the rules require."""
@@ -322,7 +321,7 @@ def _log_refusal(role: str, selected: _Selected | None, error: WebBotAuthError) 
     )
 
 
-async def _logged(
+async def _logged[T](
     role: str, message: HTTPRequest | HTTPResponse, verify: Callable[[_Selected], Awaitable[T]]
 ) -> T:
     """Selects the signature on ``message`` and runs ``verify`` on it, logging a refusal."""
@@ -339,24 +338,58 @@ async def _logged(
 
 
 @dataclass(frozen=True, slots=True, init=False)
+class KeyPolicy:
+    """Which key ids a verifier refuses, checked once when it is made.
+
+    A verifier always refuses the published test keys,
+    :data:`~.rules.TEST_KEY_IDS` (Web Bot Auth section 6.8), and the key ids
+    ``reject_keyids`` lists on top of them. ``accept_test_keys`` lets the test
+    keys verify, for a conformance run and nothing else;
+    :data:`CONFORMANCE_KEYS` is that policy. ``reject_keyids`` is a
+    collection of strings, never a bare string, and ``accept_test_keys`` a
+    ``bool``; anything else raises :class:`ConfigurationError`.
+    """
+
+    reject_keyids: frozenset[KeyId]
+    accept_test_keys: bool
+
+    def __init__(
+        self, *, reject_keyids: Collection[str] = (), accept_test_keys: bool = False
+    ) -> None:
+        if not isinstance(accept_test_keys, bool):
+            raise ConfigurationError(f"accept_test_keys is True or False, not {accept_test_keys!r}")
+        object.__setattr__(self, "reject_keyids", key_id_set(reject_keyids))
+        object.__setattr__(self, "accept_test_keys", accept_test_keys)
+
+    @property
+    def refused(self) -> frozenset[KeyId]:
+        """Every key id the verifier refuses: the listed ones, and the test keys unless accepted."""
+        return self.reject_keyids | (frozenset() if self.accept_test_keys else TEST_KEY_IDS)
+
+
+#: The default policy: refuse the published test keys.
+DEFAULT_KEYS: Final = KeyPolicy()
+#: The policy of a conformance run, whose vectors are signed with the published test keys.
+CONFORMANCE_KEYS: Final = KeyPolicy(accept_test_keys=True)
+
+
+@dataclass(frozen=True, slots=True, init=False)
 class _Verifier:
-    """What both verifiers hold, fixed when they are made: the resolver, the clock, the
-    key ids they refuse."""
+    """What both verifiers hold, fixed when they are made: the resolver, the clock, and
+    the :class:`KeyPolicy` of the key ids they refuse."""
 
     resolver: KeyResolver
     clock: Clock
-    reject_keyids: frozenset[KeyId]
+    keys: KeyPolicy
 
     def __init__(
-        self,
-        resolver: KeyResolver,
-        *,
-        clock: Clock = system_clock,
-        reject_keyids: Collection[str] = (),
+        self, resolver: KeyResolver, *, clock: Clock = system_clock, keys: KeyPolicy = DEFAULT_KEYS
     ) -> None:
+        if not isinstance(keys, KeyPolicy):
+            raise ConfigurationError(f"keys is a KeyPolicy, not {keys!r}")
         object.__setattr__(self, "resolver", resolver)
         object.__setattr__(self, "clock", clock)
-        object.__setattr__(self, "reject_keyids", key_id_set(reject_keyids))
+        object.__setattr__(self, "keys", keys)
 
     def _now(self, now: UnixSeconds | None) -> UnixSeconds:
         return self.clock() if now is None else now
@@ -371,7 +404,7 @@ class _Verifier:
     ) -> _Authenticated:
         """Resolve the key and verify the signature, with the library checking ``required``."""
         member = selected.member
-        if keyid in self.reject_keyids:
+        if keyid in self.keys.refused:
             raise refuse(Refusal.REJECTED_KEY, f"key {keyid} is refused")
         resolved = await self.resolver.resolve(selected.origin, keyid, now=now)
         body = _covered_body(member, message.headers, message.body)
@@ -392,8 +425,9 @@ class RequestVerifier(_Verifier):
     request signed for one server doesn't verify at another. ``nonces``
     records nonces; share one store across every worker that verifies
     requests for the same deployment (:class:`MemoryNonceStore` serves one
-    process). ``reject_keyids`` lists key ids to refuse, such as the
-    published test keys (Web Bot Auth section 6.8).
+    process). ``keys`` is the :class:`KeyPolicy`: the published test keys
+    are always refused (Web Bot Auth section 6.8), with any key ids it lists
+    on top; only a conformance run passes :data:`CONFORMANCE_KEYS`.
     """
 
     identity: ServerIdentity
@@ -406,9 +440,9 @@ class RequestVerifier(_Verifier):
         identity: ServerIdentity,
         nonces: NonceStore,
         clock: Clock = system_clock,
-        reject_keyids: Collection[str] = (),
+        keys: KeyPolicy = DEFAULT_KEYS,
     ) -> None:
-        _Verifier.__init__(self, resolver, clock=clock, reject_keyids=reject_keyids)
+        _Verifier.__init__(self, resolver, clock=clock, keys=keys)
         object.__setattr__(self, "identity", identity)
         object.__setattr__(self, "nonces", nonces)
 
@@ -451,8 +485,8 @@ class ResponseVerifier(_Verifier):
     an unbound response never verifies. A responder names its own origin
     (OpenProposal § 2.8.2), so by default the response must be signed by the
     identity of the host the request went to. It is immutable. It takes the
-    ``resolver``, ``clock``, and ``reject_keyids`` a :class:`RequestVerifier`
-    takes.
+    ``resolver``, ``clock``, and ``keys`` a :class:`RequestVerifier` takes,
+    and refuses the published test keys the same way.
     """
 
     async def verify(
@@ -490,8 +524,11 @@ class ResponseVerifier(_Verifier):
 
 
 __all__ = [
+    "CONFORMANCE_KEYS",
+    "DEFAULT_KEYS",
     "SAME_ORIGIN",
     "ExpectedOrigin",
+    "KeyPolicy",
     "RequestVerifier",
     "ResponseVerifier",
     "VerifiedRequest",

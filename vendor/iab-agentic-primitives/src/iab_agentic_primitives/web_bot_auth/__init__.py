@@ -89,8 +89,10 @@ from .values import (
     system_clock,
 )
 from .verifier import (
+    CONFORMANCE_KEYS,
     SAME_ORIGIN,
     ExpectedOrigin,
+    KeyPolicy,
     RequestVerifier,
     ResponseVerifier,
     VerifiedRequest,
@@ -101,6 +103,7 @@ from .verifier import (
 __all__ = [
     "ALGORITHM",
     "CLOCK_SKEW",
+    "CONFORMANCE_KEYS",
     "DIRECTORY_MEDIA_TYPE",
     "DIRECTORY_PATH",
     "DIRECTORY_TAG",
@@ -126,6 +129,7 @@ __all__ = [
     "HeaderLines",
     "Headers",
     "KeyId",
+    "KeyPolicy",
     "KeyResolver",
     "KeySet",
     "MemoryDirectoryStore",

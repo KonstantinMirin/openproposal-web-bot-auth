@@ -109,6 +109,18 @@ class HeaderLines:
         return None if value is None else value.split(";")[0].strip().lower()
 
 
+def target_uri(url: str) -> str:
+    """``url`` as the profile signs and rebuilds it: without an empty query.
+
+    A server can't tell ``https://seller.example.com/p?`` from
+    ``https://seller.example.com/p`` (ASGI gives both the query string
+    ``b""``), so the signer and the server's edge both drop the ``?``. Any
+    other URL is returned as given.
+    """
+    head, mark, query = url.partition("?")
+    return head if mark and not query else url
+
+
 def _header_lines(headers: Headers | None) -> HeaderLines:
     return headers if isinstance(headers, HeaderLines) else HeaderLines(headers)
 
@@ -171,4 +183,5 @@ __all__ = [
     "HTTPResponse",
     "HeaderLines",
     "Headers",
+    "target_uri",
 ]

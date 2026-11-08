@@ -26,13 +26,13 @@ from __future__ import annotations
 import re
 import secrets
 from dataclasses import dataclass, replace
-from typing import Self, TypeVar
+from typing import Self
 
 from . import _sig
 from ._wire import ContentDigestError, check_content_digest, content_digest
 from .errors import ConfigurationError, SigningError
 from .keys import Ed25519Key
-from .message import HeaderLines, HTTPRequest, HTTPResponse
+from .message import HeaderLines, HTTPRequest, HTTPResponse, target_uri
 from .rules import (
     MAX_LIFETIME,
     MESSAGE_WINDOW,
@@ -45,9 +45,6 @@ from .rules import (
     validate_nonce,
 )
 from .values import Clock, KeyId, Origin, UnixSeconds, b64url_encode, system_clock
-
-M = TypeVar("M", HTTPRequest, HTTPResponse)
-N = TypeVar("N", str, str | None)
 
 #: A Structured Fields Dictionary key, which a signature label must be (RFC 9651 section 3.2).
 _LABEL = re.compile(r"[a-z*][a-z0-9_.*-]*")
@@ -104,7 +101,7 @@ def _digest_lines(lines: HeaderLines, body: bytes) -> HeaderLines:
     return lines
 
 
-def _prepared(message: M, config: SignerConfig) -> M:
+def _prepared[M: (HTTPRequest, HTTPResponse)](message: M, config: SignerConfig) -> M:
     """``message`` with the lines its signature adds: ``Content-Digest`` and ``Signature-Agent``."""
     lines = message.headers
     if lines.carries_signature_field() or "signature-agent" in lines:
@@ -117,7 +114,7 @@ def _prepared(message: M, config: SignerConfig) -> M:
     return replace(message, headers=lines.with_added("Signature-Agent", agent))
 
 
-def _sign(
+def _sign[M: (HTTPRequest, HTTPResponse), N: (str, str | None)](
     message: M, config: SignerConfig, rules: Rules[M, N], *, now: UnixSeconds | None, nonce: N
 ) -> M:
     """``message`` signed under ``rules`` as ``config`` says: the one signing core."""
@@ -170,13 +167,16 @@ class RequestSigner(_Signer):
         body and none given), ``Signature-Agent``, ``Signature-Input``, and ``Signature``.
 
         ``nonce`` is a fresh 64-byte nonce by default; one given must be in a
-        form the profile accepts. Raises :class:`SigningError` for a request
-        the profile can't sign.
+        form the profile accepts. The URL is signed, and returned, as
+        :func:`~.message.target_uri` gives it, without an empty query, as a
+        server's edge rebuilds it; send the request to the returned URL.
+        Raises :class:`SigningError` for a request the profile can't sign.
         """
         chosen = generate_nonce() if nonce is None else nonce
         if not validate_nonce(chosen):
             raise SigningError(NONCE_RULE)
-        return _sign(request, self.config, REQUEST, now=now, nonce=chosen)
+        target = replace(request, url=target_uri(request.url))
+        return _sign(target, self.config, REQUEST, now=now, nonce=chosen)
 
 
 @dataclass(frozen=True, slots=True)

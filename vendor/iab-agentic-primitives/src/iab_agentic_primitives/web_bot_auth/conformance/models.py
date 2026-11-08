@@ -71,7 +71,7 @@ def _adapter(kind: object) -> TypeAdapter[T]:
     return cast(TypeAdapter[T], found)
 
 
-def read(kind: type[T], text: str | bytes) -> T:
+def read[T](kind: type[T], text: str | bytes) -> T:
     """Reads the JSON ``text`` as a ``kind``; ``pydantic.ValidationError`` when it isn't one."""
     adapter: TypeAdapter[T] = _adapter(kind)
     return adapter.validate_json(text)

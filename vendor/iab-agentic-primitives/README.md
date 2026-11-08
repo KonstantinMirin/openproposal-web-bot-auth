@@ -65,7 +65,7 @@ This library follows semantic versioning (semver):
 
 ## Development
 
-Requires Python >= 3.11 and [uv](https://docs.astral.sh/uv/).
+Requires Python >= 3.12 and [uv](https://docs.astral.sh/uv/).
 
 ```bash
 uv run pytest        # tests

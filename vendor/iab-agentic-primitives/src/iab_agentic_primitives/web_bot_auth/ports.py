@@ -3,9 +3,9 @@
 - :class:`KeyResolver` is what a verifier calls: ``(origin, keyid)`` at
   ``now`` to a :class:`ResolvedKey`.
 - :class:`DirectoryFetcher` fetches a directory response from the network.
-- :class:`DirectoryStore` keeps verified directories and failure deadlines,
-  and only keeps them: the resolver decides what a stored directory is still
-  good for.
+- :class:`DirectoryStore` keeps directory responses and failure deadlines as
+  plain data, and only keeps them: the resolver verifies what it returns
+  again, and decides what a stored directory is still good for.
 
 :class:`~.resolver.DirectoryResolver` composes a fetcher and a store;
 :class:`~.fetcher.HttpxDirectoryFetcher` and
@@ -68,20 +68,25 @@ class DirectoryFetcher(Protocol):
 
 @runtime_checkable
 class DirectoryStore(Protocol):
-    """Keeps each origin's last verified directory, and when its failed fetches stop holding.
+    """Keeps each origin's last directory response, and when its failed fetches stop holding.
 
-    The store persists and decides nothing. :meth:`put` keeps a directory
-    under its own origin, replacing that origin's last one and no other's;
-    :meth:`get` returns what :meth:`put` kept for ``origin``, or ``None``. The
-    resolver checks what :meth:`get` returns: its origin, its ``expires``,
-    and its age. :meth:`record_failure` keeps the time until which a failed
+    The store persists plain data and decides nothing. :meth:`put` keeps the
+    :class:`~.directory.DirectoryResponse` a resolver verified for
+    ``origin``, replacing that origin's last one and no other's; :meth:`get`
+    returns what :meth:`put` kept for ``origin``, or ``None``. A response is
+    its URL, status, field lines, body bytes, and ``fetched_at``, so a store
+    outside the process can serialize it, for example from
+    :meth:`~.directory.DirectoryResponse.document`. The resolver verifies
+    what :meth:`get` returns again, as fetched and under its own limits,
+    then judges its expiry and age; a response that doesn't verify is a
+    cache miss. :meth:`record_failure` keeps the time until which a failed
     fetch of ``origin`` holds, and :meth:`failure_until` returns it, or
     ``None``.
     """
 
-    async def get(self, origin: Origin) -> VerifiedDirectory | None: ...
+    async def get(self, origin: Origin) -> DirectoryResponse | None: ...
 
-    async def put(self, directory: VerifiedDirectory) -> None: ...
+    async def put(self, origin: Origin, response: DirectoryResponse) -> None: ...
 
     async def record_failure(self, origin: Origin, until: UnixSeconds) -> None: ...
 

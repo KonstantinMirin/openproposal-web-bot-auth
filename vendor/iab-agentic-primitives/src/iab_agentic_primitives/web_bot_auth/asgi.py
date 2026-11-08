@@ -4,6 +4,11 @@ opt-in, require a signature.
 These are plain ASGI and import no framework, so they work with Starlette,
 FastAPI, or any ASGI server.
 
+- :class:`ServerEdge` is the server's one identity at its edges, with the
+  signer, the directory, and the confirmer that depend on it, checked against
+  each other once. Both middlewares take it, and :meth:`ServerEdge.request_url`
+  rebuilds a request's URL on it, so the request a server verifies and the
+  request it binds a response to are rebuilt from one base URL.
 - :class:`ResponseSigningMiddleware` signs each buffered response and binds it
   to the request it answers, and serves the directory of the key it signs
   with. It passes streaming responses (``text/event-stream``) through unsigned.
@@ -26,12 +31,12 @@ from __future__ import annotations
 import logging
 from collections.abc import Awaitable, Callable, Iterable, Mapping, MutableMapping
 from dataclasses import dataclass
-from typing import Literal, TypeVar
+from typing import Literal
 from urllib.parse import quote
 
 from .directory import DirectoryPublisher
 from .errors import ConfigurationError, SigningError, WebBotAuthError
-from .message import Answer, HeaderLines, HTTPRequest, HTTPResponse
+from .message import Answer, HeaderLines, HTTPRequest, HTTPResponse, target_uri
 from .presentation import (
     body_too_large_response,
     method_not_allowed_response,
@@ -56,10 +61,8 @@ logger = logging.getLogger(__name__)
 
 # ── reading ASGI mappings, typed once ─────────────────────────────────────
 
-T = TypeVar("T")
 
-
-def _of_type(mapping: Scope | Message, key: str, kind: type[T], default: T) -> T:
+def _of_type[T](mapping: Scope | Message, key: str, kind: type[T], default: T) -> T:
     value = mapping.get(key, default)
     if not isinstance(value, kind):
         raise TypeError(f"ASGI {key!r} is a {kind.__name__}, not {value!r}")
@@ -104,15 +107,15 @@ def _checked_identity(identity: object) -> ServerIdentity:
     return identity
 
 
-def request_url(scope: Scope, identity: ServerIdentity) -> str:
-    """Rebuilds the absolute URL the client requested, on the server's own base URL.
+def _checked_edge(edge: object) -> ServerEdge:
+    if not isinstance(edge, ServerEdge):
+        raise ConfigurationError(f"edge is a ServerEdge, not {edge!r}")
+    return edge
 
-    ``identity.base_url``, such as ``https://seller.example.com``, is the
-    server's public base URL. It is required: the ``Host`` header is the
-    client's claim, and a signature covers ``@authority`` and ``@target-uri``
-    so that a request signed for one server doesn't verify at another.
-    """
-    root = _checked_identity(identity).base_url
+
+def _request_url(scope: Scope, identity: ServerIdentity) -> str:
+    """The absolute URL the client requested, rebuilt on ``identity.base_url``."""
+    root = identity.base_url
     raw_path = _of_type(scope, "raw_path", bytes, b"")
     path = (
         raw_path.decode("latin-1")
@@ -120,7 +123,7 @@ def request_url(scope: Scope, identity: ServerIdentity) -> str:
         else quote(_of_type(scope, "path", str, "/"), safe="/:@!$&'()*+,;=-._~%")
     )
     query = _of_type(scope, "query_string", bytes, b"").decode("latin-1")
-    return f"{root}{path}" + (f"?{query}" if query else "")
+    return target_uri(f"{root}{path}?{query}")
 
 
 async def _read_body(
@@ -359,19 +362,81 @@ DEFAULT_SIGNING = SigningPolicy()
 
 
 @dataclass(frozen=True, slots=True, init=False)
+class ServerEdge:
+    """A server's one identity at its edges, and what depends on it, checked together once.
+
+    ``identity`` is the server's :class:`ServerIdentity`, from configuration:
+    the only place the edges read its base URL. ``signer`` signs its responses
+    as ``identity.origin``, and ``publisher`` is the
+    :class:`~.directory.DirectoryPublisher` of that origin, which, for a list
+    of keys, lists ``signer.keyid``. ``confirmer``, when the server verifies
+    requests at its edge, is a :class:`~.roles.RequestConfirmer`, such as a
+    :class:`RequestVerifier`, whose own ``identity`` is ``identity``, base URL
+    included. Any mismatch raises :class:`ConfigurationError` when the edge is
+    made, so a server never starts up accepting requests whose responses its
+    peers would refuse. It is immutable.
+
+    :class:`ResponseSigningMiddleware` and :class:`RequireSignatureMiddleware`
+    take one edge, and :meth:`request_url` rebuilds a request's URL on it, so
+    every request a server verifies or answers is rebuilt on one base URL.
+    """
+
+    identity: ServerIdentity
+    signer: ResponseSigning
+    publisher: DirectoryPublisher
+    confirmer: RequestConfirmer | None
+
+    def __init__(
+        self,
+        identity: ServerIdentity,
+        *,
+        signer: ResponseSigning,
+        publisher: DirectoryPublisher,
+        confirmer: RequestConfirmer | None = None,
+    ) -> None:
+        checked = _checked_identity(identity)
+        if not isinstance(publisher, DirectoryPublisher):
+            raise ConfigurationError(f"publisher is a DirectoryPublisher, not {publisher!r}")
+        if signer.origin != checked.origin:
+            raise ConfigurationError(
+                f"the signer signs as {signer.origin}, but the server's identity is "
+                f"{checked.origin}"
+            )
+        publisher.check_signer(signer.origin, signer.keyid)
+        if confirmer is not None and confirmer.identity != checked:
+            raise ConfigurationError(
+                f"the confirmer verifies requests to {confirmer.identity.base_url}, but the "
+                f"server's base URL is {checked.base_url}"
+            )
+        object.__setattr__(self, "identity", checked)
+        object.__setattr__(self, "signer", signer)
+        object.__setattr__(self, "publisher", publisher)
+        object.__setattr__(self, "confirmer", confirmer)
+
+    def request_url(self, scope: Scope) -> str:
+        """Rebuilds the absolute URL the client requested, on the server's own base URL.
+
+        ``identity.base_url``, such as ``https://seller.example.com``, is the
+        server's public base URL, whatever ``Host`` the client sends: the
+        ``Host`` header is the client's claim, and a signature covers
+        ``@authority`` and ``@target-uri`` so that a request signed for one
+        server doesn't verify at another. An application that verifies at its
+        own boundary passes this URL to its verifier, so a verifier configured
+        for another base URL refuses the request instead of the server
+        answering with responses its peers refuse.
+        """
+        return _request_url(scope, self.identity)
+
+
+@dataclass(frozen=True, slots=True, init=False)
 class ResponseSigningMiddleware:
-    """Signs every buffered response with ``signer``, bound to the request it answers,
+    """Signs every buffered response with ``edge.signer``, bound to the request it answers,
     and serves the directory its peers verify those signatures with.
 
-    ``identity`` is the server's own :class:`ServerIdentity`: the request each
-    response answers is rebuilt on its ``base_url``. ``publisher`` is the
-    :class:`~.directory.DirectoryPublisher` of the same identity, which the
-    middleware serves at the well-known path as :class:`DirectoryMiddleware`
-    does. The three are checked against each other when the middleware is
-    made: ``signer`` signs as the identity's origin, the publisher publishes
-    that origin's directory, and a publisher with a list of keys lists the
-    signer's key. A mismatch raises :class:`ConfigurationError`, so a server
-    never starts up signing what its peers would refuse.
+    ``edge`` is the server's :class:`ServerEdge`: the request each response
+    answers is rebuilt with :meth:`ServerEdge.request_url`, and
+    ``edge.publisher``'s directory is served at the well-known path, as
+    :class:`DirectoryMiddleware` serves it.
 
     :class:`SigningPolicy` holds the options. The middleware passes through
     unsigned the responses of its ``skip_media_types``, which stream, and
@@ -387,32 +452,17 @@ class ResponseSigningMiddleware:
     """
 
     app: ASGIApp
-    signer: ResponseSigning
-    identity: ServerIdentity
+    edge: ServerEdge
     directory: DirectoryMiddleware
     policy: SigningPolicy
 
     def __init__(
-        self,
-        app: ASGIApp,
-        signer: ResponseSigning,
-        *,
-        identity: ServerIdentity,
-        publisher: DirectoryPublisher,
-        policy: SigningPolicy = DEFAULT_SIGNING,
+        self, app: ASGIApp, edge: ServerEdge, *, policy: SigningPolicy = DEFAULT_SIGNING
     ) -> None:
-        checked = _checked_identity(identity)
-        if signer.origin != checked.origin:
-            raise ConfigurationError(
-                f"the signer signs as {signer.origin}, but the server's identity is "
-                f"{checked.origin}"
-            )
-        directory = DirectoryMiddleware(app, publisher)
-        publisher.check_signer(signer.origin, signer.keyid)
+        checked = _checked_edge(edge)
         object.__setattr__(self, "app", app)
-        object.__setattr__(self, "signer", signer)
-        object.__setattr__(self, "identity", checked)
-        object.__setattr__(self, "directory", directory)
+        object.__setattr__(self, "edge", checked)
+        object.__setattr__(self, "directory", DirectoryMiddleware(app, checked.publisher))
         object.__setattr__(self, "policy", policy)
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
@@ -422,11 +472,11 @@ class ResponseSigningMiddleware:
         if scope.get("path") == DIRECTORY_PATH:
             await self.directory(scope, receive, send)
             return
-        request = HTTPRequest(_method(scope), request_url(scope, self.identity), _headers(scope))
+        request = HTTPRequest(_method(scope), self.edge.request_url(scope), _headers(scope))
         policy = self.policy
         options = _Options(send, policy.skip_media_types, policy.max_body_bytes)
         await self.app(
-            _signable_scope(scope), receive, _BufferedResponse(self.signer, request, options)
+            _signable_scope(scope), receive, _BufferedResponse(self.edge.signer, request, options)
         )
 
 
@@ -473,9 +523,12 @@ def _has_body(headers: HeaderLines) -> bool:
 class RequireSignatureMiddleware:
     """Opt-in: verifies inbound signatures on the paths ``policy.prefixes`` names.
 
-    ``confirmer`` is a :class:`~.roles.RequestConfirmer`, such as a
-    :class:`RequestVerifier`; the middleware rebuilds each request URL on the
-    confirmer's own ``identity``. :class:`RequirePolicy` holds the options. An
+    ``edge`` is the server's :class:`ServerEdge`, and its ``confirmer``, such
+    as a :class:`RequestVerifier`, verifies each request; an edge without one
+    raises :class:`ConfigurationError`. The middleware rebuilds each request
+    URL with :meth:`ServerEdge.request_url`, as
+    :class:`ResponseSigningMiddleware` does with the same edge.
+    :class:`RequirePolicy` holds the options. An
     unsigned request is refused (``on_unsigned="refuse"``, the default) or
     passed on with no identity (``"pass"``), decided from its header before
     any of its body is read: a request is signed when it carries
@@ -488,15 +541,22 @@ class RequireSignatureMiddleware:
     """
 
     app: ASGIApp
+    edge: ServerEdge
     confirmer: RequestConfirmer
     policy: RequirePolicy
 
     def __init__(
-        self, app: ASGIApp, confirmer: RequestConfirmer, *, policy: RequirePolicy = DEFAULT_REQUIRE
+        self, app: ASGIApp, edge: ServerEdge, *, policy: RequirePolicy = DEFAULT_REQUIRE
     ) -> None:
-        _checked_identity(confirmer.identity)
+        checked = _checked_edge(edge)
+        if checked.confirmer is None:
+            raise ConfigurationError(
+                "RequireSignatureMiddleware verifies with the edge's confirmer: "
+                "pass ServerEdge(..., confirmer=verifier)"
+            )
         object.__setattr__(self, "app", app)
-        object.__setattr__(self, "confirmer", confirmer)
+        object.__setattr__(self, "edge", checked)
+        object.__setattr__(self, "confirmer", checked.confirmer)
         object.__setattr__(self, "policy", policy)
 
     def _guarded(self, scope: Scope) -> bool:
@@ -512,7 +572,7 @@ class RequireSignatureMiddleware:
             await self.app(scope, receive, send)
             return
         headers = HeaderLines(_headers(scope))
-        url = request_url(scope, self.confirmer.identity)
+        url = self.edge.request_url(scope)
         if not is_signed(headers):
             if self.policy.on_unsigned == "pass":
                 await self.app(scope, receive, send)
@@ -558,7 +618,7 @@ __all__ = [
     "ResponseSigningMiddleware",
     "Scope",
     "Send",
+    "ServerEdge",
     "SigningPolicy",
-    "request_url",
     "verified_request",
 ]

@@ -14,7 +14,6 @@ way. The package doesn't export it. A production signer never needs it.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import TypeVar
 
 from . import _sig
 from ._sig import Mode, SignatureParams
@@ -22,10 +21,8 @@ from ._wire import content_digest, parse_signature_fields
 from .keys import Ed25519Key
 from .message import HTTPRequest, HTTPResponse
 
-M = TypeVar("M", HTTPRequest, HTTPResponse)
 
-
-def sign_unchecked(
+def sign_unchecked[M: (HTTPRequest, HTTPResponse)](
     message: M, key: Ed25519Key, params: SignatureParams, *, mode: Mode = "replace"
 ) -> M:
     """``message`` signed by ``key`` under ``params``, whatever they are.
@@ -37,7 +34,9 @@ def sign_unchecked(
     return _sig.signed(message, key, params, mode=mode)
 
 
-def sign_each_unchecked(message: M, signers: Sequence[tuple[Ed25519Key, SignatureParams]]) -> M:
+def sign_each_unchecked[M: (HTTPRequest, HTTPResponse)](
+    message: M, signers: Sequence[tuple[Ed25519Key, SignatureParams]]
+) -> M:
     """``message`` signed once by each key under its own parameters, as a directory is."""
     return _sig.signed_by_each(message, signers)
 

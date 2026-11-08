@@ -7,7 +7,7 @@ name = "iab-agentic-primitives"
 version = "0.5.1"
 description = "Shared contract library for IAB agentic advertising: primitives, wire protocol, state machines, conformance vectors"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 license = "Apache-2.0"
 dependencies = [
     "pydantic>=2",
@@ -95,13 +95,13 @@ addopts = ["-m", "not interop"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py311"
+target-version = "py312"
 
 # mypy runs only through `make typecheck` (the Web Bot Auth gate). The
 # overrides match the web_bot_auth module and its tests alone, so upstream
 # modules are not held to these settings.
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.12"
 plugins = ["pydantic.mypy"]
 mypy_path = "src"
 explicit_package_bases = true

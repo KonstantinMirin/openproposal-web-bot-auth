@@ -138,10 +138,14 @@ a transport status with no `errors[]` object:
 | `429` | A signature's nonce was seen before | `Accept-Signature` |
 | `503` | The verifier can't record the nonce | `Retry-After` |
 
-The seller signs every agent-facing answer with `ResponseSigningMiddleware`,
-refusals included, and binds it to the request it answers. The same middleware
-serves the seller's signed key directory, and it checks when the app is built
-that the directory lists the key it signs with.
+The seller's identity has one owner, the library's `ServerEdge`: its origin
+and base URL, the key it signs with, and the directory that lists that key,
+which the edge checks against each other when the app is built. The seller
+signs every agent-facing answer with `ResponseSigningMiddleware` over that
+edge, refusals included, and binds it to the request it answers; the same
+middleware serves the signed key directory. The boundary rebuilds every
+request on the edge's base URL, and its verifier verifies for the edge's
+identity.
 
 ## Bearer and Web Bot Auth interop
 
@@ -434,7 +438,7 @@ The live deployment differs from the local test only where production needs it:
   module of [`iab-agentic-primitives`](https://github.com/KonstantinMirin/iab-agentic-primitives-wba/blob/feat/web-bot-auth/WEB_BOT_AUTH.md), documented in its
   `WEB_BOT_AUTH.md`. Every signature, verification, directory, and fetch rule
   comes from it. The demo pins commit
-  `3d76d7216c8c61ceddde976078c91b37c6b3e37f` of the `refactor/wba-architecture`
+  `a7fb27c0141962cf0decc7d458921f5afbe1256e` of the `refactor/wba-architecture`
   branch of
   [`iab-agentic-primitives-wba`](https://github.com/KonstantinMirin/iab-agentic-primitives-wba),
   vendored unchanged in
