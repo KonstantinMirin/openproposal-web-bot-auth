@@ -43,7 +43,6 @@ from iab_agentic_primitives.web_bot_auth import (
     HTTPRequest,
     HTTPResponse,
     MemoryNonceStore,
-    Origin,
     ResponseSigner,
     keyfile,
 )
@@ -53,6 +52,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 from buyer.app import create_app as create_buyer
 from buyer.settings import BuyerSettings
+from persistence.values import Origin
 from seller.app import create_app as create_seller
 from seller.settings import SellerSettings
 from shared.keyring import Keyring

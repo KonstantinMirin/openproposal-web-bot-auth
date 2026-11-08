@@ -16,14 +16,15 @@ from pathlib import Path
 import pytest
 from iab_agentic_primitives.web_bot_auth import (
     DIRECTORY_PATH,
-    Origin,
     ServerIdentity,
     WebBotAuthError,
 )
 
 from persistence.evidence import NoEvidenceError
 from persistence.observe import BuyerRecords, SellerRecords
+from persistence.values import Origin
 from tests.stack import BUYER, SELLER, Stack
+from transport.reverify import reverify_request, reverify_response
 
 DISPLAY = "business-daily-display"
 
@@ -74,9 +75,8 @@ def test_one_directory_fetch_verified_twice_is_kept_once(tmp_path: Path) -> None
         assert seller.directories() == 1
         entry, _ = seller.entries("demo-wba-1")
         assert entry.evidence_id is not None
-        digest = seller.request(entry.evidence_id).directory_digest
-        assert digest is not None
-        kept = seller.directory(digest)
+        kept = seller.request(entry.evidence_id).signer.directory
+        assert kept is not None
     assert kept.url == f"{BUYER}{DIRECTORY_PATH}"
     assert kept.body == served  # the same key set, byte for byte
 
@@ -90,14 +90,14 @@ def test_both_parties_kept_evidence_verifies_again_offline(
         assert commitment.evidence_id is not None
         kept = seller.request(commitment.evidence_id)
         identity = ServerIdentity.from_config(SELLER)
-        again = asyncio.run(seller.reverify_request(kept, identity))
+        again = asyncio.run(reverify_request(kept, identity))
     assert str(again.origin) == BUYER and again.body_covered
     assert again.keyid == stack.buyer_keys.active().thumbprint
 
     with BuyerRecords.open(stack.buyer_dir / "buyer.db") as buyer:
         evidence_id = outcome["evidence_id"]
         assert isinstance(evidence_id, int)
-        answered = asyncio.run(buyer.reverify_response(buyer.response(evidence_id)))
+        answered = asyncio.run(reverify_response(buyer.response(evidence_id)))
         commit_id = outcome["commit_id"]
         assert isinstance(commit_id, int)
         commit = buyer.commit(commit_id)
@@ -127,7 +127,7 @@ def test_a_tampered_kept_request_fails_to_verify_again(
         assert commitment.evidence_id is not None
         kept = seller.request(commitment.evidence_id)
         with pytest.raises(WebBotAuthError):
-            asyncio.run(seller.reverify_request(kept, ServerIdentity.from_config(SELLER)))
+            asyncio.run(reverify_request(kept, ServerIdentity.from_config(SELLER)))
 
 
 def test_a_tampered_kept_answer_fails_to_verify_again(
@@ -140,7 +140,7 @@ def test_a_tampered_kept_answer_fails_to_verify_again(
         evidence_id = outcome["evidence_id"]
         assert isinstance(evidence_id, int)
         with pytest.raises(WebBotAuthError):
-            asyncio.run(buyer.reverify_response(buyer.response(evidence_id)))
+            asyncio.run(reverify_response(buyer.response(evidence_id)))
 
 
 def test_an_unknown_id_is_no_evidence(agreed: tuple[Stack, dict[str, object]]) -> None:

@@ -81,7 +81,9 @@ The code path, in order:
    [`transport/wba.py`](transport/wba.py) and checks `Content-Digest` against the
    body. The boundary then resolves the origin with `for_origin` (stored by
    [`seller/sqlite_store.py`](seller/sqlite_store.py)). It writes nothing: the
-   verified request travels in the credential as a `SignedMessage`.
+   verified request travels in the credential as a `KeptRequest`, with the
+   directory fetch it verified against
+   ([`persistence/values.py`](persistence/values.py)).
 4. A token is confirmed and resolved by one lookup, `for_token`, which matches
    its SHA-256. The seller never stores the token.
 5. The boundary returns a frozen `ResolvedCaller` (a principal, a

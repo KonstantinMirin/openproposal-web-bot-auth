@@ -22,6 +22,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from persistence.values import Origin
 from protocol.values import JsonObject, JsonValue
 from transport.control import OPERATOR_HEADER, Agreed, CloudflareCheck
 
@@ -63,7 +64,7 @@ class Headers(_Part):
 class Directory(_Part):
     """A key directory response: as a party kept it, or as the runner fetched it."""
 
-    url: str | None
+    url: str
     status: int
     #: When the party fetched it; None for the runner's own fetch.
     fetched_at: str | None = None
@@ -154,7 +155,7 @@ class Report(_Part):
     finished_at: str | None = None
     duration_ms: int | None = None
     ok: bool
-    origins: dict[str, str] = Field(default_factory=dict)
+    origins: dict[str, Origin] = Field(default_factory=dict)
     software: dict[str, str | None] = Field(default_factory=dict)
     line_item_ids: list[str] = Field(default_factory=list)
     directories: dict[str, Directory | None] = Field(default_factory=dict)

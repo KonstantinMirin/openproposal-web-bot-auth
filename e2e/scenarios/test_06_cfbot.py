@@ -9,9 +9,10 @@ is kept only with an entry it carried.
 
 import httpx
 from conftest import CFBOT, CFBOT_RUN
-from iab_agentic_primitives.web_bot_auth import DIRECTORY_PATH, Origin, thumbprint
+from iab_agentic_primitives.web_bot_auth import DIRECTORY_PATH, thumbprint
 
 from persistence.observe import SellerRecords
+from persistence.values import Origin
 
 
 def test_cfbot_is_identity_established_only(

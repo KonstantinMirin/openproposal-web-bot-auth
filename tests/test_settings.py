@@ -6,9 +6,9 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 
 import pytest
-from iab_agentic_primitives.web_bot_auth import Origin
 
 from buyer.settings import BuyerSettings
+from persistence.values import Origin
 from runner.settings import RunnerSettings
 from seller.settings import SellerSettings
 from shared.settings import SettingsError
@@ -40,8 +40,8 @@ NOT_ORIGINS = [
 def test_the_seller_defaults_to_the_demo_deployment() -> None:
     settings = SellerSettings.from_env({})
     assert settings == SellerSettings(
-        self_origin=Origin("seller.wba-demo.noetis.dev"),
-        peer_buyer_origin=Origin("buyer.wba-demo.noetis.dev"),
+        self_origin=Origin.parse("https://seller.wba-demo.noetis.dev"),
+        peer_buyer_origin=Origin.parse("https://buyer.wba-demo.noetis.dev"),
         data_dir=Path("/data"),
         keys_dir=Path("/keys"),
     )
@@ -64,7 +64,7 @@ def test_the_seller_reads_every_variable() -> None:
             "DEMO_FAULT_INJECTION": "1",
         }
     )
-    assert settings.self_origin == Origin("seller.example")
+    assert settings.self_origin == Origin.parse("https://seller.example")
     assert settings.peer_buyer_origin.host == "buyer.example"
     assert settings.data_dir == Path("/srv/seller")
     assert settings.key_file == Path("/srv/seller-keys/wba-key.jwk")

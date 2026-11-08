@@ -2,8 +2,8 @@
 
 Both agents declare their routes with these models, and the live runner reads
 every answer through the same ones, so a route and its reader can't drift
-apart. The module imports pydantic only, so the runner reads the answers
-without loading an HTTP framework.
+apart. The module imports pydantic and the pure values only, so the runner
+reads the answers without loading an HTTP framework.
 
 The buyer's `Outcome` is a discriminated union on `state`. Each variant carries
 only its own fields, and every one names the authentication method it used.
@@ -15,9 +15,8 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
+from persistence.values import AuthMethod, Origin
 from protocol.values import JsonObject, JsonValue
-
-from .auth import AuthMethod
 
 #: The header every control call carries the operator key in (transport/operator.py).
 OPERATOR_HEADER = "X-Operator-Key"
@@ -72,7 +71,7 @@ class ReadTrigger(_Answer):
     """`POST /operator/read`: read an issued proposal and verify the seller's answer."""
 
     #: The seller's origin; the buyer's `peer_seller_origin` when omitted.
-    seller: str | None = None
+    seller: Origin | None = None
     proposal_id: str
     credential: AuthMethod = "web_bot_auth"
 
@@ -86,7 +85,7 @@ class CommitTrigger(ReadTrigger):
 class SellerView(_Answer):
     """The seller an outcome is about, as the buyer's own records hold it."""
 
-    origin: str
+    origin: Origin
     domain: str
     legal_name: str
 

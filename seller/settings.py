@@ -20,9 +20,9 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-from iab_agentic_primitives.web_bot_auth import Origin
 from pydantic import SecretStr
 
+from persistence.values import Origin
 from shared import settings as read
 
 

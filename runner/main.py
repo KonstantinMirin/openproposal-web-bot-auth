@@ -36,7 +36,7 @@ from typing import TypeVar
 import httpx
 from pydantic import ValidationError
 
-from transport.auth import AuthMethod
+from persistence.values import AuthMethod
 from transport.control import OPERATOR_HEADER
 from transport.wba import Transport, http_client, tls_context
 
@@ -199,7 +199,7 @@ async def run_once(settings: RunnerSettings, *, transport: Transport | None = No
         finished_at=instant_of(time.time()),
         duration_ms=round((time.time() - started) * 1000),
         ok=not run.failed,
-        origins={party: str(origin) for party, origin in parties.items()},
+        origins=parties,
         software={name: _version(name) for name in ("iab-agentic-primitives", "openproposal-sdk")},
         line_item_ids=[LINE_ITEM],
         directories=directories,

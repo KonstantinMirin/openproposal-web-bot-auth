@@ -20,7 +20,6 @@ from openproposal import (
 )
 from pydantic import ValidationError
 
-from protocol.documents import load_yaml
 from protocol.operations import (
     ProtocolViolation,
     ResultMismatch,
@@ -34,7 +33,7 @@ from protocol.operations import (
     result_for,
 )
 from protocol.values import JsonObject, commitment_key, instant
-from tests._tools import seed_document
+from tests._tools import load_yaml, seed_document
 
 PLAN = load_yaml(Path(__file__).resolve().parent.parent / "buyer" / "plan.yaml")
 NOW = datetime(2027, 1, 1, 12, 30, 15, 999, tzinfo=UTC)

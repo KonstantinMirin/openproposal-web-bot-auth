@@ -18,7 +18,6 @@ from pathlib import Path
 import pytest
 from openproposal import LineItemWrites, Proposal
 
-from protocol.documents import load_yaml
 from protocol.record import (
     REMOVED_PATHS,
     WRITE_PATHS,
@@ -30,7 +29,7 @@ from protocol.record import (
     record_digest,
 )
 from protocol.values import JsonObject, JsonValue
-from tests._tools import seed_document
+from tests._tools import load_yaml, seed_document
 
 FIXTURES = Path(__file__).parent / "fixtures"
 PLAN = load_yaml(Path(__file__).parent.parent / "buyer" / "plan.yaml")

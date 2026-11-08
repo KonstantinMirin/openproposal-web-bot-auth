@@ -14,12 +14,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from iab_agentic_primitives.web_bot_auth import Origin
 from openproposal import AssentEntry, Commit, ErrorObject, dump, dump_json
 from pydantic import SecretStr
 
 from persistence import evidence
 from persistence.sqlite import inserted, one_of, open_db, transaction
+from persistence.values import Origin, SignedResponse
 
 #: Where a commit stands: sent and waiting for a verified answer, or settled.
 CommitState = Literal["pending", "agreed", "rejected"]
@@ -70,7 +70,7 @@ class Counterparty:
 class CommitKey:
     """Which commit: to this seller, on this proposal, for these line items."""
 
-    seller_origin: str
+    seller_origin: Origin
     proposal_id: str
     line_item_ids: tuple[str, ...]
 
@@ -111,10 +111,10 @@ class BuyerRepository:
             (str(seller.origin), seller.domain, seller.legal_name, token),
         )
 
-    def counterparty(self, origin: str) -> Counterparty | None:
+    def counterparty(self, origin: Origin) -> Counterparty | None:
         row = self.db.execute(
             "SELECT origin, domain, legal_name, bearer_token FROM sellers WHERE origin = ?",
-            (origin,),
+            (str(origin),),
         ).fetchone()
         if row is None:
             return None
@@ -132,7 +132,7 @@ class BuyerRepository:
         row = self.db.execute(
             "SELECT id, body, digest_input FROM commits WHERE seller_origin = ?"
             " AND proposal_id = ? AND line_item_ids = ? AND state = 'pending'",
-            (key.seller_origin, key.proposal_id, key.items_column()),
+            (str(key.seller_origin), key.proposal_id, key.items_column()),
         ).fetchone()
         return None if row is None else _pending(row, key)
 
@@ -143,7 +143,7 @@ class BuyerRepository:
             "INSERT INTO commits (seller_origin, proposal_id, line_item_ids, idempotency_key, body,"
             " digest_input, state) VALUES (?, ?, ?, ?, ?, ?, 'pending')",
             (
-                key.seller_origin,
+                str(key.seller_origin),
                 key.proposal_id,
                 key.items_column(),
                 commit.entry.idempotency_key,
@@ -156,7 +156,7 @@ class BuyerRepository:
     def keep_agreement(
         self,
         commit_id: int,
-        response: evidence.StoredResponse,
+        response: SignedResponse,
         entries: Sequence[AssentEntry],
         *,
         attributed: bool,

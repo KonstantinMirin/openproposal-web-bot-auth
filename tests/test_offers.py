@@ -22,19 +22,19 @@ from typing import Protocol
 import httpx
 import pytest
 from fastapi.testclient import TestClient
-from iab_agentic_primitives.web_bot_auth import MemoryNonceStore, Origin, StaticKeyResolver
+from iab_agentic_primitives.web_bot_auth import MemoryNonceStore, StaticKeyResolver
 from openproposal import AssentEntry, LineItemWrites, Proposal, dump_json
 from pydantic import SecretStr
 
-from protocol.documents import load_yaml
+from persistence.values import Origin
 from protocol.operations import compose_commit
 from protocol.record import items_by_id
 from protocol.values import JsonObject, JsonValue
 from seller.app import create_app
-from seller.offers.issuance import load_template
 from seller.seed import seed
 from seller.settings import SellerSettings
 from seller.sqlite_store import SqliteSellerStore
+from tests._tools import load_yaml, seed_template
 
 SELLER = "https://seller.example.com"
 BUYER = "https://buyer.example.com"
@@ -59,7 +59,7 @@ def _entry(role: str, **fields: object) -> AssentEntry:
 def _seed(data_dir: Path, edit: Edit, prior: list[AssentEntry]) -> None:
     """The first-boot records from an edited template, plus a token for buyer-wba."""
     data_dir.mkdir()
-    template = load_template()
+    template = seed_template()
     edit(template)
     store = SqliteSellerStore(data_dir / "seller.db")
     try:

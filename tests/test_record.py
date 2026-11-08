@@ -10,9 +10,9 @@ import pytest
 from openproposal import AssentEntry, LineItemWrites
 
 from protocol.attribution import attributes
-from protocol.documents import load_yaml
 from protocol.record import WriteError, apply_writes, compose, line_items_of, record_digest
 from protocol.values import JsonObject, objects, strings
+from tests._tools import load_yaml
 
 FIXTURES = Path(__file__).parent / "fixtures"
 

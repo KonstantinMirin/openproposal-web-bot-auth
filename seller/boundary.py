@@ -16,7 +16,8 @@ credential. It treats a Web Bot Auth signature and a bearer token the same way:
    read a header, and nothing amends it afterwards.
 
 The boundary writes nothing. A signature's request travels in the credential
-as a `SignedMessage`, and storage keeps it only with an entry it carried.
+as a `KeptRequest`, with the directory fetch it verified against, and storage
+keeps them only with an entry they carried.
 
 `create_app` (seller/app.py) builds the boundary from its collaborators, and
 seller/http.py binds it to `CallerDep`.
@@ -29,31 +30,26 @@ from dataclasses import dataclass
 from typing import Literal, Protocol
 
 from iab_agentic_primitives.web_bot_auth import (
-    HTTPRequest,
-    Origin,
     Refusal,
     RequestVerifier,
     ServerIdentity,
-    VerifiedDirectory,
     VerifiedRequest,
     WebBotAuthError,
     refusal_response,
 )
-from iab_agentic_primitives.web_bot_auth.asgi import request_url
-from starlette.datastructures import Headers
 from starlette.requests import Request
 
+from persistence.values import KeptRequest, Origin
 from protocol.attribution import attributes
+from transport.wba import fetch_of, is_signed, origin_of, request_of, to_library
 
 from .caller import (
     BearerCredential,
     Caller,
-    DirectoryEvidence,
     Principal,
     PublicCaller,
     ResolvedCaller,
     SignatureCredential,
-    SignedMessage,
 )
 from .ports import PrincipalRecord
 
@@ -87,7 +83,7 @@ class Refused(Exception):
 class PrincipalDirectory(Protocol):
     """The boundary's lookups: a principal by its verified origin, or by its token."""
 
-    def for_origin(self, origin: str) -> PrincipalRecord | None: ...
+    def for_origin(self, origin: Origin) -> PrincipalRecord | None: ...
     def for_token(self, token: str) -> PrincipalRecord | None: ...
 
 
@@ -101,10 +97,12 @@ class _PresentedBearer:
     token: str
 
 
-def _presented(headers: Headers) -> _PresentedSignature | _PresentedBearer | None:
+def _presented(
+    request: KeptRequest, authorization: str | None
+) -> _PresentedSignature | _PresentedBearer | None:
     """The credential the caller presented, before anything confirms it."""
-    signed = "signature-input" in headers or "signature" in headers
-    token = _bearer(headers.get("authorization"))
+    signed = is_signed(request.lines)
+    token = _bearer(authorization)
     if signed and token is not None:
         raise Refused(400, "two-credentials", "present a signature or a bearer token, not both")
     if signed:
@@ -138,19 +136,6 @@ def _principal(record: PrincipalRecord) -> Principal:
     return Principal(id=record.id, kind="buyer", legal_name=record.legal_name, domain=record.domain)
 
 
-def _directory(directory: VerifiedDirectory | None) -> DirectoryEvidence | None:
-    if directory is None:
-        return None
-    evidence = directory.evidence
-    return DirectoryEvidence(
-        url=evidence.url,
-        status=evidence.status,
-        headers=evidence.headers.items(),
-        body=evidence.body,
-        fetched_at=evidence.fetched_at,
-    )
-
-
 class IdentityBoundary:
     """Confirms the presented credential and resolves it to this seller's principal."""
 
@@ -165,38 +150,29 @@ class IdentityBoundary:
         The body is read before the credential is confirmed, because the
         signature covers it through `Content-Digest`. Nothing parses it here.
         """
-        presented = _presented(request.headers)
+        kept = request_of(request.scope, self._identity, body)
+        presented = _presented(kept, request.headers.get("authorization"))
         if presented is None:
             return PublicCaller()
         if isinstance(presented, _PresentedBearer):
             return self._resolve_bearer(presented.token)
-        return self._resolve_signed(await self._confirm_signature(request, body))
+        return self._resolve_signed(await self._confirm_signature(kept))
 
-    async def _confirm_signature(self, request: Request, body: bytes) -> SignatureCredential:
+    async def _confirm_signature(self, request: KeptRequest) -> SignatureCredential:
         """The verified signature; the library fetches the origin's directory as needed."""
-        url = request_url(request.scope, self._identity)
-        lines = [(k.decode("latin-1"), v.decode("latin-1")) for k, v in request.headers.raw]
         try:
-            verified = await self._verifier.verify(HTTPRequest(request.method, url, lines, body))
+            verified = await self._verifier.verify(to_library(request))
         except WebBotAuthError as e:
-            raise _signature_refused(e, has_body=bool(body)) from e
-        return _credential(
-            verified,
-            SignedMessage(
-                method=request.method,
-                url=url,
-                headers=tuple(request.headers.raw),
-                body=body,
-                directory=_directory(verified.directory),
-            ),
-        )
+            raise _signature_refused(e, has_body=bool(request.body)) from e
+        return _credential(verified, request)
 
     def _resolve_signed(self, credential: SignatureCredential) -> ResolvedCaller | PublicCaller:
         record = self._directory.for_origin(credential.origin)
         if record is None:
             return PublicCaller(signature=credential)
-        host = Origin.parse(credential.origin).host
-        attributed = attributes(host, record.domain, body_covered=credential.body_covered)
+        attributed = attributes(
+            credential.origin.host, record.domain, body_covered=credential.body_covered
+        )
         return ResolvedCaller(
             principal=_principal(record), credential=credential, attributed=attributed
         )
@@ -218,11 +194,13 @@ class IdentityBoundary:
         )
 
 
-def _credential(verified: VerifiedRequest, message: SignedMessage) -> SignatureCredential:
+def _credential(verified: VerifiedRequest, request: KeptRequest) -> SignatureCredential:
+    directory = verified.directory
     return SignatureCredential(
         method="web_bot_auth",
-        origin=str(verified.origin),
+        origin=origin_of(verified.origin),
         keyid=str(verified.keyid),
         body_covered=verified.body_covered,
-        message=message,
+        request=request,
+        directory=None if directory is None else fetch_of(directory.evidence),
     )

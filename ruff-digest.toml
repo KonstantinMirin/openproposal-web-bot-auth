@@ -1,7 +1,7 @@
 # Layer ban: canonical JSON and SHA-256 come from protocol/ only.
 #
 # Both parties must compute the same digest from the same bytes, so there is one
-# canonicalizer and one hasher: protocol.record (canonical, digest_of,
+# canonicalizer and one hasher: protocol.values.canonical and protocol.record (digest_of,
 # sha256_hex). A second one anywhere else could drift from it.
 #
 # Run as its own stage: `uv run ruff check --config ruff-digest.toml` (make lint).
@@ -18,5 +18,5 @@ select = ["TID251"]
 "e2e/scenarios/test_01_first_contact.py" = ["TID251"]
 
 [lint.flake8-tidy-imports.banned-api]
-"rfc8785".msg = "Canonical JSON comes from protocol.record.canonical."
+"rfc8785".msg = "Canonical JSON comes from protocol.values.canonical."
 "hashlib".msg = "Digests come from protocol.record (digest_of, sha256_hex)."

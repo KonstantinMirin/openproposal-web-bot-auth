@@ -11,11 +11,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 import httpx
-from iab_agentic_primitives.web_bot_auth import Origin, RequestSigner, ResponseVerifier
+from iab_agentic_primitives.web_bot_auth import RequestSigner, ResponseVerifier
 from iab_agentic_primitives.web_bot_auth.httpx import WebBotAuth
 from pydantic import SecretStr
 
-from transport.auth import BearerMethod, SignatureMethod
+from persistence.values import BearerMethod, Origin, SignatureMethod
+from transport.wba import library_origin
 
 
 @dataclass(frozen=True)
@@ -34,7 +35,7 @@ class SignWith:
 
     def auth(self, verifier: ResponseVerifier, seller: Origin) -> httpx.Auth:
         """Signs the request, then verifies the answer and its binding to the request."""
-        return WebBotAuth(self.signer, verifier, expect=seller)
+        return WebBotAuth(self.signer, verifier, expect=library_origin(seller))
 
 
 @dataclass(frozen=True)
@@ -53,7 +54,7 @@ class Bearer:
 
     def auth(self, verifier: ResponseVerifier, seller: Origin) -> httpx.Auth:
         """Sends the request unsigned, and still verifies the seller's signed answer."""
-        return WebBotAuth.verify_only(verifier, expect=seller)
+        return WebBotAuth.verify_only(verifier, expect=library_origin(seller))
 
 
 #: The one credential a request carries.

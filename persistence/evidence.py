@@ -3,52 +3,46 @@
 A party keeps the counterparty's signed message as exact bytes: the method and
 URL or the status, every header line as received or sent, in order and with
 its own case, and the body. A response is stored with the request it is bound
-to. `StoredRequest` and `StoredResponse` carry the library's own `HTTPRequest`
-and `HTTPResponse`, and `EvidenceReader` rebuilds equal ones.
+to. Each is kept and read back as the one value persistence/values.py defines
+for it: a `SignedRequest` or a `SignedResponse`, whose `Signer` names the
+origin and key that signed it.
 
 § 4.1.2 also asks a party to keep "the bytes of the key directory it verified
 against". Each verification stores the directory response it used (a
-`KeptDirectory`, such as the library's `VerifiedDirectory`): the exact body
-bytes, the header lines with that fetch's own directory signatures, and when it
-was fetched. Two rows merge only when all of that is identical, which happens
-when two signatures verified against one cached fetch.
+`DirectoryFetch`): the exact body bytes, the header lines with that fetch's own
+directory signatures, and when it was fetched. Two rows merge only when all of
+that is identical, which happens when two signatures verified against one
+cached fetch.
 
 `EvidenceReader` is the one reader of these tables, for the party itself and
 for observers outside it (the live runner, the e2e scenarios), which open a
-party's database read-only. It verifies a kept message again, offline, against
-the directory bytes kept with it.
+party's database read-only. transport/reverify.py verifies what it reads
+again, offline.
 """
 
 from __future__ import annotations
 
 import json
 import sqlite3
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol, Self
+from typing import Self
 
-from iab_agentic_primitives.web_bot_auth import (
-    DirectoryResponse,
-    HeaderLines,
-    HTTPRequest,
-    HTTPResponse,
-    MemoryNonceStore,
-    Origin,
-    RequestVerifier,
-    ResponseVerifier,
-    ServerIdentity,
-    StaticKeyResolver,
-    VerifiedRequest,
-    VerifiedResponse,
-    parse_directory_response,
-)
-
-from protocol.record import canonical, sha256_hex
-from protocol.values import JsonObject, JsonValue
+from protocol.record import sha256_hex
+from protocol.values import JsonObject, JsonValue, canonical
 
 from .sqlite import inserted
+from .values import (
+    DirectoryFetch,
+    HeaderLine,
+    KeptRequest,
+    KeptResponse,
+    Origin,
+    SignedRequest,
+    SignedResponse,
+    Signer,
+)
 
 DIRECTORIES_SCHEMA = """
 -- A verified key directory response: one row per fetch. body holds the exact
@@ -59,7 +53,7 @@ CREATE TABLE IF NOT EXISTS directories (
     status      INTEGER NOT NULL,
     headers     TEXT NOT NULL,
     body        BLOB NOT NULL,
-    fetched_at  REAL
+    fetched_at  INTEGER NOT NULL
 );
 """
 
@@ -96,95 +90,61 @@ CREATE TABLE IF NOT EXISTS signed_responses (
 SCHEMA = DIRECTORIES_SCHEMA + MESSAGES_SCHEMA
 
 
-class KeptDirectory(Protocol):
-    """A verified key directory response, as fetched: what § 4.1.2 asks a party to keep."""
-
-    @property
-    def url(self) -> str | None: ...
-    @property
-    def status(self) -> int: ...
-    @property
-    def headers(self) -> Iterable[tuple[str, str]]: ...
-    @property
-    def body(self) -> bytes: ...
-    @property
-    def fetched_at(self) -> int | None: ...
+def _lines(lines: tuple[HeaderLine, ...]) -> str:
+    return json.dumps([[name, value] for name, value in lines])
 
 
-@dataclass(frozen=True)
-class StoredRequest:
-    """A request to keep: who signed it, with which key, and the directory that confirmed it."""
-
-    request: HTTPRequest
-    origin: str
-    keyid: str | None
-    directory: KeptDirectory | None = None
+def _decoded(text: str) -> tuple[HeaderLine, ...]:
+    return tuple((str(name), str(value)) for name, value in json.loads(text))
 
 
-@dataclass(frozen=True)
-class StoredResponse:
-    """A verified response to keep, bound to `request`."""
-
-    response: HTTPResponse
-    request: StoredRequest
-    origin: str
-    keyid: str
-    directory: KeptDirectory | None = None
-
-
-def _lines(headers: HeaderLines) -> str:
-    return json.dumps([[name, value] for name, value in headers])
-
-
-def _headers(text: str) -> list[tuple[str, str]]:
-    return [(str(name), str(value)) for name, value in json.loads(text)]
-
-
-def save_request(db: sqlite3.Connection, stored: StoredRequest) -> int:
+def save_request(db: sqlite3.Connection, kept: SignedRequest) -> int:
     """Keeps a request and the directory that confirmed it; returns its row id."""
-    request = stored.request
+    request, signer = kept.request, kept.signer
     cursor = db.execute(
         "INSERT INTO signed_requests (origin, keyid, method, url, headers, body, directory_digest)"
         " VALUES (?, ?, ?, ?, ?, ?, ?)",
         (
-            stored.origin,
-            stored.keyid,
+            str(signer.origin),
+            signer.keyid,
             request.method,
             request.url,
-            _lines(request.headers),
+            _lines(request.lines),
             request.body,
-            save_directory(db, stored.directory),
+            save_directory(db, signer.directory),
         ),
     )
     return inserted(cursor)
 
 
-def save_response(db: sqlite3.Connection, stored: StoredResponse) -> int:
+def save_response(db: sqlite3.Connection, kept: SignedResponse) -> int:
     """Keeps a response, the request it answers, and both directories; returns its row id."""
-    request_id = save_request(db, stored.request)
-    response = stored.response
+    response, signer = kept.response, kept.signer
+    request_id = save_request(
+        db, SignedRequest(request=response.request, signer=kept.request_signer)
+    )
     cursor = db.execute(
         "INSERT INTO signed_responses"
         " (request_id, origin, keyid, status, headers, body, directory_digest)"
         " VALUES (?, ?, ?, ?, ?, ?, ?)",
         (
             request_id,
-            stored.origin,
-            stored.keyid,
+            str(signer.origin),
+            signer.keyid,
             response.status,
-            _lines(response.headers),
+            _lines(response.lines),
             response.body,
-            save_directory(db, stored.directory),
+            save_directory(db, signer.directory),
         ),
     )
     return inserted(cursor)
 
 
-def save_directory(db: sqlite3.Connection, directory: KeptDirectory | None) -> str | None:
+def save_directory(db: sqlite3.Connection, directory: DirectoryFetch | None) -> str | None:
     """Stores the directory a verification used and returns its row key."""
     if directory is None:
         return None
-    headers: list[JsonValue] = [[name, value] for name, value in directory.headers]
+    headers: list[JsonValue] = [[name, value] for name, value in directory.lines]
     fetch: JsonObject = {
         "url": directory.url,
         "status": directory.status,
@@ -214,43 +174,8 @@ class NoEvidenceError(LookupError):
     """No kept message or directory has this id."""
 
 
-@dataclass(frozen=True)
-class KeptFetch:
-    """A kept directory response, as it was fetched; a `KeptDirectory`."""
-
-    digest: str
-    url: str
-    status: int
-    headers: tuple[tuple[str, str], ...]
-    body: bytes
-    fetched_at: int | None
-
-
-@dataclass(frozen=True)
-class KeptRequest:
-    """A kept request, and who signed it with which key, as the party recorded them."""
-
-    id: int
-    request: HTTPRequest
-    origin: str
-    keyid: str | None
-    directory_digest: str | None
-
-
-@dataclass(frozen=True)
-class KeptResponse:
-    """A kept response, bound to the kept request it answers."""
-
-    id: int
-    response: HTTPResponse
-    request: KeptRequest
-    origin: str
-    keyid: str
-    directory_digest: str | None
-
-
 class EvidenceReader:
-    """Reads a party's kept messages and directories, and verifies them again offline."""
+    """Reads a party's kept messages and directories."""
 
     def __init__(self, db: sqlite3.Connection) -> None:
         self.db = db
@@ -269,7 +194,15 @@ class EvidenceReader:
     def _count(self, query: str, *args: object) -> int:
         return int(self.db.execute(query, args).fetchone()[0])
 
-    def request(self, request_id: int) -> KeptRequest:
+    def _signer(self, row: sqlite3.Row) -> Signer:
+        digest = row["directory_digest"]
+        return Signer(
+            origin=Origin.parse(row["origin"]),
+            keyid=row["keyid"],
+            directory=None if digest is None else self.directory(digest),
+        )
+
+    def request(self, request_id: int) -> SignedRequest:
         row = self.db.execute(
             "SELECT origin, keyid, method, url, headers, body, directory_digest"
             " FROM signed_requests WHERE id = ?",
@@ -277,12 +210,16 @@ class EvidenceReader:
         ).fetchone()
         if row is None:
             raise NoEvidenceError(request_id)
-        request = HTTPRequest(row["method"], row["url"], _headers(row["headers"]), row["body"])
-        return KeptRequest(
-            request_id, request, row["origin"], row["keyid"], row["directory_digest"]
+        request = KeptRequest(
+            method=row["method"],
+            url=row["url"],
+            lines=_decoded(row["headers"]),
+            body=bytes(row["body"]),
+            id=request_id,
         )
+        return SignedRequest(request=request, signer=self._signer(row))
 
-    def response(self, response_id: int) -> KeptResponse:
+    def response(self, response_id: int) -> SignedResponse:
         row = self.db.execute(
             "SELECT request_id, origin, keyid, status, headers, body, directory_digest"
             " FROM signed_responses WHERE id = ?",
@@ -291,23 +228,31 @@ class EvidenceReader:
         if row is None:
             raise NoEvidenceError(response_id)
         request = self.request(row["request_id"])
-        response = HTTPResponse(
-            row["status"], _headers(row["headers"]), row["body"], request.request
+        response = KeptResponse(
+            status=row["status"],
+            lines=_decoded(row["headers"]),
+            body=bytes(row["body"]),
+            request=request.request,
+            id=response_id,
         )
-        return KeptResponse(
-            response_id, response, request, row["origin"], row["keyid"], row["directory_digest"]
+        return SignedResponse(
+            response=response, signer=self._signer(row), request_signer=request.signer
         )
 
-    def directory(self, digest: str) -> KeptFetch:
+    def directory(self, digest: str) -> DirectoryFetch:
         row = self.db.execute(
             "SELECT url, status, headers, body, fetched_at FROM directories WHERE digest = ?",
             (digest,),
         ).fetchone()
         if row is None:
             raise NoEvidenceError(digest)
-        fetched_at = None if row["fetched_at"] is None else int(row["fetched_at"])
-        headers = tuple(_headers(row["headers"]))
-        return KeptFetch(digest, row["url"], row["status"], headers, row["body"], fetched_at)
+        return DirectoryFetch(
+            url=row["url"],
+            status=row["status"],
+            lines=_decoded(row["headers"]),
+            body=bytes(row["body"]),
+            fetched_at=row["fetched_at"],
+        )
 
     def directories(self) -> int:
         """How many directory fetches the party kept."""
@@ -323,37 +268,3 @@ class EvidenceReader:
 
     def requests_with_body(self, body: bytes) -> int:
         return self._count("SELECT COUNT(*) FROM signed_requests WHERE body = ?", body)
-
-    def directory_keys(self, digest: str, origin: Origin) -> StaticKeyResolver:
-        """The keys of a kept directory of `origin`, after the library verifies its kept bytes
-        again. The authority is the origin's own (`Origin.authority`), derived here once."""
-        kept = self.directory(digest)
-        if kept.fetched_at is None:  # a fetch time says what the directory's expiry is against
-            raise NoEvidenceError(digest)
-        fetch = DirectoryResponse(
-            kept.url, kept.status, list(kept.headers), kept.body, kept.fetched_at
-        )
-        directory = parse_directory_response(fetch, origin.authority, kept.fetched_at)
-        return StaticKeyResolver({origin: directory.keys})
-
-    async def reverify_request(
-        self, kept: KeptRequest, identity: ServerIdentity
-    ) -> VerifiedRequest:
-        """Verifies a kept request again, as the party `identity` received it."""
-        if kept.directory_digest is None:
-            raise NoEvidenceError(kept.id)
-        origin = Origin.parse(kept.origin)
-        verifier = RequestVerifier(
-            self.directory_keys(kept.directory_digest, origin),
-            identity=identity,
-            nonces=MemoryNonceStore(),
-        )
-        return await verifier.verify(kept.request)
-
-    async def reverify_response(self, kept: KeptResponse) -> VerifiedResponse:
-        """Verifies a kept response again, with its binding to the kept request."""
-        if kept.directory_digest is None:
-            raise NoEvidenceError(kept.id)
-        origin = Origin.parse(kept.origin)
-        verifier = ResponseVerifier(self.directory_keys(kept.directory_digest, origin))
-        return await verifier.verify(kept.response, expected_origin=origin)

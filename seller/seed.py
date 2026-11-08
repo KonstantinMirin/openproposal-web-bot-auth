@@ -6,9 +6,9 @@ the bearer buyer only by its token's hash.
 
 from __future__ import annotations
 
-from iab_agentic_primitives.web_bot_auth import Origin
 from pydantic import SecretStr
 
+from persistence.values import Origin
 from protocol.values import JsonObject
 
 from .offers.issuance import issue
@@ -29,7 +29,7 @@ def seed(
         # A buyer that signs: the seller's onboarding recorded its origin, and its domain.
         signing = PrincipalRecord("buyer-wba", "Demo Buyer Agency LLC", buyer_origin.host)
         store.add_principal(signing)
-        store.add_origin_credential(signing.id, str(buyer_origin))
+        store.add_origin_credential(signing.id, buyer_origin)
         for n in (1, 2):
             issue(store, signing, template, f"demo-wba-{n}")
 

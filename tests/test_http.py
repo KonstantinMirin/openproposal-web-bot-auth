@@ -16,10 +16,11 @@ from typing import get_args
 
 import pytest
 from fastapi.testclient import TestClient
-from iab_agentic_primitives.web_bot_auth import MemoryNonceStore, Origin, StaticKeyResolver
+from iab_agentic_primitives.web_bot_auth import MemoryNonceStore, StaticKeyResolver
 from openproposal import ErrorObject, ErrorObjectCode
 from pydantic import SecretStr, ValidationError
 
+from persistence.values import Origin
 from seller.app import create_app
 from seller.http import status_for
 from seller.settings import SellerSettings

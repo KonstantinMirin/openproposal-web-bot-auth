@@ -1,8 +1,8 @@
 """Who is calling: the frozen values the identity boundary (seller/boundary.py) returns.
 
-A leaf module. It imports pydantic and the credential method names, nothing
-that reaches HTTP, storage, or the Web Bot Auth library, so the offer logic can
-take a `Caller` without loading any of them.
+A leaf module. It imports pydantic and the pure values of persistence/values.py,
+nothing that reaches HTTP, storage, or the Web Bot Auth library, so the offer
+logic can take a `Caller` without loading any of them.
 
 The types allow no illegal state. Each is strict, so nothing is coerced
 (`body_covered="yes"` fails); frozen, with unknown members refused; and
@@ -20,7 +20,13 @@ from typing import Annotated, Literal, NoReturn
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from transport.auth import BearerMethod, SignatureMethod
+from persistence.values import (
+    BearerMethod,
+    DirectoryFetch,
+    KeptRequest,
+    Origin,
+    SignatureMethod,
+)
 
 
 class AmendedIdentityError(TypeError):
@@ -50,43 +56,20 @@ class Principal(_Frozen):
     domain: str
 
 
-class DirectoryEvidence(_Frozen):
-    """The key directory response a signature verified against, as fetched (§ 4.1.2)."""
-
-    url: str | None
-    status: int
-    headers: tuple[tuple[str, str], ...]
-    body: bytes
-    fetched_at: int | None
-
-
-class SignedMessage(_Frozen):
-    """A verified request as exact bytes: the evidence § 4.1.2 asks the seller to keep.
-
-    It is a value, not a row: storage keeps it with the entry it carried, in
-    the same transaction, and only when it writes that entry.
-    """
-
-    method: str
-    url: str
-    #: Every header line as received, in order and with its own case.
-    headers: tuple[tuple[bytes, bytes], ...]
-    body: bytes
-    #: The directory the key came from, when the resolver provides it.
-    directory: DirectoryEvidence | None
-
-
 class SignatureCredential(_Frozen):
     """A verified Web Bot Auth signature: the origin it establishes and the key that signed."""
 
     method: SignatureMethod
-    #: The verified origin, `https://<host>`.
-    origin: str
+    #: The verified origin.
+    origin: Origin
     keyid: str
     #: True when the signature covers the body through `Content-Digest`.
     body_covered: bool
     #: The request itself, kept with the entry it carries; not part of the caller's view.
-    message: SignedMessage = Field(exclude=True)
+    request: KeptRequest = Field(exclude=True)
+    #: The key directory response the signature verified against (§ 4.1.2), when the
+    #: resolver provides it; not part of the caller's view.
+    directory: DirectoryFetch | None = Field(exclude=True)
 
 
 class BearerCredential(_Frozen):

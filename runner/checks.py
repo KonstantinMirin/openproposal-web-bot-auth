@@ -12,8 +12,8 @@ from http import HTTPStatus
 from typing import NoReturn
 
 from persistence.observe import KeptAgreement, KeptCommit, KeptEntry
+from persistence.values import AuthMethod
 from protocol.values import JsonObject
-from transport.auth import AuthMethod
 from transport.control import Agreed, CloudflareCheck, Outcome
 
 

@@ -17,6 +17,7 @@ import json
 import time
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import TypedDict
 
 from fastapi import APIRouter, Depends, FastAPI
@@ -24,6 +25,8 @@ from iab_agentic_primitives.web_bot_auth import KeyResolver, PublishPolicy, Serv
 from iab_agentic_primitives.web_bot_auth.asgi import DirectoryMiddleware
 from starlette.types import ASGIApp
 
+from persistence.values import Origin
+from protocol.documents import loads_yaml
 from shared.keyring import Keyring
 from transport.control import (
     CloudflareCheck,
@@ -46,6 +49,9 @@ from .resources import BuyerResources, CfbotDep, FlowDep, KeyringDep, SettingsDe
 from .seller_client import HTTPClient, SellerClient
 from .settings import BuyerSettings
 
+#: The § 3.4 writes the buyer commits for each line item it buys.
+PLAN = Path(__file__).resolve().parent / "plan.yaml"
+
 #: The routes any caller reaches. Agents reach only the directory, which the middleware serves.
 api = APIRouter()
 
@@ -59,8 +65,8 @@ async def health() -> Health:
 operator = APIRouter(prefix="/operator")
 
 
-def _seller(trigger: ReadTrigger, settings: BuyerSettings) -> str:
-    return str(settings.peer_seller_origin) if trigger.seller is None else trigger.seller
+def _seller(trigger: ReadTrigger, settings: BuyerSettings) -> Origin:
+    return settings.peer_seller_origin if trigger.seller is None else trigger.seller
 
 
 @operator.post("/commit")
@@ -137,6 +143,7 @@ def create_app(
 
     The result is the FastAPI app inside the library's `DirectoryMiddleware`.
     """
+    plan = Plan.of(loads_yaml(PLAN.read_text(encoding="utf-8")))
     # The buyer mints its first key on first boot; the directory reads the keyring live.
     keyring = Keyring(
         settings.keyring_dir,
@@ -150,7 +157,13 @@ def create_app(
         store = BuyerRepository(settings.data_dir / "buyer.db")
         client = http_client(tls_context(settings.ca_bundle), transport=transport)
         try:
-            yield {"resources": _resources(settings, store, keyring, client, resolver)}
+            keys = (
+                directory_resolver(client, max_cache_age=settings.max_cache_age)
+                if resolver is None
+                else resolver
+            )
+            flow = Buyer(store, SellerClient(client, keys), keyring, settings, plan)
+            yield {"resources": _resources(settings, store, client, flow)}
         finally:
             await client.aclose()
             store.close()
@@ -169,11 +182,7 @@ def create_app(
 
 
 def _resources(
-    settings: BuyerSettings,
-    store: BuyerRepository,
-    keyring: Keyring,
-    client: HTTPClient,
-    resolver: KeyResolver | None,
+    settings: BuyerSettings, store: BuyerRepository, client: HTTPClient, flow: Buyer
 ) -> BuyerResources:
     # The buyer knows the seller by its origin only, and its domain is that origin's host.
     # The token is the bearer flow's credential.
@@ -181,14 +190,8 @@ def _resources(
     store.add_counterparty(
         Counterparty(seller, seller.host, "Demo Seller Inc.", settings.bearer_token)
     )
-    keys = (
-        directory_resolver(client, max_cache_age=settings.max_cache_age)
-        if resolver is None
-        else resolver
-    )
-    flow = Buyer(store, SellerClient(client, keys), keyring, settings, Plan.load())
     cfbot = Cfbot(client, settings.peer_cfbot_origin, lambda: flow.signer)
-    return BuyerResources(settings, store, keyring, client, flow, cfbot)
+    return BuyerResources(settings, store, flow.keyring, client, flow, cfbot)
 
 
 def app_from_env() -> ASGIApp:

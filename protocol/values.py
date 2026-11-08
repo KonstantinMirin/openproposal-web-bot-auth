@@ -1,21 +1,96 @@
-"""The values both parties share: JSON, the § 2.2 `Instant`, and the § 4.1.2 entry rules."""
+"""The values both parties share: JSON and how it is read, the value base, the § 2.2
+`Instant`, and the § 4.1.2 entry rules."""
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import UTC, datetime
+from typing import NoReturn
 
+import rfc8785
 from openproposal import AssentEntry, AssentEntryRoles, Instant
 
 # A JSON value, as `json.loads` returns it: pydantic's own recursive alias, so that
 # a model field can hold one too. The § 4.1.1 binding record and the digest input
 # are computed over raw JSON, so that members a receiver doesn't know survive and
 # every value stays exact.
-from pydantic import JsonValue
+from pydantic import BaseModel, ConfigDict, JsonValue, TypeAdapter, ValidationError
 
 #: A JSON object.
 JsonObject = dict[str, JsonValue]
 
-__all__ = ["JsonObject", "JsonValue", "commitment_key", "instant", "matches", "objects", "strings"]
+__all__ = [
+    "AmendedValueError",
+    "JsonObject",
+    "JsonValue",
+    "MalformedJsonError",
+    "Value",
+    "canonical",
+    "commitment_key",
+    "instant",
+    "matches",
+    "objects",
+    "read_json",
+    "strings",
+]
+
+
+class AmendedValueError(TypeError):
+    """A value was asked for an amended copy. Its next state is a new value, built and checked."""
+
+    def __init__(self, kind: str) -> None:
+        super().__init__(f"{kind} is never amended; build a new one")
+
+
+class Value(BaseModel):
+    """The base of a value: strict, so nothing is coerced; frozen, with unknown members refused.
+
+    `model_copy` raises, because a copy with `update` skips validation. The
+    next state of a value is a constructor call, which checks every field.
+    """
+
+    model_config = ConfigDict(frozen=True, strict=True, extra="forbid")
+
+    def model_copy(
+        self, *, update: Mapping[str, object] | None = None, deep: bool = False
+    ) -> NoReturn:
+        """Refused: a copy with `update` would skip validation."""
+        del update, deep
+        raise AmendedValueError(type(self).__name__)
+
+
+def canonical(value: JsonValue) -> bytes:
+    """The RFC 8785 serialization of a JSON value, as UTF-8."""
+    return rfc8785.dumps(value)
+
+
+class MalformedJsonError(ValueError):
+    """Untrusted bytes that aren't a JSON object, or hold a number RFC 8785 can't serialize."""
+
+
+_JSON_OBJECT: TypeAdapter[JsonObject] = TypeAdapter(JsonObject)
+
+
+def read_json(raw: bytes) -> JsonObject:
+    """Untrusted bytes as a JSON object, in the number domain RFC 8785 serializes (§ 4.1.1).
+
+    A body that one party digests has to canonicalize at the other, so `NaN`,
+    `Infinity`, a number beyond a double such as `1e400`, and an integer beyond
+    2**53 are refused here, where the body is read, and not later where it is
+    digested. Raises `MalformedJsonError`.
+    """
+    try:
+        value = _JSON_OBJECT.validate_json(raw)
+    except ValidationError as e:
+        reason = "; ".join(error["msg"] for error in e.errors())
+        detail = f"the body is not a JSON object: {reason}"
+        raise MalformedJsonError(detail) from e
+    try:
+        canonical(value)
+    except rfc8785.CanonicalizationError as e:
+        detail = f"the body holds a number with no RFC 8785 form: {e}"
+        raise MalformedJsonError(detail) from e
+    return value
 
 
 def objects(value: JsonValue) -> list[JsonObject]:

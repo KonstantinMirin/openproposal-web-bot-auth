@@ -17,6 +17,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import TypedDict
 
 from fastapi import APIRouter, Depends, FastAPI
@@ -34,6 +35,7 @@ from iab_agentic_primitives.web_bot_auth import (
 from iab_agentic_primitives.web_bot_auth.asgi import DirectoryMiddleware, ResponseSigningMiddleware
 from starlette.types import ASGIApp
 
+from protocol.documents import loads_yaml
 from transport.control import Health, Issued, IssueRequest
 from transport.operator import ControlError, OperatorKey
 from transport.wba import directory_resolver, http_client, tls_context
@@ -43,12 +45,15 @@ from .errors import Rejected, UnknownPrincipal
 from .faults import FaultInjection
 from .http import CallerDep, RawBodyDep, answer, install_handlers
 from .offers.acceptance import answer_commit
-from .offers.issuance import issue_fresh, load_template
+from .offers.issuance import issue_fresh
 from .offers.reading import full_representation, parse_commit
 from .resources import OfferStoreDep, OnboardingDep, SellerResources, TemplateDep
 from .seed import seed
 from .settings import SellerSettings
 from .sqlite_store import SqliteSellerStore
+
+#: The proposal every buyer is issued, as the seller's onboarding wrote it.
+TEMPLATE = Path(__file__).resolve().parent / "seed" / "proposal.yaml"
 
 #: The agent-facing routes. Each one takes its caller from the identity boundary.
 api = APIRouter()
@@ -123,7 +128,7 @@ def create_app(
     # The seller mints its key on first boot. No buyer is ever configured with it.
     key = keyfile.load_or_create(settings.key_file)
     identity = ServerIdentity.from_config(str(settings.self_origin))
-    template = load_template()
+    template = loads_yaml(TEMPLATE.read_text(encoding="utf-8"))
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[_State]:

@@ -37,10 +37,10 @@ from iab_agentic_primitives.web_bot_auth import (
     MemoryNonceStore,
     NonceStore,
     NonceStoreUnavailable,
-    Origin,
     RequestSigner,
     accept_signature,
 )
+from iab_agentic_primitives.web_bot_auth import Origin as LibraryOrigin
 from iab_agentic_primitives.web_bot_auth.asgi import directory_response
 from openproposal import LineItemWrites, Proposal, dump_json
 from pydantic import SecretStr
@@ -48,14 +48,14 @@ from starlette.types import ASGIApp
 
 from persistence.evidence import EvidenceReader
 from persistence.observe import SellerRecords
-from protocol.documents import load_yaml
+from persistence.values import Origin
 from protocol.operations import compose_commit
 from protocol.values import JsonObject
 from seller.app import create_app
-from seller.offers.issuance import load_template
 from seller.seed import seed
 from seller.settings import SellerSettings
 from seller.sqlite_store import SqliteSellerStore
+from tests._tools import load_yaml, seed_template
 from tests.stack import TOKEN, Recorder
 from transport.wba import directory_resolver, http_client, tls_context
 
@@ -140,7 +140,7 @@ def _kept(data_dir: Path) -> tuple[int, int]:
 class DownNonceStore:
     """A shared nonce store that is down: it can't record any nonce."""
 
-    async def check_and_record(self, origin: Origin, nonce: str, ttl: int) -> bool:
+    async def check_and_record(self, origin: LibraryOrigin, nonce: str, ttl: int) -> bool:
         detail = f"can't record {nonce} for {origin} ({ttl} s)"
         raise NonceStoreUnavailable(detail)
 
@@ -349,13 +349,12 @@ def test_a_signed_commit_keeps_its_request_with_the_entry(parties: Parties, tmp_
     assert acceptance["evidence_id"] is None and acceptance["authentication_method"] is None
     with EvidenceReader.open(tmp_path / "seller.db") as reader:
         kept_request = reader.request(commitment["evidence_id"])
-        directory = reader.directory(kept_request.directory_digest or "")
-    kept = kept_request.request
+    kept, directory = kept_request.request, kept_request.signer.directory
     assert (kept.method, kept.url, kept.body) == ("POST", f"{SELLER}{path}", body)
     # The header lines exactly as the app received them: in order, in case, and every line.
     (received,) = [r for r in app.received if r.method == "POST"]
-    assert list(kept.headers) == received.headers
-    assert directory.url == f"{BUYER}{DIRECTORY_PATH}"
+    assert list(kept.lines) == received.headers
+    assert directory is not None and directory.url == f"{BUYER}{DIRECTORY_PATH}"
 
 
 def test_a_rejected_commit_keeps_no_evidence(
@@ -383,7 +382,7 @@ def _seeded_with_a_token_for_the_signing_buyer(data_dir: Path) -> None:
     store = SqliteSellerStore(data_dir / "seller.db")
     try:
         seed(
-            store, load_template(), buyer_origin=Origin.parse(BUYER), bearer_token=SecretStr(TOKEN)
+            store, seed_template(), buyer_origin=Origin.parse(BUYER), bearer_token=SecretStr(TOKEN)
         )
         with store.transaction():
             store.add_token_credential("buyer-wba", "buyer-wba-token")

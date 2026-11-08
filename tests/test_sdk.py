@@ -17,10 +17,9 @@ import openproposal
 import pytest
 from openproposal import LineItem, LineItemWrites, Proposal
 
-from protocol.documents import load_yaml
 from protocol.operations import acceptance_for, compose_commit
 from protocol.record import compose, line_items_of
-from tests._tools import seed_document
+from tests._tools import load_yaml, seed_document
 
 REPO = Path(__file__).resolve().parent.parent
 RECORDED = tomllib.loads((REPO / "vendor" / "openproposal-sdk" / "pyproject.toml").read_text())

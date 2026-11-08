@@ -32,6 +32,7 @@ from fastapi.responses import JSONResponse
 from openproposal import CommitResult, ErrorObject, dump
 from starlette.exceptions import HTTPException
 
+from protocol.operations import is_stored_result
 from protocol.values import JsonObject
 from transport.handlers import on_error
 from transport.operator import ControlError, render_control
@@ -79,7 +80,7 @@ CORE_STATUS: Mapping[str, int] = {
 def status_for(error: ErrorObject) -> int:
     """The HTTP status of an error. Total: a receiver acts on `retry` (§ 2.4), so an error
     with `retry: same` fits 503 whatever its code, and an extension code fits 400."""
-    if error.retry == "same":
+    if not is_stored_result([error]):
         return 503
     return CORE_STATUS.get(error.code, 400)
 

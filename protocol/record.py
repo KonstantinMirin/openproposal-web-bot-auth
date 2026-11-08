@@ -14,10 +14,10 @@ import hashlib
 from collections.abc import Iterator, Mapping, Sequence
 from decimal import ROUND_HALF_UP, Decimal
 
-import rfc8785
 from openproposal import Digest, LineItem, LineItemWrites, Proposal, dump
+from pydantic import BaseModel
 
-from .values import JsonObject, JsonValue, objects, strings
+from .values import JsonObject, JsonValue, canonical, objects, strings
 
 #: The paths § 4.1.1 removes from the binding record, and no others.
 REMOVED_PATHS = (
@@ -95,21 +95,32 @@ class WriteError(ValueError):
 # ── Where line items live ──────────────────────────────────────────────────
 
 
-def line_item_containers(doc: JsonObject) -> Iterator[list[JsonValue]]:
-    """The arrays that hold the line items: `line_items[]`, or each package's arrays.
+def _places(doc: JsonObject | Proposal) -> Iterator[tuple[JsonObject | BaseModel, str]]:
+    """Where the line items live: `line_items[]`, or each package's `PACKAGE_CONTAINERS`.
 
-    It is the one place that knows the two forms a document takes.
+    It is the one place that knows the two forms a document takes. It names each
+    array by its holder and member, so the raw JSON and the parsed `Proposal`
+    are walked the same way.
     """
-    keys: tuple[str, ...]
-    if "packages" in doc:
-        holders, keys = objects(doc["packages"]), PACKAGE_CONTAINERS
+    packages: object
+    if isinstance(doc, dict):
+        packaged, packages = "packages" in doc, doc.get("packages")
     else:
-        holders, keys = [doc], ("line_items",)
-    for holder in holders:
-        for key in keys:
-            container = holder.get(key)
-            if isinstance(container, list):
-                yield container
+        packaged, packages = doc.packages is not None, doc.packages
+    if not packaged:
+        yield doc, "line_items"
+        return
+    for package in packages if isinstance(packages, list) else []:
+        if isinstance(package, dict | BaseModel):
+            yield from ((package, key) for key in PACKAGE_CONTAINERS)
+
+
+def line_item_containers(doc: JsonObject) -> Iterator[list[JsonValue]]:
+    """The arrays of the raw JSON that hold the line items, in document order."""
+    for holder, key in _places(doc):
+        container = holder.get(key) if isinstance(holder, dict) else None
+        if isinstance(container, list):
+            yield container
 
 
 def line_items_of(doc: JsonObject) -> list[JsonObject]:
@@ -124,10 +135,12 @@ def items_by_id(doc: JsonObject) -> dict[str, JsonObject]:
 
 def proposal_items(proposal: Proposal) -> dict[str, LineItem]:
     """Every line item of a parsed proposal, by `line_item_id`: `items_by_id`, typed."""
-    if proposal.packages is not None:
-        items = [i for p in proposal.packages for i in (*p.line_items, *(p.add_ons or []))]
-    else:
-        items = proposal.line_items or []
+    items = [
+        item
+        for holder, key in _places(proposal)
+        for item in getattr(holder, key, None) or []
+        if isinstance(item, LineItem)
+    ]
     return {item.line_item_id: item for item in items}
 
 
@@ -140,7 +153,7 @@ def _restrict(record: JsonObject, named: set[str]) -> None:
         container[:] = [i for i in objects(container) if i.get("line_item_id") in named]
     if "packages" in record:
         packages = objects(record["packages"])
-        kept: list[JsonValue] = [p for p in packages if p.get("line_items") or p.get("add_ons")]
+        kept: list[JsonValue] = [p for p in packages if any(p.get(k) for k in PACKAGE_CONTAINERS)]
         record["packages"] = kept
 
 
@@ -178,11 +191,6 @@ def binding_record(doc: JsonObject, line_item_ids: Sequence[str]) -> JsonObject:
     _strip(record)
     _drop_empty_buyer_supplied(record)
     return record
-
-
-def canonical(value: JsonValue) -> bytes:
-    """The RFC 8785 serialization of a JSON value, as UTF-8."""
-    return rfc8785.dumps(value)
 
 
 def digest_input(doc: JsonObject, line_item_ids: Sequence[str]) -> bytes:

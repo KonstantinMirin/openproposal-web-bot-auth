@@ -7,16 +7,22 @@ from pydantic import ValidationError
 
 from protocol.operations import ProtocolViolation
 from protocol.operations import parse_commit as parse_commit_body
-from protocol.values import JsonObject, JsonValue
+from protocol.values import JsonObject, JsonValue, MalformedJsonError
 from seller.caller import Caller, ResolvedCaller
 from seller.errors import Rejected, validation_detail
 from seller.ports import OfferRepository, StoredProposal
 
 
 def parse_commit(body: bytes) -> Commit | Rejected:
-    """The request body as a `Commit` (§ 5.6.1), or a `validation` rejection (§ 2.4)."""
+    """The request body as a `Commit` (§ 5.6.1), or a `validation` rejection (§ 2.4).
+
+    A body that isn't a JSON object in the RFC 8785 number domain is refused
+    here too, before anything digests it.
+    """
     try:
         return parse_commit_body(body)
+    except MalformedJsonError as e:
+        return Rejected.of("validation", str(e))
     except ValidationError as e:
         detail = validation_detail(e.errors()) or "the body is not a Commit"
         return Rejected.of("validation", detail)

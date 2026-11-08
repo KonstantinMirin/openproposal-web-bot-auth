@@ -8,13 +8,13 @@ also ask for a value the types must refuse.
 
 from __future__ import annotations
 
+from persistence.values import KeptRequest
 from seller.caller import (
     BearerCredential,
     Principal,
     PublicCaller,
     ResolvedCaller,
     SignatureCredential,
-    SignedMessage,
 )
 
 
@@ -28,10 +28,8 @@ def principal(**fields: object) -> Principal:
     return Principal.model_validate(values | fields)
 
 
-def signed_message() -> SignedMessage:
-    return SignedMessage(
-        method="GET", url="https://seller.example/whoami", headers=(), body=b"", directory=None
-    )
+def kept_request() -> KeptRequest:
+    return KeptRequest(method="GET", url="https://seller.example/whoami", lines=(), body=b"")
 
 
 def signature_credential(**fields: object) -> SignatureCredential:
@@ -40,7 +38,8 @@ def signature_credential(**fields: object) -> SignatureCredential:
         "origin": "https://buyer.example",
         "keyid": "kid-1",
         "body_covered": False,
-        "message": signed_message(),
+        "request": kept_request(),
+        "directory": None,
     }
     return SignatureCredential.model_validate(values | fields)
 

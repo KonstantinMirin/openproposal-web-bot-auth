@@ -52,3 +52,18 @@ forbidden_modules =
     httpx
     iab_agentic_primitives
     sqlite3
+
+# The kept values and the origin type are pure: every layer holds them, the offer
+# logic and the control plane included, so importing them loads no Web Bot Auth
+# library, HTTP stack, or storage engine. transport/wba.py converts them.
+[importlinter:contract:values-pure]
+name = The kept values import no signing library, HTTP stack, or database
+type = forbidden
+source_modules =
+    persistence.values
+forbidden_modules =
+    iab_agentic_primitives
+    fastapi
+    starlette
+    httpx
+    sqlite3

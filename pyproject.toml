@@ -118,7 +118,8 @@ branch = true
 # step's measured total (Step 1: 50.90; Step 2: 77.57; Step 3: 79.98; Step 4: 84.78;
 # Step 5: 88.07; the refusal body and the library at f1f4092: 88.40; Step 6: 91.58;
 # Step 7: 96.96; Step 8: 97.32, on the behavior suite; the foreign-origin, exact-line,
-# digest, and runner corruption rows: 97.52). It is never lowered.
-fail_under = 97.52
+# digest, and runner corruption rows: 97.52; the pure values and the number domain: 97.58).
+# It is never lowered.
+fail_under = 97.58
 precision = 2
 show_missing = false

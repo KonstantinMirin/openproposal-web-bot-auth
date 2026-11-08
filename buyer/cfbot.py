@@ -10,10 +10,11 @@ from __future__ import annotations
 from collections.abc import Callable
 
 import httpx
-from iab_agentic_primitives.web_bot_auth import Origin, RequestSigner
+from iab_agentic_primitives.web_bot_auth import RequestSigner
 from iab_agentic_primitives.web_bot_auth.httpx import WebBotAuth
 from pydantic import TypeAdapter, ValidationError
 
+from persistence.values import Origin
 from protocol.values import JsonValue
 from transport.control import CloudflareCheck
 

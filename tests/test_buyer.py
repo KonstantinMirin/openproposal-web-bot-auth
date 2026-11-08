@@ -114,7 +114,7 @@ def test_a_bearer_commit_is_agreed_with_no_signing_key(stack: Stack) -> None:
     assert "authorization" not in sent["headers"].lower()  # the token is never kept
     with BuyerRecords.open(stack.buyer_dir / "buyer.db") as records:
         kept = records.response(outcome["evidence_id"])
-    assert list(kept.request.request.headers) == _sent_lines(commit)
+    assert list(kept.response.request.lines) == _sent_lines(commit)
 
 
 def _sent_lines(request: httpx.Request) -> Lines:
@@ -129,14 +129,14 @@ def _assert_kept_as_carried(stack: Stack, proposal_id: str, evidence_id: int) ->
     (delivered,) = [a for r, a in zip(stack.requests, stack.responses, strict=True) if r is sent]
     with BuyerRecords.open(stack.buyer_dir / "buyer.db") as records:
         kept = records.response(evidence_id)
-    assert list(kept.request.request.headers) == _sent_lines(sent)
-    assert list(kept.response.headers) == lines(delivered.headers.raw)
+    assert list(kept.response.request.lines) == _sent_lines(sent)
+    assert list(kept.response.lines) == lines(delivered.headers.raw)
     (received,) = [r for r in stack.received if r.method == "POST"]
     with SellerRecords.open(stack.seller_dir / "seller.db") as records:
         (commitment, _) = records.entries(proposal_id)
         assert commitment.evidence_id is not None
         kept_request = records.request(commitment.evidence_id)
-    assert list(kept_request.request.headers) == received.headers
+    assert list(kept_request.request.lines) == received.headers
 
 
 def test_a_read_answers_the_proposal_as_received(stack: Stack) -> None:
@@ -176,6 +176,26 @@ def test_a_trigger_for_another_seller_is_refused_unsent(stack: Stack) -> None:
         outcome = stack.buyer.post(route, json=trigger, headers=OPERATOR).json()
         assert (outcome["state"], outcome["reason"]) == ("refused", "unknown-seller")
         assert outcome["seller"] is None
+    assert stack.requests == []
+
+
+@pytest.mark.parametrize(
+    "seller",
+    [
+        "https://Seller.Example",
+        f"{SELLER}/",
+        f"{SELLER}:443",
+        "seller.wba-demo.noetis.dev",
+        "http://seller.wba-demo.noetis.dev",
+    ],
+    ids=["uppercase", "trailing-slash", "port", "no-scheme", "http"],
+)
+@pytest.mark.parametrize("route", ["/operator/read", "/operator/commit"])
+def test_a_trigger_that_names_no_origin_is_invalid(stack: Stack, seller: str, route: str) -> None:
+    """A seller is named by its origin, `https://<host>`, and nothing else."""
+    trigger = {"seller": seller, "proposal_id": "demo-wba-1", "line_item_ids": [DISPLAY]}
+    response = stack.buyer.post(route, json=trigger, headers=OPERATOR)
+    assert response.status_code == 422, response.text
     assert stack.requests == []
 
 

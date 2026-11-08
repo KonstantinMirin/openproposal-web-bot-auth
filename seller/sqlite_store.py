@@ -12,14 +12,13 @@ from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from pathlib import Path
 
-from iab_agentic_primitives.web_bot_auth import HTTPRequest
 from openproposal import AssentEntry, AssentEntryRole, ErrorObject, dump, dump_json
 
 from persistence import evidence
 from persistence.sqlite import one_of, open_db, transaction
+from persistence.values import AuthMethod, Origin, SignedRequest, Signer
 from protocol.record import sha256_hex
 from protocol.values import JsonObject
-from transport.auth import AuthMethod
 
 from .caller import ResolvedCaller, SignatureCredential
 from .ports import PrincipalRecord, ProcessedCommit, StoredProposal
@@ -106,12 +105,10 @@ def _document(text: str) -> JsonObject:
     return document
 
 
-def _signed_request(signature: SignatureCredential) -> evidence.StoredRequest:
-    """The verified request as the evidence schema keeps it: the exact lines, in order."""
-    message = signature.message
-    lines = [(k.decode("latin-1"), v.decode("latin-1")) for k, v in message.headers]
-    request = HTTPRequest(message.method, message.url, lines, message.body)
-    return evidence.StoredRequest(request, signature.origin, signature.keyid, message.directory)
+def _signed_request(signature: SignatureCredential) -> SignedRequest:
+    """The verified request, as the evidence schema keeps it, with who signed it."""
+    signer = Signer(origin=signature.origin, keyid=signature.keyid, directory=signature.directory)
+    return SignedRequest(request=signature.request, signer=signer)
 
 
 class SqliteSellerStore:
@@ -139,10 +136,10 @@ class SqliteSellerStore:
             (principal.id, principal.legal_name, principal.domain),
         )
 
-    def add_origin_credential(self, principal_id: str, origin: str) -> None:
+    def add_origin_credential(self, principal_id: str, origin: Origin) -> None:
         self.db.execute(
             "INSERT INTO credentials (principal_id, type, origin) VALUES (?, 'web_bot_auth', ?)",
-            (principal_id, origin),
+            (principal_id, str(origin)),
         )
 
     def add_token_credential(self, principal_id: str, token: str) -> None:
@@ -158,9 +155,9 @@ class SqliteSellerStore:
             ).fetchone()
         )
 
-    def for_origin(self, origin: str) -> PrincipalRecord | None:
+    def for_origin(self, origin: Origin) -> PrincipalRecord | None:
         query = f"{_PRINCIPAL_BY_CREDENTIAL} WHERE c.origin = ?"
-        return _principal(self.db.execute(query, (origin,)).fetchone())
+        return _principal(self.db.execute(query, (str(origin),)).fetchone())
 
     def for_token(self, token: str) -> PrincipalRecord | None:
         query = f"{_PRINCIPAL_BY_CREDENTIAL} WHERE c.token_hash = ?"

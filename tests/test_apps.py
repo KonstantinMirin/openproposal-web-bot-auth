@@ -20,13 +20,13 @@ from iab_agentic_primitives.web_bot_auth import (
     HTTPRequest,
     HTTPResponse,
     MemoryNonceStore,
-    Origin,
     RequestSigner,
     ResponseVerifier,
     StaticKeyResolver,
     WebBotAuthError,
     keyfile,
 )
+from iab_agentic_primitives.web_bot_auth import Origin as LibraryOrigin
 from iab_agentic_primitives.web_bot_auth.sync import SyncResponseVerifier
 from pydantic import SecretStr
 from starlette.types import ASGIApp
@@ -34,6 +34,7 @@ from starlette.types import ASGIApp
 from buyer.app import create_app as create_buyer
 from buyer.resources import BuyerResources
 from buyer.settings import BuyerSettings
+from persistence.values import Origin
 from seller.app import create_app as create_seller
 from seller.resources import SellerResources
 from seller.settings import SellerSettings
@@ -67,7 +68,7 @@ def buyer_settings(data_dir: Path) -> BuyerSettings:
 
 
 def seller_app(data_dir: Path, *, faults: bool = False, key: Ed25519Key | None = None) -> ASGIApp:
-    keys: dict[Origin | str, list[Ed25519Key]] = {BUYER: [key]} if key else {}
+    keys: dict[LibraryOrigin | str, list[Ed25519Key]] = {BUYER: [key]} if key else {}
     return create_seller(
         seller_settings(data_dir, faults=faults),
         nonces=MemoryNonceStore(),
@@ -230,10 +231,10 @@ def test_each_fault_mode_breaks_the_answer_the_way_it_names(
     response = HTTPResponse(answer.status_code, lines, answer.content, request)
     with SyncResponseVerifier(verifier) as sync:
         if refusal is None:
-            assert sync.verify(response, expected_origin=Origin.parse(SELLER)).bound
+            assert sync.verify(response, expected_origin=LibraryOrigin.parse(SELLER)).bound
         else:
             with pytest.raises(WebBotAuthError) as e:
-                sync.verify(response, expected_origin=Origin.parse(SELLER))
+                sync.verify(response, expected_origin=LibraryOrigin.parse(SELLER))
             assert e.value.reason == refusal
 
 

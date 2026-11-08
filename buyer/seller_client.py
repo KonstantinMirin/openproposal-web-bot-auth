@@ -14,13 +14,10 @@ Every call goes through the client the buyer's lifespan owns (buyer/app.py).
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 
 import httpx
 from iab_agentic_primitives.web_bot_auth import (
-    HTTPRequest,
-    HTTPResponse,
     KeyResolver,
     ResponseVerifier,
     VerifiedResponse,
@@ -28,11 +25,12 @@ from iab_agentic_primitives.web_bot_auth import (
 )
 from iab_agentic_primitives.web_bot_auth.httpx import verified_response
 from openproposal import CommitResult, ErrorObject, Proposal
-from pydantic import BaseModel, ConfigDict, TypeAdapter, ValidationError
+from pydantic import BaseModel, ConfigDict, ValidationError
 
-from persistence.evidence import StoredRequest, StoredResponse
+from persistence.values import KeptRequest, KeptResponse, Origin, SignedResponse, Signer
 from protocol.operations import RECEIVE, parse_errors, parse_result
-from protocol.values import JsonObject
+from protocol.values import JsonObject, read_json
+from transport.wba import fetch_of, lines_of, origin_of
 
 from .credentials import BuyerCredential
 from .refusal import Reason, Refusal
@@ -41,8 +39,6 @@ from .repository import Counterparty
 #: The client every call goes through. The rest of the buyer holds one and passes it
 #: here; only this module, buyer/credentials.py, and buyer/cfbot.py touch httpx.
 HTTPClient = httpx.AsyncClient
-
-_JSON_OBJECT: TypeAdapter[JsonObject] = TypeAdapter(JsonObject)
 
 
 class _BoundaryRefusal(BaseModel):
@@ -65,24 +61,23 @@ class _Unsigned(Exception):
 class Exchange:
     """One request and the verified answer to it, as sent and as received."""
 
-    #: The request as sent, which the answer is bound to. A bearer token is left out.
-    request: HTTPRequest
-    #: The answer as received: its status, its header lines in order and case, its body.
-    response: HTTPResponse
+    #: The answer as received: its status, its header lines in order and case, its body,
+    #: and the request as sent, which it is bound to. A bearer token is left out.
+    response: KeptResponse
     verified: VerifiedResponse
     #: The key that signed the request, or None for a bearer request.
     keyid: str | None
 
-    def evidence(self, buyer_origin: str) -> StoredResponse:
+    def evidence(self, buyer_origin: Origin) -> SignedResponse:
         """The answer as the buyer keeps it (§ 4.1.2), with the request it is bound to."""
         directory = self.verified.directory
-        return StoredResponse(
-            response=self.response,
-            request=StoredRequest(self.request, buyer_origin, self.keyid),
-            origin=str(self.verified.origin),
+        signer = Signer(
+            origin=origin_of(self.verified.origin),
             keyid=self.verified.keyid,
-            directory=None if directory is None else directory.evidence,
+            directory=None if directory is None else fetch_of(directory.evidence),
         )
+        sender = Signer(origin=buyer_origin, keyid=self.keyid)
+        return SignedResponse(response=self.response, signer=signer, request_signer=sender)
 
 
 @dataclass(frozen=True)
@@ -112,11 +107,6 @@ class Rejection:
     exchange: Exchange
 
 
-def _lines(headers: httpx.Headers) -> list[tuple[str, str]]:
-    """Header lines exactly as sent or received: `raw` keeps each name's case."""
-    return [(k.decode("latin-1"), v.decode("latin-1")) for k, v in headers.raw]
-
-
 def _refusal(error: Exception) -> Refusal:
     """What the buyer says about an answer it can't take."""
     if isinstance(error, WebBotAuthError):
@@ -127,8 +117,9 @@ def _refusal(error: Exception) -> Refusal:
 
 
 #: What verifying and parsing an answer can raise. Each one becomes a `Refusal`:
-#: ValueError covers pydantic's ValidationError, ProtocolViolation, a JSON or UTF-8
-#: decoding error, and `_Unsigned` is the auth's own guarantee failing.
+#: ValueError covers pydantic's ValidationError, ProtocolViolation, and
+#: MalformedJsonError (a body that isn't JSON, or holds a number outside the
+#: RFC 8785 domain), and `_Unsigned` is the auth's own guarantee failing.
 _REFUSED = (WebBotAuthError, httpx.HTTPError, ValueError, _Unsigned)
 
 
@@ -148,9 +139,10 @@ def _rejection(exchange: Exchange) -> Rejection | Refusal:
 
 def _proposal(seller: Counterparty, exchange: Exchange) -> ReadProposal | Refusal:
     body = exchange.response.body
-    # The typed value decides; the raw JSON, unknown members and all, is the digest input.
+    # The raw JSON, unknown members and all, is the digest input, so its numbers must
+    # canonicalize; the typed value, read from the same bytes, decides.
+    raw = read_json(body)
     proposal = Proposal.model_validate_json(body, context=RECEIVE)
-    raw = _JSON_OBJECT.validate_python(json.loads(body))
     if proposal.seller.domain != seller.domain:
         return Refusal(
             Reason.WRONG_SELLER,
@@ -213,12 +205,15 @@ class SellerClient:
         verified = verified_response(response)
         if verified is None:  # the auth refuses an unsigned answer, so this can't happen
             raise _Unsigned
-        sent = [(k, v) for k, v in _lines(response.request.headers) if k.lower() != "authorization"]
-        request = HTTPRequest(method, url, sent, body)
+        lines = lines_of(response.request.headers.raw)
+        sent = tuple((k, v) for k, v in lines if k.lower() != "authorization")
+        request = KeptRequest(method=method, url=url, lines=sent, body=body)
         return Exchange(
-            request=request,
-            response=HTTPResponse(
-                response.status_code, _lines(response.headers), response.content, request
+            response=KeptResponse(
+                status=response.status_code,
+                lines=lines_of(response.headers.raw),
+                body=response.content,
+                request=request,
             ),
             verified=verified,
             keyid=credential.keyid,

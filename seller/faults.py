@@ -25,15 +25,12 @@ import base64
 from typing import Literal
 
 from fastapi import APIRouter
-from iab_agentic_primitives.web_bot_auth import (
-    HTTPRequest,
-    HTTPResponse,
-    ResponseSigner,
-    ServerIdentity,
-)
-from iab_agentic_primitives.web_bot_auth.asgi import request_url
+from iab_agentic_primitives.web_bot_auth import ResponseSigner, ServerIdentity
 from pydantic import BaseModel
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
+
+from persistence.values import KeptRequest, KeptResponse
+from transport.wba import asgi_lines, lines_of, request_of, response_to_library
 
 SIGNATURE_FIELDS = (b"signature", b"signature-input", b"signature-agent")
 Mode = Literal["none", "strip", "unbound", "rebound", "wrong_digest"]
@@ -93,15 +90,16 @@ class FaultInjection:
 
         await self.app(scope, receive, capture)
 
-    def _request(self, mode: Mode, scope: Scope) -> HTTPRequest:
+    def _request(self, mode: Mode, scope: Scope) -> KeptRequest:
         """The request the broken signature is bound to."""
-        fields = [(k.decode("latin-1"), v.decode("latin-1")) for k, v in scope["headers"]]
+        received = request_of(scope, self.identity, b"")
+        fields = list(received.lines)
         if mode == "unbound":
             fields = [(k, v) for k, v in fields if k.lower().encode() not in SIGNATURE_FIELDS]
         elif mode == "rebound":
             fields = [(k, v) for k, v in fields if k.lower() != "signature"]
             fields.append(("signature", _OTHER_SIGNATURE))
-        return HTTPRequest(scope["method"], request_url(scope, self.identity), fields)
+        return KeptRequest(method=received.method, url=received.url, lines=tuple(fields), body=b"")
 
     async def _send(
         self, mode: Mode, scope: Scope, start: Message, body: bytes, send: Send
@@ -114,11 +112,15 @@ class FaultInjection:
         if mode != "strip":
             # Sign again: against another request, or over another body.
             signed_body = body[:-1] + bytes([body[-1] ^ 1]) if mode == "wrong_digest" else body
-            text = [(k.decode("latin-1"), v.decode("latin-1")) for k, v in headers]
-            response = HTTPResponse(start["status"], text, signed_body, self._request(mode, scope))
-            signed = self.signer.sign(response)
+            text = lines_of(headers)
+            response = KeptResponse(
+                status=start["status"],
+                lines=text,
+                body=signed_body,
+                request=self._request(mode, scope),
+            )
+            signed = self.signer.sign(response_to_library(response))
             # The lines signing added follow the response's own.
-            added = signed.headers.items()[len(text) :]
-            headers += [(k.lower().encode("latin-1"), v.encode("latin-1")) for k, v in added]
+            headers += asgi_lines(signed.headers.items()[len(text) :])
         await send({**start, "headers": headers})
         await send({"type": "http.response.body", "body": body})

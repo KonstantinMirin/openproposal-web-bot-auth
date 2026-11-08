@@ -18,10 +18,16 @@ from datetime import UTC, datetime
 from iab_agentic_primitives.web_bot_auth import RequestSigner
 from openproposal import Commit, LineItemWrites, dump
 
+from persistence.values import AuthMethod, Origin
 from protocol.attribution import attributes
-from protocol.operations import ProtocolViolation, check_result, compose_commit, parse_commit
+from protocol.operations import (
+    ProtocolViolation,
+    check_result,
+    compose_commit,
+    is_stored_result,
+    parse_commit,
+)
 from shared.keyring import Keyring
-from transport.auth import AuthMethod
 from transport.control import Agreed, Outcome, Read, Refused, Rejected, SellerView
 
 from .credentials import Bearer, BuyerCredential, SignWith
@@ -56,7 +62,7 @@ class _Call:
 
 
 def _view(seller: Counterparty) -> SellerView:
-    return SellerView(origin=str(seller.origin), domain=seller.domain, legal_name=seller.legal_name)
+    return SellerView(origin=seller.origin, domain=seller.domain, legal_name=seller.legal_name)
 
 
 def _refused(seller: SellerView | None, method: AuthMethod, refusal: Refusal) -> Refused:
@@ -86,7 +92,7 @@ class Buyer:
             lifetime=self.settings.signature_lifetime,
         )
 
-    def _call(self, seller_origin: str, method: AuthMethod) -> _Call | Refused:
+    def _call(self, seller_origin: Origin, method: AuthMethod) -> _Call | Refused:
         """The seller, resolved once from the buyer's own records, and the credential."""
         seller = self.repo.counterparty(seller_origin)
         if seller is None:
@@ -104,7 +110,7 @@ class Buyer:
             return Refusal(Reason.NOT_ISSUED, f"{seller.origin} issued this buyer no token")
         return Bearer(seller.bearer_token)
 
-    async def read(self, seller_origin: str, proposal_id: str, method: AuthMethod) -> Outcome:
+    async def read(self, seller_origin: Origin, proposal_id: str, method: AuthMethod) -> Outcome:
         """Reads the proposal and verifies the seller's signed answer."""
         call = self._call(seller_origin, method)
         if isinstance(call, Refused):
@@ -122,7 +128,11 @@ class Buyer:
         )
 
     async def commit(
-        self, seller_origin: str, proposal_id: str, line_item_ids: Sequence[str], method: AuthMethod
+        self,
+        seller_origin: Origin,
+        proposal_id: str,
+        line_item_ids: Sequence[str],
+        method: AuthMethod,
     ) -> Outcome:
         """Reads, commits to `line_item_ids`, verifies the signed answer, keeps the agreement."""
         call = self._call(seller_origin, method)
@@ -135,7 +145,7 @@ class Buyer:
         if not isinstance(read, ReadProposal):
             return call.refused(_unreadable(proposal_id, read))
         pending = self._pending(
-            CommitKey(str(call.seller.origin), proposal_id, tuple(writes)), read, writes
+            CommitKey(call.seller.origin, proposal_id, tuple(writes)), read, writes
         )
         answer = await self.client.commit(call.seller, call.credential, proposal_id, pending.body)
         if isinstance(answer, Refusal):
@@ -158,7 +168,7 @@ class Buyer:
 
     def _rejected(self, call: _Call, rejection: Rejection, pending: PendingCommit) -> Rejected:
         """The seller said no. A stored rejection settles the commit; `retry: same` doesn't."""
-        if all(e.retry != "same" for e in rejection.errors):
+        if is_stored_result(rejection.errors):
             self.repo.settle_rejected(pending.id, rejection.errors)
         return call.rejected(rejection, pending.id)
 
@@ -180,7 +190,7 @@ class Buyer:
         )
         evidence_id = self.repo.keep_agreement(
             pending.id,
-            answer.exchange.evidence(str(self.settings.self_origin)),
+            answer.exchange.evidence(self.settings.self_origin),
             answer.result.entries,
             attributed=attributed,
         )

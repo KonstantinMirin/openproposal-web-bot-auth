@@ -12,6 +12,8 @@ from dataclasses import dataclass
 
 from openproposal import ErrorObject, ErrorObjectCode, ErrorObjectRetry
 
+from protocol.operations import is_stored_result
+
 
 @dataclass(frozen=True)
 class Rejected:
@@ -35,9 +37,8 @@ class Rejected:
 
     @property
     def stored(self) -> bool:
-        """Whether a commit's ledger keeps it: an error with `retry: same` is not a stored
-        result (§ 2.4)."""
-        return self.error.retry != "same"
+        """Whether a commit's ledger keeps it (`protocol.operations.is_stored_result`)."""
+        return is_stored_result([self.error])
 
 
 class UnknownPrincipal(LookupError):

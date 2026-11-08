@@ -7,9 +7,9 @@ from datetime import datetime
 from openproposal import Commit, CommitResult, LineItemStatuses, Proposal, dump
 
 from protocol.operations import acceptance_for, result_for
-from protocol.record import canonical, items_by_id, line_items_of, proposal_items
+from protocol.record import items_by_id, line_items_of, proposal_items
 from protocol.status import proposal_status
-from protocol.values import commitment_key
+from protocol.values import canonical, commitment_key
 from seller.caller import Caller, ResolvedCaller
 from seller.errors import Rejected
 from seller.ports import OfferStore, StoredProposal

@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import re
 from decimal import Decimal
-from pathlib import Path
 
 import yaml
 
@@ -133,7 +132,3 @@ def loads_yaml(text: str) -> JsonObject:
     if not isinstance(document, dict):
         raise InvalidDocument.not_a_mapping(document)
     return document
-
-
-def load_yaml(path: str | Path) -> JsonObject:
-    return loads_yaml(Path(path).read_text(encoding="utf-8"))

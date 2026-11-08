@@ -32,7 +32,7 @@ from openproposal import (
 from pydantic import BaseModel, ConfigDict, Field
 
 from .record import compose, digest_input, digest_of
-from .values import JsonObject, commitment_key, instant, matches
+from .values import JsonObject, commitment_key, instant, matches, read_json
 
 #: The validation context of the SDK's receive mode, in the form its `MODE_KEY`
 #: documents: a closed object ignores the members it doesn't name.
@@ -92,14 +92,18 @@ def check_commit(commit: Commit) -> Commit:
 def parse_commit(raw: bytes) -> Commit:
     """A request body as a `Commit` (§ 5.6.1), checked strictly.
 
-    Raises pydantic's `ValidationError` for a body the SDK refuses, and
-    `ProtocolViolation` for one it accepts but § 5.6.1 forbids.
+    Raises `MalformedJsonError` for a body that isn't a JSON object in the
+    RFC 8785 number domain (`protocol.values.read_json`), pydantic's
+    `ValidationError` for one the SDK refuses, and `ProtocolViolation` for one
+    it accepts but § 5.6.1 forbids.
     """
+    read_json(raw)
     return check_commit(Commit.model_validate_json(raw))
 
 
 def parse_result(raw: bytes) -> CommitResult:
     """A seller's answer as a `CommitResult`, read as a receiver (§ 5.6.1)."""
+    read_json(raw)
     result = CommitResult.model_validate_json(raw, context=RECEIVE)
     if not result.entries:
         raise ProtocolViolation(Rule.ENTRIES)
@@ -121,7 +125,15 @@ class ErrorEnvelope(BaseModel):
 
 def parse_errors(raw: bytes) -> list[ErrorObject]:
     """The `errors[]` of a rejection (§ 2.4)."""
+    read_json(raw)
     return ErrorEnvelope.model_validate_json(raw, context=RECEIVE).errors
+
+
+def is_stored_result(errors: Sequence[ErrorObject]) -> bool:
+    """Whether a rejection is a stored result: a later `commit` with the same key gets it
+    again (§ 5.6.1). An error with `retry: same` says the request may succeed as sent, so
+    a rejection that holds one is not stored (§ 2.4)."""
+    return all(error.retry != "same" for error in errors)
 
 
 # ── The buyer's steps ──────────────────────────────────────────────────────

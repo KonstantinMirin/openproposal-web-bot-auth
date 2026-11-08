@@ -22,12 +22,12 @@ import pytest
 from iab_agentic_primitives.web_bot_auth import (
     HTTPRequest,
     HTTPResponse,
-    Origin,
     RequestSigner,
     ResponseSigner,
 )
 from pydantic import SecretStr
 
+from persistence.values import Origin
 from runner.main import main, publish, run_once
 from runner.report import (
     HISTORY,

@@ -236,15 +236,8 @@
           "type": "integer"
         },
         "url": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "title": "Url"
+          "title": "Url",
+          "type": "string"
         }
       },
       "required": [
@@ -408,6 +401,11 @@
       "title": "Message",
       "type": "object"
     },
+    "Origin": {
+      "description": "https://<host>",
+      "title": "Origin",
+      "type": "string"
+    },
     "Reverified": {
       "additionalProperties": false,
       "description": "Both kept messages, verified again offline from the stored bytes.",
@@ -511,8 +509,7 @@
           "type": "string"
         },
         "origin": {
-          "title": "Origin",
-          "type": "string"
+          "$ref": "#/$defs/Origin"
         }
       },
       "required": [
@@ -646,7 +643,7 @@
     },
     "origins": {
       "additionalProperties": {
-        "type": "string"
+        "$ref": "#/$defs/Origin"
       },
       "title": "Origins",
       "type": "object"

@@ -4,7 +4,8 @@ Each agent reads its environment once, in its own `Settings.from_env()`
 (seller/settings.py, buyer/settings.py, runner/settings.py). These readers take
 that mapping and the variable's name, and parse the value once, so a bad value
 stops the agent at startup with an error that names the variable. An origin is
-the library's `Origin`: exactly `https://<host>`, so `.host` is always a host.
+an `Origin` (persistence/values.py): exactly `https://<host>`, so `.host` is
+always a host.
 
 Origins follow one naming scheme in every service: `SELF_ORIGIN` is the agent's
 own origin, and `PEER_<ROLE>_ORIGIN` names a counterparty (`PEER_SELLER_ORIGIN`,
@@ -16,8 +17,9 @@ from __future__ import annotations
 from collections.abc import Mapping
 from pathlib import Path
 
-from iab_agentic_primitives.web_bot_auth import ConfigurationError, Origin
-from pydantic import SecretStr
+from pydantic import SecretStr, ValidationError
+
+from persistence.values import Origin
 
 #: The environment an agent reads its settings from.
 Environment = Mapping[str, str]
@@ -36,8 +38,8 @@ def origin(env: Environment, name: str, default: str) -> Origin:
     value = env.get(name, default)
     try:
         return Origin.parse(value)
-    except ConfigurationError as e:
-        raise SettingsError(name, str(e)) from e
+    except ValidationError as e:
+        raise SettingsError(name, f"{value!r} is not an origin https://<host>") from e
 
 
 def integer(env: Environment, name: str, default: int) -> int:

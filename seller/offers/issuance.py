@@ -1,7 +1,7 @@
 """Issuing a proposal to a buyer (§ 4.3): the template, made out to one principal.
 
-The template is loaded once, at startup (`load_template`), and every issued
-document is a fresh copy of it.
+The seller's composition root (seller/app.py) reads the template once, at
+startup, and every issued document is a fresh copy of it.
 """
 
 from __future__ import annotations
@@ -9,20 +9,11 @@ from __future__ import annotations
 import copy
 import secrets
 from datetime import datetime
-from pathlib import Path
 
-from protocol.documents import load_yaml
 from protocol.record import line_items_of
 from protocol.values import JsonObject, instant
 from seller.errors import UnknownPrincipal
 from seller.ports import Onboarding, PrincipalRecord, StoredProposal
-
-#: The proposal every buyer is issued, as the seller's onboarding wrote it.
-TEMPLATE = Path(__file__).resolve().parent.parent / "seed" / "proposal.yaml"
-
-
-def load_template(path: Path = TEMPLATE) -> JsonObject:
-    return load_yaml(path)
 
 
 def issued(template: JsonObject, principal: PrincipalRecord, proposal_id: str) -> StoredProposal:

@@ -15,17 +15,23 @@ from datetime import UTC, datetime
 import httpx
 from iab_agentic_primitives.web_bot_auth import (
     DirectoryResponse,
-    Origin,
     ServerIdentity,
     parse_directory_response,
 )
 
-from persistence.evidence import KeptFetch, KeptRequest, KeptResponse
 from persistence.observe import BuyerRecords, SellerRecords
+from persistence.values import (
+    AuthMethod,
+    DirectoryFetch,
+    KeptRequest,
+    Origin,
+    SignedResponse,
+)
 from protocol.record import digest_of, sha256_hex
-from protocol.values import instant
-from transport.auth import AuthMethod
+from protocol.values import JsonObject, instant
 from transport.control import OUTCOME, Agreed, CloudflareCheck, CommitTrigger, Issued, IssueRequest
+from transport.reverify import reverify_request, reverify_response
+from transport.wba import library_origin, origin_of
 
 from . import checks
 from .checks import Done, expect
@@ -50,36 +56,40 @@ def instant_of(seconds: float) -> str:
     return instant(datetime.fromtimestamp(seconds, UTC))
 
 
-def _kept_directory(kept: KeptFetch) -> Directory:
-    body = body_of(kept.body)
-    keys = body.get("keys", []) if isinstance(body, dict) else []
+def _keys(body: bytes) -> list[JsonObject]:
+    """The public members of the keys a directory body lists."""
+    document = body_of(body)
+    keys = document.get("keys", []) if isinstance(document, dict) else []
+    return [public_key(k) for k in keys] if isinstance(keys, list) else []
+
+
+def _kept_directory(kept: DirectoryFetch) -> Directory:
     return Directory(
         url=kept.url,
         status=kept.status,
-        fetched_at=None if kept.fetched_at is None else instant_of(kept.fetched_at),
-        headers=public_headers(kept.headers),
-        keys=[public_key(k) for k in keys] if isinstance(keys, list) else [],
+        fetched_at=instant_of(kept.fetched_at),
+        headers=public_headers(kept.lines),
+        keys=_keys(kept.body),
         sha256=sha256_hex(kept.body),
     )
 
 
-def _message(kept: KeptRequest) -> Message:
-    request = kept.request
+def _message(kept: KeptRequest, keyid: str | None) -> Message:
     return Message(
-        method=request.method,
-        url=request.url,
-        keyid=kept.keyid,
-        headers=public_headers(request.headers.items()),
-        body=body_of(request.body),
+        method=kept.method,
+        url=kept.url,
+        keyid=keyid,
+        headers=public_headers(kept.lines),
+        body=body_of(kept.body),
     )
 
 
-def _answer(kept: KeptResponse) -> Answer:
+def _answer(kept: SignedResponse) -> Answer:
     response = kept.response
     return Answer(
         status=response.status,
-        keyid=kept.keyid,
-        headers=public_headers(response.headers.items()),
+        keyid=checks.given(kept.signer.keyid, "key of the answer"),
+        headers=public_headers(response.lines),
         body=body_of(response.body),
     )
 
@@ -100,15 +110,13 @@ class Observer:
         lines = response.headers.multi_items()
         now = int(time.time())
         fetched = DirectoryResponse(url, response.status_code, lines, response.content, now)
-        verified = parse_directory_response(fetched, origin.authority, now)
-        body = body_of(response.content)
-        keys = body.get("keys", []) if isinstance(body, dict) else []
+        verified = parse_directory_response(fetched, library_origin(origin).authority, now)
         directory = Directory(
             url=url,
             status=response.status_code,
             expires=instant_of(verified.expires),
             headers=public_headers(lines),
-            keys=[public_key(k) for k in keys] if isinstance(keys, list) else [],
+            keys=_keys(response.content),
         )
         kids = list(verified.keys)
         return Done(directory, f"{len(kids)} key(s), signed by each: {', '.join(kids)}")
@@ -127,7 +135,7 @@ class Observer:
 
     async def commit(self, issued: Issued | None, method: AuthMethod) -> Done[Agreed]:
         trigger = CommitTrigger(
-            seller=str(self.settings.seller),
+            seller=self.settings.seller,
             proposal_id=checks.given(issued, "issued proposal").proposal_id,
             line_item_ids=[LINE_ITEM],
             credential=method,
@@ -158,40 +166,40 @@ class Observer:
             if entry.evidence_id is None:
                 return Done(side, f"resolved {principal_id} by token hash; no signature evidence")
             kept = seller.request(entry.evidence_id)
-            expect(kept.origin == str(self.settings.buyer), f"evidence from {kept.origin}")
-            directory = (
-                None if kept.directory_digest is None else seller.directory(kept.directory_digest)
-            )
+        signer = kept.signer
+        expect(signer.origin == self.settings.buyer, f"evidence from {signer.origin}")
+        directory = signer.directory
         side = side.model_copy(
             update={
-                "request": _message(kept),
+                "request": _message(kept.request, signer.keyid),
                 "directory": None if directory is None else _kept_directory(directory),
             }
         )
-        return Done(side, f"resolved {principal_id} from origin {kept.origin}, keyid {kept.keyid}")
+        return Done(
+            side, f"resolved {principal_id} from origin {signer.origin}, keyid {signer.keyid}"
+        )
 
     def buyer_side(self, agreed: Agreed | None) -> Done[BuyerSide]:
         """The request as the buyer sent it, and the seller's signed answer as it arrived."""
         outcome = checks.given(agreed, "agreement")
         with BuyerRecords.open(self.settings.buyer_db) as buyer:
             kept = buyer.response(outcome.evidence_id)
-            expect(kept.origin == str(self.settings.seller), f"answer from {kept.origin}")
-            directory = (
-                None if kept.directory_digest is None else buyer.directory(kept.directory_digest)
-            )
-        request = _message(kept.request)
+        signer = kept.signer
+        expect(signer.origin == self.settings.seller, f"answer from {signer.origin}")
+        directory = signer.directory
+        request = _message(kept.response.request, outcome.keyid)
         if outcome.authentication_method == "bearer":
             # The request carried the token; the buyer's evidence never stores it.
             withheld = sorted({*request.headers.withheld, "authorization"})
             headers = request.headers.model_copy(update={"withheld": withheld})
             request = request.model_copy(update={"headers": headers})
         side = BuyerSide(
-            evidence_id=kept.id,
-            request=request.model_copy(update={"keyid": outcome.keyid}),
+            evidence_id=outcome.evidence_id,
+            request=request,
             response=_answer(kept),
             directory=None if directory is None else _kept_directory(directory),
         )
-        return Done(side, f"kept the seller's signed answer, keyid {kept.keyid}")
+        return Done(side, f"kept the seller's signed answer, keyid {signer.keyid}")
 
     def same_digest(self, agreed: Agreed | None) -> Done[Digest]:
         """Both parties hold the same digest input, and it hashes to the agreed record_digest."""
@@ -215,16 +223,17 @@ class Observer:
         )
         response_id = checks.given(buyer, "buyer side").evidence_id
         with SellerRecords.open(self.settings.seller_db) as records:
-            again = await records.reverify_request(
-                records.request(request_id),
-                ServerIdentity.from_config(str(self.settings.seller)),
-            )
+            kept_request = records.request(request_id)
+        again = await reverify_request(
+            kept_request, ServerIdentity.from_config(str(self.settings.seller))
+        )
         expect(
-            again.origin == self.settings.buyer and again.body_covered,
+            origin_of(again.origin) == self.settings.buyer and again.body_covered,
             "the seller's evidence doesn't verify again",
         )
         with BuyerRecords.open(self.settings.buyer_db) as records:
-            answered = await records.reverify_response(records.response(response_id))
+            kept_response = records.response(response_id)
+        answered = await reverify_response(kept_response)
         expect(
             answered.bound and answered.body_covered, "the buyer's evidence doesn't verify again"
         )

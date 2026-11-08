@@ -1,2 +1,3 @@
-"""HTTP and Web Bot Auth wiring both agents share: the library client and resolver, how a
-caller authenticates, the control-plane contract, the operator key, and the FastAPI seams."""
+"""HTTP and Web Bot Auth wiring both agents share: the library client and resolver, the one
+codec to the library's types, re-verification of kept messages, the control-plane contract,
+the operator key, and the FastAPI seams."""
