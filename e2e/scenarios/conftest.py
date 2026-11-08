@@ -15,12 +15,22 @@ import json
 import ssl
 import uuid
 from collections.abc import Iterator
-from pathlib import Path
 
 import httpx
 import pytest
 from iab_agentic_primitives.web_bot_auth import Ed25519Key, HTTPRequest, RequestSigner
-from settings import BUYER, CFBOT, OPERATOR_KEYS, SELLER
+from settings import (
+    BUYER,
+    BUYER_CONTROL,
+    BUYER_DB,
+    BUYER_KEYS,
+    CFBOT,
+    CFBOT_CONTROL,
+    OPERATOR_KEYS,
+    SELLER,
+    SELLER_CONTROL,
+    SELLER_DB,
+)
 
 from persistence.observe import BuyerRecords, SellerRecords
 from shared.keyring import KeyStore
@@ -28,12 +38,10 @@ from transport.control import OPERATOR_HEADER
 
 __all__ = ["BUYER", "CFBOT", "SELLER"]  # the stack's addresses, re-exported for the scenarios
 # Operator and test controls, reached inside the network, not through the TLS front.
-BUYER_OPERATOR = "http://buyer:8000/operator"
-SELLER_FAULTS = "http://seller:8000/test/fault"
-CFBOT_RUN = "http://cfbot:8000/run"
-
-#: The buyer's key directory, mounted read-only.
-BUYER_KEYS = Path("/buyer-keys")
+SELLER_OPERATOR = str(SELLER_CONTROL.join("/operator"))
+BUYER_OPERATOR = str(BUYER_CONTROL.join("/operator"))
+SELLER_FAULTS = str(SELLER_CONTROL.join("/test/fault"))
+CFBOT_RUN = str(CFBOT_CONTROL.join("/run"))
 
 
 def buyer_key(kid: str | None = None) -> Ed25519Key:
@@ -97,12 +105,12 @@ def web() -> Iterator[httpx.Client]:
 @pytest.fixture
 def seller_records() -> Iterator[SellerRecords]:
     """The seller's records, read-only."""
-    with SellerRecords.open("/seller-data/seller.db") as records:
+    with SellerRecords.open(SELLER_DB) as records:
         yield records
 
 
 @pytest.fixture
 def buyer_records() -> Iterator[BuyerRecords]:
     """The buyer's records, read-only."""
-    with BuyerRecords.open("/buyer-data/buyer.db") as records:
+    with BuyerRecords.open(BUYER_DB) as records:
         yield records

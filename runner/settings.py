@@ -17,10 +17,10 @@
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import httpx
 from pydantic import SecretStr
 
 from persistence.values import Origin
@@ -33,15 +33,17 @@ SECRET_VARIABLES = ("SELLER_OPERATOR_KEY", "BUYER_OPERATOR_KEY", "DEMO_BEARER_TO
 _SHORTEST_SECRET = 8
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class RunnerSettings:
-    seller: Origin
-    buyer: Origin
-    cfbot: Origin
-    seller_control: str
-    buyer_control: str
-    seller_db: str
-    buyer_db: str
+    peer_seller_origin: Origin
+    peer_buyer_origin: Origin
+    peer_cfbot_origin: Origin
+    #: Each agent's own controls, inside the network.
+    seller_control: httpx.URL
+    buyer_control: httpx.URL
+    #: Each party's database, mounted read-only.
+    seller_db: Path
+    buyer_db: Path
     out_dir: Path
     interval: float
     #: What the seller's controls require; sent to the seller only.
@@ -55,15 +57,15 @@ class RunnerSettings:
     @classmethod
     def from_env(cls, env: read.Environment | None = None) -> RunnerSettings:
         """Reads the settings once; raises `SettingsError`, naming the variable, for a bad value."""
-        env = os.environ if env is None else env
+        env = read.environment(env)
         return cls(
-            seller=read.origin(env, "PEER_SELLER_ORIGIN", DEFAULT_ORIGINS["seller"]),
-            buyer=read.origin(env, "PEER_BUYER_ORIGIN", DEFAULT_ORIGINS["buyer"]),
-            cfbot=read.origin(env, "PEER_CFBOT_ORIGIN", DEFAULT_ORIGINS["cfbot"]),
-            seller_control=env.get("SELLER_CONTROL", "http://seller:8000"),
-            buyer_control=env.get("BUYER_CONTROL", "http://buyer:8000"),
-            seller_db=env.get("SELLER_DB", "/seller-data/seller.db"),
-            buyer_db=env.get("BUYER_DB", "/buyer-data/buyer.db"),
+            peer_seller_origin=read.origin(env, "PEER_SELLER_ORIGIN", DEFAULT_ORIGINS["seller"]),
+            peer_buyer_origin=read.origin(env, "PEER_BUYER_ORIGIN", DEFAULT_ORIGINS["buyer"]),
+            peer_cfbot_origin=read.origin(env, "PEER_CFBOT_ORIGIN", DEFAULT_ORIGINS["cfbot"]),
+            seller_control=read.url(env, "SELLER_CONTROL", "http://seller:8000"),
+            buyer_control=read.url(env, "BUYER_CONTROL", "http://buyer:8000"),
+            seller_db=read.path(env, "SELLER_DB", "/seller-data/seller.db"),
+            buyer_db=read.path(env, "BUYER_DB", "/buyer-data/buyer.db"),
             out_dir=read.path(env, "OUT_DIR", "/out"),
             interval=read.seconds(env, "RUN_INTERVAL", 900.0),
             seller_operator_key=read.required_secret(env, "SELLER_OPERATOR_KEY"),

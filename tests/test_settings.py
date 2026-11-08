@@ -139,7 +139,9 @@ def test_the_runner_keeps_its_secrets_out_of_its_repr() -> None:
     assert "seller-secret-value" not in repr(settings)
     assert settings.seller_operator_key.get_secret_value() == "seller-secret-value"
     assert settings.buyer_operator_key.get_secret_value() == "buyer-key"
-    assert str(settings.seller) == "https://seller.wba-demo.noetis.dev"
+    assert str(settings.peer_seller_origin) == "https://seller.wba-demo.noetis.dev"
+    assert str(settings.seller_control) == "http://seller:8000"
+    assert settings.buyer_db == Path("/buyer-data/buyer.db")
 
 
 @pytest.mark.parametrize("value", NOT_ORIGINS)
@@ -172,10 +174,14 @@ def test_a_buyer_origin_without_a_scheme_stops_the_seller_at_its_settings() -> N
         ("WBA_ROTATION_WAIT", "later", BuyerSettings.from_env),
         ("RUN_INTERVAL", "hourly", runner),
         ("SELLER_OPERATOR_KEY", "", runner),
+        ("SELLER_CONTROL", "seller:8000", runner),
+        ("BUYER_CONTROL", "http://", runner),
         ("BUYER_OPERATOR_KEY", "", runner),
     ],
 )
-def test_a_bad_number_fails_naming_the_variable(name: str, value: str, read: Reader) -> None:
+def test_a_bad_or_missing_value_fails_naming_the_variable(
+    name: str, value: str, read: Reader
+) -> None:
     with pytest.raises(SettingsError) as e:
         read({name: value})
     assert e.value.name == name

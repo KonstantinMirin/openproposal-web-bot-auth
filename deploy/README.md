@@ -81,8 +81,10 @@ set the values the table's last column names.
 | `WBA_ROTATION_WAIT` | Buyer, scenarios | `600` | How long a published key waits before it signs (e2e: `20`) |
 | `WBA_SIGNATURE_LIFETIME` | Buyer, scenarios | `300` | How long the buyer's request signatures last (e2e: `10`) |
 | `DEMO_FAULT_INJECTION` | Seller | Off | TEST ONLY: mounts `PUT /test/fault`; `make live-config` keeps it out of production |
-| `SELLER_CONTROL`, `BUYER_CONTROL` | Runner | `http://seller:8000`, `http://buyer:8000` | The agents' own controls, inside the network |
-| `SELLER_DB`, `BUYER_DB` | Runner | `/seller-data/seller.db`, `/buyer-data/buyer.db` | Both parties' databases, mounted read-only from the `-db` volumes |
+| `SELLER_CONTROL`, `BUYER_CONTROL` | Runner, scenarios | `http://seller:8000`, `http://buyer:8000` | The agents' own controls, inside the network |
+| `CFBOT_CONTROL` | Scenarios | `http://cfbot:8000` | cfbot's own controls, inside the network |
+| `SELLER_DB`, `BUYER_DB` | Runner, scenarios | `/seller-data/seller.db`, `/buyer-data/buyer.db` | Both parties' databases, mounted read-only from the `-db` volumes |
+| `BUYER_KEYS_DIR` | Scenarios | `/buyer-keys` | The buyer's key directory, mounted read-only |
 | `OUT_DIR` | Runner | `/out` | Where the reports go |
 | `RUN_INTERVAL` | Runner | `900` | Seconds between runs; `0` runs once |
 

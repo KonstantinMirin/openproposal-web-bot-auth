@@ -59,13 +59,13 @@ SCHEMA = json.loads(SCHEMA_FILE.read_text())
 
 def _settings(stack: Stack, out: Path) -> RunnerSettings:
     return RunnerSettings(
-        seller=Origin.parse(SELLER),
-        buyer=Origin.parse(BUYER),
-        cfbot=Origin.parse(CFBOT),
-        seller_control="http://seller:8000",
-        buyer_control="http://buyer:8000",
-        seller_db=str(stack.seller_dir / "seller.db"),
-        buyer_db=str(stack.buyer_dir / "buyer.db"),
+        peer_seller_origin=Origin.parse(SELLER),
+        peer_buyer_origin=Origin.parse(BUYER),
+        peer_cfbot_origin=Origin.parse(CFBOT),
+        seller_control=httpx.URL("http://seller:8000"),
+        buyer_control=httpx.URL("http://buyer:8000"),
+        seller_db=stack.seller_dir / "seller.db",
+        buyer_db=stack.buyer_dir / "buyer.db",
         out_dir=out,
         interval=0,
         seller_operator_key=SecretStr(SELLER_OPERATOR[OPERATOR_HEADER]),

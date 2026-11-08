@@ -10,16 +10,16 @@ key of its own, so one party's key is refused at another.
 
 import httpx
 import pytest
-from conftest import BUYER, BUYER_OPERATOR, CFBOT, CFBOT_RUN, SELLER
-from settings import OPERATOR_KEYS
+from conftest import BUYER, BUYER_OPERATOR, CFBOT, CFBOT_RUN, SELLER, SELLER_OPERATOR
+from settings import BUYER_CONTROL, OPERATOR_KEYS, SELLER_CONTROL
 
 from transport.control import OPERATOR_HEADER
 
-#: Each party's controls, and the party whose key they must refuse.
+#: Each party's controls, and another party, whose key they must refuse.
 INSIDE = [
-    ("GET", f"{BUYER_OPERATOR}/keys", "seller"),
-    ("POST", "http://seller:8000/operator/issue", "buyer"),
-    ("POST", f"{CFBOT_RUN}/whoami", "buyer"),
+    ("GET", f"{BUYER_OPERATOR}/keys", SELLER_CONTROL.host),
+    ("POST", f"{SELLER_OPERATOR}/issue", BUYER_CONTROL.host),
+    ("POST", f"{CFBOT_RUN}/whoami", BUYER_CONTROL.host),
 ]
 
 
@@ -49,9 +49,7 @@ def test_the_front_never_routes_operator_controls(web: httpx.Client, url: str) -
 
 
 def test_the_seller_issues_a_fresh_proposal_with_the_key(web: httpx.Client) -> None:
-    issued = web.post(
-        "http://seller:8000/operator/issue", json={"principal_id": "buyer-wba"}
-    ).json()
+    issued = web.post(f"{SELLER_OPERATOR}/issue", json={"principal_id": "buyer-wba"}).json()
     assert issued["proposal_id"].startswith("live-buyer-wba-")
     read = web.post(f"{BUYER_OPERATOR}/read", json={"proposal_id": issued["proposal_id"]}).json()
     assert read["state"] == "read", read

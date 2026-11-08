@@ -33,6 +33,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import ClassVar, Literal, Self
 
+import httpx
 from pydantic import SecretStr, ValidationError
 
 from persistence.values import Origin
@@ -72,6 +73,18 @@ def origin(env: Environment, name: str, default: Origin) -> Origin:
         return Origin.parse(value)
     except ValidationError as e:
         raise SettingsError(name, f"{value!r} is not an origin https://<host>") from e
+
+
+def url(env: Environment, name: str, default: str) -> httpx.URL:
+    """`name` as an `http://` or `https://` URL with a host, or `default` when it is unset."""
+    value = env.get(name, default)
+    try:
+        parsed = httpx.URL(value)
+    except httpx.InvalidURL as e:
+        raise SettingsError(name, f"{value!r} is not a URL") from e
+    if parsed.scheme not in {"http", "https"} or not parsed.host:
+        raise SettingsError(name, f"{value!r} is not an http:// or https:// URL with a host")
+    return parsed
 
 
 def integer(env: Environment, name: str, default: int) -> int:

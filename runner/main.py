@@ -167,7 +167,7 @@ async def _path(run: Run, observer: Observer, path: CredentialPath) -> FlowRun:
     )
 
 
-def _control(url: str, key: SecretStr, transport: Transport | None) -> httpx.AsyncClient:
+def _control(url: httpx.URL, key: SecretStr, transport: Transport | None) -> httpx.AsyncClient:
     """A client for one agent's controls, which carries that agent's operator key only."""
     headers = {OPERATOR_HEADER: key.get_secret_value()}
     return httpx.AsyncClient(base_url=url, timeout=60, headers=headers, transport=transport)
@@ -185,7 +185,11 @@ async def run_once(settings: RunnerSettings, *, transport: Transport | None = No
         http_client(tls_context(settings.ca_bundle), timeout=10, transport=transport) as web,
     ):
         observer = Observer(settings, seller=seller, buyer=buyer, web=web)
-        parties = {"seller": settings.seller, "buyer": settings.buyer, "cfbot": settings.cfbot}
+        parties = {
+            "seller": settings.peer_seller_origin,
+            "buyer": settings.peer_buyer_origin,
+            "cfbot": settings.peer_cfbot_origin,
+        }
         directories: dict[str, Directory | None] = {}
         for party, origin in parties.items():
             directories[party] = await run.step(

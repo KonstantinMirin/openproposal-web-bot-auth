@@ -141,7 +141,7 @@ class Observer:
 
     async def commit(self, issued: Issued | None, method: AuthMethod) -> Done[Agreed]:
         trigger = CommitTrigger(
-            seller=self.settings.seller,
+            seller=self.settings.peer_seller_origin,
             proposal_id=checks.given(issued, "issued proposal").proposal_id,
             line_item_ids=[LINE_ITEM],
             credential=method,
@@ -170,7 +170,7 @@ class Observer:
             )
             return Done(side, f"resolved {principal_id} by token hash; no signature evidence")
         signer, directory = kept.signer, kept.signer.directory
-        expect(signer.origin == self.settings.buyer, f"evidence from {signer.origin}")
+        expect(signer.origin == self.settings.peer_buyer_origin, f"evidence from {signer.origin}")
         side = SellerSide(
             principal_id=principal_id,
             authentication_method=method,
@@ -189,7 +189,7 @@ class Observer:
         with BuyerRecords.open(self.settings.buyer_db) as buyer:
             kept = buyer.response(outcome.evidence_id)
         signer, directory = kept.signer, kept.signer.directory
-        expect(signer.origin == self.settings.seller, f"answer from {signer.origin}")
+        expect(signer.origin == self.settings.peer_seller_origin, f"answer from {signer.origin}")
         # A bearer request carried the token; the buyer's evidence never stores it.
         token = ("authorization",) if outcome.authentication_method == "bearer" else ()
         side = BuyerSide(
@@ -224,10 +224,10 @@ class Observer:
         with SellerRecords.open(self.settings.seller_db) as records:
             kept_request = records.request(request_id)
         again = await reverify_request(
-            kept_request, ServerIdentity.from_config(str(self.settings.seller))
+            kept_request, ServerIdentity.from_config(str(self.settings.peer_seller_origin))
         )
         expect(
-            origin_of(again.origin) == self.settings.buyer and again.body_covered,
+            origin_of(again.origin) == self.settings.peer_buyer_origin and again.body_covered,
             "the seller's evidence doesn't verify again",
         )
         with BuyerRecords.open(self.settings.buyer_db) as records:
@@ -252,5 +252,5 @@ class Observer:
             f"cloudflare-check returned {response.status_code}",
         )
         check = CloudflareCheck.model_validate_json(response.content)
-        verdict = checks.cfbot_accepted(check, str(self.settings.buyer))
+        verdict = checks.cfbot_accepted(check, str(self.settings.peer_buyer_origin))
         return Done(check, f"{verdict.get('verifier')} accepted {verdict.get('identity')}")
